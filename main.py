@@ -80,12 +80,16 @@ app = Flask(__name__)
 # ========================
 def parse_oanda_time(time_str):
     """Parse Oanda's timestamp with variable fractional seconds"""
+    logging.debug(f"Parsing Oanda timestamp: {time_str}")
     if '.' in time_str and len(time_str.split('.')[1]) > 7:
         time_str = re.sub(r'\.(\d{6})\d+', r'.\1', time_str)
-    return datetime.strptime(time_str, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=pytz.utc).astimezone(NY_TZ)
+    result = datetime.strptime(time_str, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=pytz.utc).astimezone(NY_TZ)
+    logging.debug(f"Parsed time: {result}")
+    return result
 
 def send_telegram(message):
     """Send formatted message to Telegram with detailed error handling"""
+    logging.info(f"Attempting to send Telegram message: {message}")
     if len(message) > 4000:
         message = message[:4000] + "... [TRUNCATED]"
     
@@ -107,6 +111,7 @@ def send_telegram(message):
             logging.error(f"Telegram API error: {response.json()}")
             return False
             
+        logging.info("Telegram message sent successfully")
         return True
     except Exception as e:
         logging.error(f"Telegram connection failed: {e}")
@@ -114,6 +119,7 @@ def send_telegram(message):
 
 def fetch_candles():
     """Fetch candles for XAU_USD M15 with robust error handling"""
+    logging.info(f"Fetching candles for {INSTRUMENT} with timeframe {TIMEFRAME}")
     params = {
         "granularity": TIMEFRAME,
         "count": 200,
@@ -126,7 +132,9 @@ def fetch_candles():
     for attempt in range(max_attempts):
         try:
             request = instruments.InstrumentsCandles(instrument=INSTRUMENT, params=params)
+            logging.debug(f"API request: {request}")
             response = oanda_api.request(request)
+            logging.debug(f"API response: {response}")
             candles = response.get('candles', [])
             
             if not candles:
@@ -156,7 +164,9 @@ def fetch_candles():
                 logging.warning("No complete candles found in response")
                 return pd.DataFrame()
                 
-            return pd.DataFrame(data)
+            df = pd.DataFrame(data)
+            logging.info(f"Successfully fetched {len(df)} candles")
+            return df
             
         except V20Error as e:
             if "rate" in str(e).lower():
@@ -325,37 +335,45 @@ class FeatureEngineer:
         )
 
     def calculate_technical_indicators(self, df):
+        logging.info("Calculating technical indicators")
         df = df.copy()
         
         # Adjust close
         df['adj close'] = df['open']
+        logging.debug("Adjusted close calculated")
         
         # Garman-Klass Volatility
         df['garman_klass_vol'] = (
             ((np.log(df['high']) - np.log(df['low'])) ** 2) / 2 -
             (2 * np.log(2) - 1) * ((np.log(df['adj close']) - np.log(df['open'])) ** 2)
         )
+        logging.debug("Garman-Klass volatility calculated")
         
         # RSI
         df['rsi_20'] = ta.rsi(df['adj close'], length=20)
         df['rsi'] = ta.rsi(df['close'], length=14)
+        logging.debug("RSI calculated")
         
         # Bollinger Bands
         bb = ta.bbands(np.log1p(df['adj close']), length=20)
         df['bb_low'] = bb['BBL_20_2.0']
         df['bb_mid'] = bb['BBM_20_2.0']
         df['bb_high'] = bb['BBU_20_2.0']
+        logging.debug("Bollinger Bands calculated")
         
         # ATR (z-scored)
         atr = ta.atr(df['high'], df['low'], df['close'], length=14)
         df['atr_z'] = (atr - atr.mean()) / atr.std()
+        logging.debug("ATR z-score calculated")
         
         # MACD (z-scored)
         macd = ta.macd(df['adj close'], fast=12, slow=26, signal=9)
         df['macd_z'] = (macd['MACD_12_26_9'] - macd['MACD_12_26_9'].mean()) / macd['MACD_12_26_9'].std()
+        logging.debug("MACD z-score calculated")
         
         # Dollar Volume
         df['dollar_volume'] = (df['adj close'] * df['volume']) / 1e6
+        logging.debug("Dollar volume calculated")
         
         # Moving Averages
         df['ma_10'] = df['adj close'].rolling(window=10).mean()
@@ -364,16 +382,19 @@ class FeatureEngineer:
         df['ma_30'] = df['close'].rolling(window=30).mean()
         df['ma_40'] = df['close'].rolling(window=40).mean()
         df['ma_60'] = df['close'].rolling(window=60).mean()
+        logging.debug("Moving averages calculated")
         
         # VWAP and VWAP STD
         vwap_num = (df['volume'] * (df['high'] + df['low'] + df['close']) / 3).cumsum()
         vwap_den = df['volume'].cumsum()
         df['vwap'] = vwap_num / vwap_den
         df['vwap_std'] = df['vwap'].rolling(window=20).std()
+        logging.debug("VWAP and VWAP STD calculated")
         
         return df
 
     def calculate_crt_vectorized(self, df):
+        logging.info("Calculating CRT signals")
         df = df.copy()
         df['crt'] = None
         
@@ -382,9 +403,11 @@ class FeatureEngineer:
         df['c2_low'] = df['low'].shift(1)
         df['c2_high'] = df['high'].shift(1)
         df['c2_close'] = df['close'].shift(1)
+        logging.debug("Shifted candle data for CRT calculation")
         
         df['c2_range'] = df['c2_high'] - df['c2_low']
         df['c2_mid'] = df['c2_low'] + (0.5 * df['c2_range'])
+        logging.debug("Calculated c2 range and mid")
         
         buy_mask = (
             (df['c2_low'] < df['c1_low']) &
@@ -396,17 +419,22 @@ class FeatureEngineer:
             (df['c2_close'] < df['c1_high']) &
             (df['open'] < df['c2_mid'])
         )
+        logging.debug("Applied buy and sell masks")
         
         df.loc[buy_mask, 'crt'] = 'BUY'
         df.loc[sell_mask, 'crt'] = 'SELL'
+        logging.debug("Assigned CRT signals")
         
         df.drop(columns=['c1_low', 'c1_high', 'c2_low', 'c2_high', 'c2_close', 'c2_range', 'c2_mid'], inplace=True)
+        logging.debug("Cleaned up temporary columns")
         return df
 
     def calculate_trade_features(self, df, signal_type):
+        logging.info(f"Calculating trade features for signal type: {signal_type}")
         df = df.copy()
         last_row = df.iloc[-1]
         prev_row = df.iloc[-2] if len(df) > 1 else last_row
+        logging.debug(f"Last row: {last_row}, Prev row: {prev_row}")
         
         entry = last_row['open']
         if signal_type == 'SELL':
@@ -417,20 +445,24 @@ class FeatureEngineer:
             df['sl_price'] = prev_row['low']
             risk = abs(entry - df['sl_price'])
             df['tp_price'] = entry + 4 * risk
+        logging.debug(f"SL: {df['sl_price'].iloc[-1]}, TP: {df['tp_price'].iloc[-1]}")
         
         df['sl_distance'] = abs(entry - df['sl_price']) * 10
         df['tp_distance'] = abs(df['tp_price'] - entry) * 10
         df['rrr'] = df['tp_distance'] / df['sl_distance'].replace(0, np.nan)
         df['log_sl'] = np.log1p(df['sl_price'])
+        logging.debug(f"SL Distance: {df['sl_distance'].iloc[-1]}, TP Distance: {df['tp_distance'].iloc[-1]}, RRR: {df['rrr'].iloc[-1]}")
         
         return df
 
     def calculate_categorical_features(self, df):
+        logging.info("Calculating categorical features")
         df = df.copy()
         
         # Day of week
         df['day'] = df['time'].dt.day_name()
         df = pd.get_dummies(df, columns=['day'], prefix='day', drop_first=False)
+        logging.debug("Day of week dummies created")
         
         # Session
         def get_session(hour):
@@ -444,6 +476,7 @@ class FeatureEngineer:
                 return 'q1'
         df['session'] = df['time'].dt.hour.apply(get_session)
         df = pd.get_dummies(df, columns=['session'], prefix='session', drop_first=False)
+        logging.debug("Session dummies created")
         
         # RSI Zone
         def rsi_zone(rsi):
@@ -457,6 +490,7 @@ class FeatureEngineer:
                 return 'neutral'
         df['rsi_zone'] = df['rsi'].apply(rsi_zone)
         df = pd.get_dummies(df, columns=['rsi_zone'], prefix='rsi_zone', drop_first=False)
+        logging.debug("RSI zone dummies created")
         
         # Trend Direction
         def is_bullish_stack(row):
@@ -466,6 +500,7 @@ class FeatureEngineer:
         
         df['trend_strength_up'] = df.apply(is_bullish_stack, axis=1).astype(float)
         df['trend_strength_down'] = df.apply(is_bearish_stack, axis=1).astype(float)
+        logging.debug("Trend strength calculated")
         
         def get_trend(row):
             if row['trend_strength_up'] > row['trend_strength_down']:
@@ -476,10 +511,12 @@ class FeatureEngineer:
                 return 'sideways'
         df['trend_direction'] = df.apply(get_trend, axis=1)
         df = pd.get_dummies(df, columns=['trend_direction'], prefix='trend_direction', drop_first=False)
+        logging.debug("Trend direction dummies created")
         
         return df
 
     def calculate_combo_flags(self, df, signal_type):
+        logging.info(f"Calculating combo flags for signal type: {signal_type}")
         df = df.copy()
         
         # RSI and MACD bins
@@ -487,30 +524,37 @@ class FeatureEngineer:
         df['macd_z_bin'] = pd.qcut(df['macd_z'], q=5, duplicates='drop', labels=[
             '(-12.386, -0.496]', '(-0.496, -0.138]', '(-0.138, 0.134]', '(0.134, 0.527]', '(0.527, 9.246]'
         ])
+        logging.debug("RSI and MACD bins calculated")
         
         # Combo keys calculated from features
         df['trade_type'] = signal_type
         df['combo_key'] = df['trade_type'] + '_' + df['trend_direction'] + '_' + df['rsi_bin'].astype(str)
         df['combo_key2'] = df[['trade_type', 'rsi_bin', 'macd_z_bin']].astype(str).agg('_'.join, axis=1)
+        logging.debug("Combo keys generated")
         
         # Convert tuple lists to dictionaries for mapping
         combo_flag_dict = dict(self.combo_flags)
         combo_flag2_dict = dict(self.combo_flags2)
+        logging.debug("Combo flag dictionaries created")
         
         # Map calculated combo keys to their flags
         df['combo_flag'] = df['combo_key'].map(combo_flag_dict).fillna('dead')
         df['combo_flag2'] = df['combo_key2'].map(combo_flag2_dict).fillna('dead')
+        logging.debug("Mapped combo flags")
         
         # is_bad_combo (dead combo_flag or combo_flag2 indicates bad combo)
         df['is_bad_combo'] = ((df['combo_flag'] == 'dead') | (df['combo_flag2'] == 'dead')).astype(int)
+        logging.debug("is_bad_combo calculated")
         
         # Create dummy variables
         df = pd.get_dummies(df, columns=['combo_flag'], prefix='combo_flag', drop_first=False)
         df = pd.get_dummies(df, columns=['combo_flag2'], prefix='combo_flag2', drop_first=False)
+        logging.debug("Combo flag dummies created")
         
         return df
 
     def calculate_minutes_closed(self, df, minutes_closed):
+        logging.info(f"Calculating minutes closed: {minutes_closed}")
         df = df.copy()
         minute = minutes_closed
         if 0 <= minute < 15:
@@ -521,40 +565,51 @@ class FeatureEngineer:
             minute_col = 'minutes,closed_45'
         else:
             minute_col = 'minutes,closed_0'
+        logging.debug(f"Determined minute column: {minute_col}")
         
         for col in ['minutes,closed_0', 'minutes,closed_15', 'minutes,closed_30', 'minutes,closed_45']:
             df[col] = 1 if col == minute_col else 0
+        logging.debug("Minutes closed dummies set")
         
         return df
 
     def transform(self, df_history, signal_type, minutes_closed):
+        logging.info(f"Transforming data for signal type: {signal_type}, minutes closed: {minutes_closed}")
         try:
             if len(df_history) < self.history_size:
                 logging.warning(f"Insufficient data: {len(df_history)} rows, need {self.history_size}")
                 return None
             
             df = df_history.copy()
+            logging.debug(f"Data copy created with {len(df)} rows")
             
             # Ensure time is in correct format
             df['time'] = pd.to_datetime(df['time']).dt.tz_localize('UTC').dt.tz_convert('America/New_York')
+            logging.debug("Time converted to NY timezone")
             
             # Calculate technical indicators
             df = self.calculate_technical_indicators(df)
+            logging.debug("Technical indicators calculated")
             
             # Calculate CRT signals
             df = self.calculate_crt_vectorized(df)
+            logging.debug("CRT signals calculated")
             
             # Calculate trade-related features
             df = self.calculate_trade_features(df, signal_type)
+            logging.debug("Trade features calculated")
             
             # Calculate categorical features
             df = self.calculate_categorical_features(df)
+            logging.debug("Categorical features calculated")
             
             # Calculate combo flags
             df = self.calculate_combo_flags(df, signal_type)
+            logging.debug("Combo flags calculated")
             
             # Calculate minutes closed
             df = self.calculate_minutes_closed(df, minutes_closed)
+            logging.debug("Minutes closed calculated")
             
             # Candle and volume features
             df['prev_volume'] = df['volume'].shift(1)
@@ -564,6 +619,7 @@ class FeatureEngineer:
             df['prev_body_size'] = df['body_size'].shift(1)
             df['prev_wick_up'] = df['wick_up'].shift(1)
             df['prev_wick_down'] = df['wick_down'].shift(1)
+            logging.debug("Candle and volume features calculated")
             
             # Derived metrics
             df['price_div_vol'] = df['adj close'] / (df['garman_klass_vol'] + 1e-6)
@@ -572,24 +628,28 @@ class FeatureEngineer:
             df['sl_div_atr'] = df['sl_distance'] / (df['atr_z'] + 1e-6)
             df['tp_div_atr'] = df['tp_distance'] / (df['atr_z'] + 1e-6)
             df['rrr_div_rsi'] = df['rrr'] / (df['rsi'] + 1e-6)
+            logging.debug("Derived metrics calculated")
             
             # Ensure CRT and trade type encoding
             df['crt_BUY'] = (df['crt'] == 'BUY').astype(int)
             df['crt_SELL'] = (df['crt'] == 'SELL').astype(int)
             df['trade_type_BUY'] = (signal_type == 'BUY').astype(int)
             df['trade_type_SELL'] = (signal_type == 'SELL').astype(int)
+            logging.debug("CRT and trade type encoding applied")
             
             # Select features in the correct order
             features = df.iloc[-1][FEATURES].astype(float)
+            logging.debug(f"Selected features: {features}")
             
             # Handle NaN values
             if features.isna().any():
                 logging.warning(f"Missing features: {features[features.isna()].index.tolist()}")
                 return None
             
+            logging.info("Feature transformation completed successfully")
             return features
         except Exception as e:
-            logging.error(f"Feature engineering error: {e}")
+            logging.error(f"Feature engineering error: {e}, Dataframe shape: {df.shape if 'df' in locals() else 'N/A'}")
             return None
 
 # ========================
@@ -619,38 +679,46 @@ class CandleScheduler(threading.Thread):
         return now.replace(minute=next_minute, second=0, microsecond=0)
     
     def calculate_minutes_closed(self, latest_time):
+        logging.info(f"Calculating minutes closed for latest time: {latest_time}")
         if not latest_time:
+            logging.debug("No latest time, returning 0 minutes closed")
             return 0
         now = datetime.now(NY_TZ)
         elapsed = (now - latest_time).total_seconds() / 60
+        logging.debug(f"Elapsed time since last candle: {elapsed} minutes")
         if elapsed < 15:
-            return 15
+            result = 15
         elif elapsed < 30:
-            return 30
+            result = 30
         elif elapsed < 45:
-            return 45
-        return 0
+            result = 45
+        else:
+            result = 0
+        logging.debug(f"Minutes closed calculated: {result}")
+        return result
     
     def run(self):
+        logging.info("Starting CandleScheduler thread")
         while self.active:
             try:
-                self.next_candle = self.calculate_next_candle()
-                now = datetime.now(NY_TZ)
-                sleep_seconds = (self.next_candle - now).total_seconds()
-                if sleep_seconds > 0:
-                    logging.info(f"Sleeping {sleep_seconds:.1f}s until next candle")
-                    time.sleep(sleep_seconds)
-                
-                # Fetch latest candle to pass to callback
+                # Fetch latest candle to pass to callback without sleeping
+                logging.info("Fetching latest candle")
                 latest_candle_df = fetch_candles().iloc[-1:] if fetch_candles() is not None else pd.DataFrame()
+                logging.debug(f"Latest candle dataframe: {latest_candle_df}")
                 latest_time = latest_candle_df['time'].iloc[-1] if not latest_candle_df.empty else None
+                logging.debug(f"Latest candle time: {latest_time}")
                 minutes_closed = self.calculate_minutes_closed(latest_time)
                 
                 if self.callback:
+                    logging.info(f"Calling callback with minutes closed: {minutes_closed}")
                     self.callback(minutes_closed, latest_candle_df)
                 
+                # Small delay to avoid overwhelming API (1 second)
+                logging.debug("Sleeping 1 second to avoid API overload")
+                time.sleep(1)
+                
             except Exception as e:
-                logging.error(f"Scheduler error: {e}")
+                logging.error(f"Scheduler error: {e}, Stack trace: {str(e)}")
                 time.sleep(60)
 
 # ========================
@@ -658,6 +726,7 @@ class CandleScheduler(threading.Thread):
 # ========================
 class TradingDetector:
     def __init__(self, model_path='/home/runner/work/surgeon-/surgeon-/ml_models', scaler_path='/home/runner/work/surgeon-/surgeon-/ml_models/scaler_oversample.joblib'):
+        logging.info("Initializing TradingDetector")
         self.data = pd.DataFrame()
         self.feature_engineer = FeatureEngineer(history_size=200)  # 200 candles (50 hours) for features
         self.models = []
@@ -667,13 +736,16 @@ class TradingDetector:
         self.scheduler = CandleScheduler(timeframe=15)
         self.pending_signals = deque(maxlen=100)
         self.load_resources()
-        
-        # Fetch initial 200 candles upfront
+        logging.info("Loading initial candles")
         self.data = self.fetch_initial_candles()
+        logging.info(f"Initial data loaded with {len(self.data)} rows")
         self.scheduler.register_callback(self.process_pending_signals)
+        logging.info("Registering scheduler callback")
         self.scheduler.start()
+        logging.info("TradingDetector initialized")
 
     def fetch_initial_candles(self):
+        logging.info("Fetching initial 200 candles")
         import oandapyV20.endpoints.instruments as instruments
         from oandapyV20 import API
         import pandas as pd
@@ -686,10 +758,12 @@ class TradingDetector:
         r = instruments.InstrumentsCandles(instrument=INSTRUMENT, params=params)
         for attempt in range(3):  # Retry logic
             try:
+                logging.debug(f"API request attempt {attempt + 1}/3")
                 api.request(r)
                 candles = r.response.get("candles", [])
                 if not candles:
-                    raise ValueError("No candles received from OANDA")
+                    logging.warning("No candles received from OANDA")
+                    raise ValueError("No candles received")
                 df = pd.DataFrame([{
                     "time": c["time"],
                     "open": float(c["mid"]["o"]),
@@ -699,6 +773,7 @@ class TradingDetector:
                     "volume": int(c.get("volume", 0))
                 } for c in candles if c.get("complete", False)])
                 df["time"] = pd.to_datetime(df["time"])
+                logging.info(f"Initial candles fetched: {len(df)} rows")
                 return df
             except V20Error as e:
                 logging.error(f"API error (attempt {attempt + 1}/3): {e}")
@@ -706,23 +781,33 @@ class TradingDetector:
                     time.sleep(5 * (attempt + 1))  # Exponential backoff
                 else:
                     raise
-        raise Exception("Failed to fetch initial candles after 3 attempts")
+        logging.error("Failed to fetch initial candles after 3 attempts")
+        raise Exception("Failed to fetch initial candles")
 
     def process_pending_signals(self, minutes_closed, latest_candles):
+        logging.info(f"Processing pending signals, minutes closed: {minutes_closed}")
         import time
         global CRT_SIGNAL_COUNT, LAST_SIGNAL_TIME, SIGNALS, GLOBAL_LOCK
         
         # Update data with latest candles
         if not latest_candles.empty:
+            logging.info(f"Updating data with {len(latest_candles)} new candles")
             self.data = pd.concat([self.data, latest_candles]).drop_duplicates(subset=["time"]).sort_values("time").tail(200)
-        
+            logging.debug(f"Updated data shape: {self.data.shape}")
+        else:
+            logging.warning("No new candles to update")
+
         if self.data.empty or len(self.data) < self.feature_engineer.history_size:
-            logging.warning(f"Insufficient data: {len(self.data)} rows")
+            logging.warning(f"Insufficient data: {len(self.data)} rows, need {self.feature_engineer.history_size}")
             return
         
         start_time = time.time()
+        logging.debug(f"Starting signal processing at {start_time}")
         df_history = self.data.tail(self.feature_engineer.history_size)
+        logging.debug(f"Using history of {len(df_history)} rows")
+        
         for signal in list(self.pending_signals):
+            logging.info(f"Processing signal: {signal['signal']}")
             features = self.feature_engineer.transform(df_history, signal['signal'], minutes_closed)
             if features is None:
                 logging.warning(f"Feature extraction failed for signal: {signal['signal']}")
@@ -731,14 +816,16 @@ class TradingDetector:
                 
             val_start = time.time()
             signal_candle_time = self.data.iloc[-1]['time'].strftime('%Y-%m-%d %H:%M:%S')
+            logging.debug(f"Signal candle time: {signal_candle_time}")
             validation_result = self.validate(features)
-            print(f"Feature generation took {(val_start - start_time):.2f}s")
-            print(f"Validation took {(time.time() - val_start):.2f}s")
-            print(f"Model validation outcome: {int(validation_result)}")
-            print(f"Signal candle time: {signal_candle_time}")
+            logging.info(f"Feature generation took {(val_start - start_time):.2f}s")
+            logging.info(f"Validation took {(time.time() - val_start):.2f}s")
+            logging.info(f"Model validation outcome: {int(validation_result)}")
+            logging.info(f"Signal candle time: {signal_candle_time}")
             
             if validation_result:
                 with GLOBAL_LOCK:
+                    logging.info("Acquiring lock for signal count update")
                     CRT_SIGNAL_COUNT += 1
                     LAST_SIGNAL_TIME = time.time()
                     SIGNALS.append({
@@ -749,6 +836,7 @@ class TradingDetector:
                         "outcome": "pending",
                         "rrr": None
                     })
+                    logging.info(f"Signal count updated to {CRT_SIGNAL_COUNT}")
                 
                 alert_time = signal['time'].astimezone(NY_TZ)
                 send_telegram(
@@ -761,8 +849,10 @@ class TradingDetector:
                 logging.info(f"Alert triggered for signal: {signal['signal']} at {signal_candle_time}")
             
             self.pending_signals.remove(signal)
+            logging.debug(f"Removed processed signal: {signal['signal']}")
 
     def load_resources(self):
+        logging.info("Loading ML models and scaler")
         try:
             self.scaler = joblib.load(os.path.join(self.model_path, self.scaler_path))
             model_files = [
@@ -781,29 +871,34 @@ class TradingDetector:
             logging.info("ML models and scaler loaded successfully")
         except Exception as e:
             logging.error(f"Model loading failed: {e}")
-            self.models = []
-            self.scaler = None
 
     def validate(self, features):
+        logging.info("Validating features")
         try:
             if isinstance(features, pd.Series):
                 features = features.values.reshape(1, -1)
+                logging.debug("Reshaped features from Series")
             
             scaled = self.scaler.transform(features)
+            logging.debug("Features scaled")
             reshaped = scaled.reshape(scaled.shape[0], 1, scaled.shape[1])
+            logging.debug("Features reshaped for model")
             
             predictions = []
             for model in self.models:
                 pred = model.predict(reshaped, verbose=0).flatten()
                 predictions.append(pred)
+                logging.debug(f"Model prediction: {pred}")
             
             avg_prob = np.mean(predictions, axis=0)[0]
+            logging.debug(f"Average prediction probability: {avg_prob}")
             return avg_prob >= 0.55
         except Exception as e:
             logging.error(f"Validation error: {e}")
             return False
 
     def update_data(self, df_new):
+        logging.info(f"Updating data with new dataframe of size {len(df_new)}")
         if df_new.empty:
             logging.warning("Received empty dataframe in update_data")
             return
@@ -811,26 +906,32 @@ class TradingDetector:
         try:
             if self.data.empty:
                 self.data = df_new
+                logging.debug("Initialized data with new dataframe")
             else:
                 df_combined = pd.concat([self.data, df_new])
                 df_combined = df_combined.drop_duplicates(subset=['time'], keep='last')
                 self.data = df_combined.sort_values('time').reset_index(drop=True)
+                logging.debug(f"Combined data shape: {self.data.shape}")
             
             if len(self.data) >= self.feature_engineer.history_size:
+                logging.info("Data sufficient, checking signals")
                 self.check_signals()
         except Exception as e:
-            logging.error(f"Error in update_data: {e}")
+            logging.error(f"Error in update_data: {e}, Dataframe shape: {self.data.shape if 'self.data' in locals() else 'N/A'}")
 
     def check_signals(self):
+        logging.info("Checking for signals")
         df_history = self.data.tail(self.feature_engineer.history_size)
         if len(df_history) < self.feature_engineer.history_size:
             logging.warning(f"Insufficient history data: {len(df_history)} rows")
             return
         
         df_history = self.feature_engineer.calculate_crt_vectorized(df_history)
+        logging.debug(f"CRT vectorized, last row: {df_history.iloc[-1]}")
         last_row = df_history.iloc[-1]
         
         if last_row['crt'] in ['BUY', 'SELL']:
+            logging.info(f"Detected signal: {last_row['crt']}")
             # Calculate RSI zone for the signal
             rsi = last_row['rsi'] if 'rsi' in last_row else ta.rsi(df_history['close'], length=14).iloc[-1]
             rsi_zone = (
@@ -839,6 +940,7 @@ class TradingDetector:
                 'overbought' if rsi > 70 else
                 'neutral'
             )
+            logging.debug(f"RSI: {rsi}, RSI Zone: {rsi_zone}")
             
             signal_info = {
                 'signal': last_row['crt'],
@@ -853,32 +955,39 @@ class TradingDetector:
 # ========================
 @app.route('/')
 def home():
+    logging.info("Serving home page")
     return render_template('dashboard.html')
 
 @app.route('/dashboard')
 def dashboard():
+    logging.info("Serving dashboard page")
     return render_template('dashboard.html')
 
 @app.route('/journal')
 def journal():
+    logging.info("Serving journal page")
     return render_template('journal.html')
 
 @app.route('/metrics')
 def metrics():
+    logging.info("Serving metrics")
     return jsonify(calculate_performance_metrics())
 
 @app.route('/signals')
 def signals():
+    logging.info("Serving signals")
     with GLOBAL_LOCK:
         return jsonify(list(SIGNALS)[-20:])
 
 @app.route('/journal/entries')
 def journal_entries():
+    logging.info("Serving journal entries")
     with GLOBAL_LOCK:
         return jsonify(list(TRADE_JOURNAL))
 
 @app.route('/journal/add', methods=['POST'])
 def add_entry():
+    logging.info("Adding journal entry")
     data = request.json
     add_journal_entry(
         data.get('type', 'note'),
@@ -889,21 +998,26 @@ def add_entry():
 
 @app.route('/health', methods=['GET'])
 def health_check():
+    logging.info("Serving health check")
     return jsonify({'status': 'healthy', 'time': datetime.now(NY_TZ).isoformat()})
 
 # ========================
 # SUPPORT FUNCTIONS FOR UI
 # ========================
 def calculate_performance_metrics():
+    logging.info("Calculating performance metrics")
     global PERF_CACHE
     
     if time.time() - PERF_CACHE["updated"] < 300 and PERF_CACHE["data"]:
+        logging.debug("Using cached performance metrics")
         return PERF_CACHE["data"]
     
     with GLOBAL_LOCK:
         recent_signals = list(SIGNALS)[-100:]
+        logging.debug(f"Processing {len(recent_signals)} recent signals")
         
         if not recent_signals:
+            logging.info("No recent signals for metrics")
             return {
                 "win_rate": 0,
                 "avg_rrr": 0,
@@ -913,19 +1027,23 @@ def calculate_performance_metrics():
         
         wins = sum(1 for s in recent_signals if s.get('outcome') == 'win')
         win_rate = round((wins / len(recent_signals)) * 100, 1) if recent_signals else 0
+        logging.debug(f"Wins: {wins}, Win rate: {win_rate}%")
         
         rrr_values = [s.get('rrr', 0) for s in recent_signals if s.get('rrr') is not None]
         avg_rrr = round(np.mean(rrr_values), 2) if rrr_values else 0
+        logging.debug(f"Average RRR: {avg_rrr}")
         
         hourly_dist = {}
         for signal in recent_signals:
             hour = datetime.fromtimestamp(signal['time']).hour
             hourly_dist[hour] = hourly_dist.get(hour, 0) + 1
+        logging.debug(f"Hourly distribution: {hourly_dist}")
         
         asset_dist = {}
         for signal in recent_signals:
             pair = signal['pair'].split('_')[0]
             asset_dist[pair] = asset_dist.get(pair, 0) + 1
+        logging.debug(f"Asset distribution: {asset_dist}")
         
         metrics = {
             "win_rate": win_rate,
@@ -933,11 +1051,12 @@ def calculate_performance_metrics():
             "hourly_dist": hourly_dist,
             "asset_dist": asset_dist
         }
-        
+        logging.info("Performance metrics calculated")
         PERF_CACHE = {"updated": time.time(), "data": metrics}
         return metrics
 
 def add_journal_entry(entry_type, content, image_url=None):
+    logging.info(f"Adding journal entry of type: {entry_type}")
     with GLOBAL_LOCK:
         TRADE_JOURNAL.append({
             "timestamp": time.time(),
@@ -945,27 +1064,36 @@ def add_journal_entry(entry_type, content, image_url=None):
             "content": content,
             "image": image_url
         })
+        logging.debug(f"Journal entry added: {content}")
 
 # ========================
 # MAIN BOT OPERATION
 # ========================
 def run_bot():
+    logging.info("Starting trading bot")
     send_telegram(f"🚀 *Bot Started*\nInstrument: XAU/USD\nTimeframe: M15\nTime: {datetime.now(NY_TZ)}")
     
     detector = TradingDetector(model_path='/home/runner/work/surgeon-/surgeon-/ml_models', scaler_path='/home/runner/work/surgeon-/surgeon-/ml_models/scaler_oversample.joblib')
-    refresh_interval = 300  # 5 minutes
+    refresh_interval = 60  # 1 minute for 6 requests per 15-minute cycle
+    logging.info(f"Set refresh interval to {refresh_interval} seconds")
     
     while True:
         try:
+            logging.info("Running bot cycle")
             df = fetch_candles()
             if not df.empty:
+                logging.info(f"Fetched {len(df)} candles, updating data")
                 detector.update_data(df)
+            else:
+                logging.warning("No candles fetched in this cycle")
             time.sleep(refresh_interval)
         except Exception as e:
-            logging.error(f"Main loop error: {e}")
+            logging.error(f"Main loop error: {e}, Stack trace: {str(e)}")
             time.sleep(60)
 
 if __name__ == "__main__":
+    logging.info("Launching main application")
     bot_thread = threading.Thread(target=run_bot, daemon=True)
     bot_thread.start()
+    logging.info("Bot thread started")
     app.run(host='0.0.0.0', port=5000)
