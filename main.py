@@ -122,11 +122,11 @@ def fetch_candles():
     logging.info(f"Fetching candles for {INSTRUMENT} with timeframe {TIMEFRAME}")
     params = {
         "granularity": TIMEFRAME,
-        "count": 202,
-        "price": "M"  # Midpoint prices
+        "count": 201,
+        "price": "M"
     }
     
-    sleep_time = 10  # Initial sleep time for backoff
+    sleep_time = 10
     max_attempts = 3
     
     for attempt in range(max_attempts):
@@ -143,9 +143,6 @@ def fetch_candles():
             
             data = []
             for candle in candles:
-                if not candle.get('complete', False):
-                    continue
-                    
                 price_data = candle.get('mid', {})
                 if not price_data:
                     logging.warning(f"Skipping candle with missing mid price data: {candle}")
@@ -157,7 +154,8 @@ def fetch_candles():
                     'high': float(price_data['h']),
                     'low': float(price_data['l']),
                     'close': float(price_data['c']),
-                    'volume': int(candle.get('volume', 0))
+                    'volume': int(candle.get('volume', 0)),
+                    'complete': candle.get('complete', False)
                 })
             
             if not data:
@@ -165,14 +163,14 @@ def fetch_candles():
                 return pd.DataFrame()
                 
             df = pd.DataFrame(data)
-            logging.info(f"Successfully fetched {len(df)} candles")
+            logging.info(f"Successfully fetched {len(df)} candles, including {sum(df['complete'] == False)} incomplete")
             return df
             
         except V20Error as e:
             if "rate" in str(e).lower():
                 logging.warning(f"Rate limit hit, sleeping {sleep_time}s (attempt {attempt+1}/{max_attempts})")
                 time.sleep(sleep_time)
-                sleep_time *= 2  # Exponential backoff
+                sleep_time *= 2
             else:
                 logging.error(f"Oanda API error: {e}")
                 return pd.DataFrame()
@@ -192,7 +190,6 @@ def fetch_candles():
 class FeatureEngineer:
     def __init__(self, history_size=200):
         self.history_size = history_size
-        # Hardcoded combo flags from combo_flags.csv as tuples
         self.combo_flags = (
             ("SELL_sideways_nan", "dead"),
             ("BUY_sideways_nan", "dead"),
@@ -246,7 +243,6 @@ class FeatureEngineer:
             ("nan_sideways_(50, 60]", "dead"),
             ("nan_sideways_(40, 50]", "dead")
         )
-        # Hardcoded combo flags2 from combo_flags2.csv as tuples
         self.combo_flags2 = (
             ("SELL_nan_nan", "dead"),
             ("BUY_nan_nan", "dead"),
@@ -338,44 +334,36 @@ class FeatureEngineer:
         logging.info("Calculating technical indicators")
         df = df.copy()
         
-        # Adjust close
         df['adj close'] = df['open']
         logging.debug("Adjusted close calculated")
         
-        # Garman-Klass Volatility
         df['garman_klass_vol'] = (
             ((np.log(df['high']) - np.log(df['low'])) ** 2) / 2 -
             (2 * np.log(2) - 1) * ((np.log(df['adj close']) - np.log(df['open'])) ** 2)
         )
         logging.debug("Garman-Klass volatility calculated")
         
-        # RSI
         df['rsi_20'] = ta.rsi(df['adj close'], length=20)
         df['rsi'] = ta.rsi(df['close'], length=14)
         logging.debug("RSI calculated")
         
-        # Bollinger Bands
         bb = ta.bbands(np.log1p(df['adj close']), length=20)
         df['bb_low'] = bb['BBL_20_2.0']
         df['bb_mid'] = bb['BBM_20_2.0']
         df['bb_high'] = bb['BBU_20_2.0']
         logging.debug("Bollinger Bands calculated")
         
-        # ATR (z-scored)
         atr = ta.atr(df['high'], df['low'], df['close'], length=14)
         df['atr_z'] = (atr - atr.mean()) / atr.std()
         logging.debug("ATR z-score calculated")
         
-        # MACD (z-scored)
         macd = ta.macd(df['adj close'], fast=12, slow=26, signal=9)
         df['macd_z'] = (macd['MACD_12_26_9'] - macd['MACD_12_26_9'].mean()) / macd['MACD_12_26_9'].std()
         logging.debug("MACD z-score calculated")
         
-        # Dollar Volume
         df['dollar_volume'] = (df['adj close'] * df['volume']) / 1e6
         logging.debug("Dollar volume calculated")
         
-        # Moving Averages
         df['ma_10'] = df['adj close'].rolling(window=10).mean()
         df['ma_100'] = df['adj close'].rolling(window=100).mean()
         df['ma_20'] = df['close'].rolling(window=20).mean()
@@ -384,7 +372,6 @@ class FeatureEngineer:
         df['ma_60'] = df['close'].rolling(window=60).mean()
         logging.debug("Moving averages calculated")
         
-        # VWAP and VWAP STD
         vwap_num = (df['volume'] * (df['high'] + df['low'] + df['close']) / 3).cumsum()
         vwap_den = df['volume'].cumsum()
         df['vwap'] = vwap_num / vwap_den
@@ -459,12 +446,10 @@ class FeatureEngineer:
         logging.info("Calculating categorical features")
         df = df.copy()
         
-        # Day of week
         df['day'] = df['time'].dt.day_name()
         df = pd.get_dummies(df, columns=['day'], prefix='day', drop_first=False)
         logging.debug("Day of week dummies created")
         
-        # Session
         def get_session(hour):
             if 0 <= hour < 6:
                 return 'q2'
@@ -478,7 +463,6 @@ class FeatureEngineer:
         df = pd.get_dummies(df, columns=['session'], prefix='session', drop_first=False)
         logging.debug("Session dummies created")
         
-        # RSI Zone
         def rsi_zone(rsi):
             if pd.isna(rsi):
                 return 'unknown'
@@ -492,7 +476,6 @@ class FeatureEngineer:
         df = pd.get_dummies(df, columns=['rsi_zone'], prefix='rsi_zone', drop_first=False)
         logging.debug("RSI zone dummies created")
         
-        # Trend Direction
         def is_bullish_stack(row):
             return int(row['ma_20'] > row['ma_30'] > row['ma_40'] > row['ma_60'])
         def is_bearish_stack(row):
@@ -519,34 +502,28 @@ class FeatureEngineer:
         logging.info(f"Calculating combo flags for signal type: {signal_type}")
         df = df.copy()
         
-        # RSI and MACD bins
         df['rsi_bin'] = pd.cut(df['rsi'], bins=[0, 20, 30, 40, 50, 60, 70, 80, 100])
         df['macd_z_bin'] = pd.qcut(df['macd_z'], q=5, duplicates='drop', labels=[
             '(-12.386, -0.496]', '(-0.496, -0.138]', '(-0.138, 0.134]', '(0.134, 0.527]', '(0.527, 9.246]'
         ])
         logging.debug("RSI and MACD bins calculated")
         
-        # Combo keys calculated from features
         df['trade_type'] = signal_type
         df['combo_key'] = df['trade_type'] + '_' + df['trend_direction'] + '_' + df['rsi_bin'].astype(str)
         df['combo_key2'] = df[['trade_type', 'rsi_bin', 'macd_z_bin']].astype(str).agg('_'.join, axis=1)
         logging.debug("Combo keys generated")
         
-        # Convert tuple lists to dictionaries for mapping
         combo_flag_dict = dict(self.combo_flags)
         combo_flag2_dict = dict(self.combo_flags2)
         logging.debug("Combo flag dictionaries created")
         
-        # Map calculated combo keys to their flags
         df['combo_flag'] = df['combo_key'].map(combo_flag_dict).fillna('dead')
         df['combo_flag2'] = df['combo_key2'].map(combo_flag2_dict).fillna('dead')
         logging.debug("Mapped combo flags")
         
-        # is_bad_combo (dead combo_flag or combo_flag2 indicates bad combo)
         df['is_bad_combo'] = ((df['combo_flag'] == 'dead') | (df['combo_flag2'] == 'dead')).astype(int)
         logging.debug("is_bad_combo calculated")
         
-        # Create dummy variables
         df = pd.get_dummies(df, columns=['combo_flag'], prefix='combo_flag', drop_first=False)
         df = pd.get_dummies(df, columns=['combo_flag2'], prefix='combo_flag2', drop_first=False)
         logging.debug("Combo flag dummies created")
@@ -583,35 +560,30 @@ class FeatureEngineer:
             df = df_history.copy()
             logging.debug(f"Data copy created with {len(df)} rows")
             
-            # Ensure time is in correct format
-            df['time'] = pd.to_datetime(df['time']).dt.tz_localize('UTC').dt.tz_convert('America/New_York')
+            if df['time'].dt.tz is not None:
+                df['time'] = df['time'].dt.tz_convert('America/New_York')
+            else:
+                df['time'] = pd.to_datetime(df['time']).dt.tz_localize('UTC').dt.tz_convert('America/New_York')
             logging.debug("Time converted to NY timezone")
             
-            # Calculate technical indicators
             df = self.calculate_technical_indicators(df)
             logging.debug("Technical indicators calculated")
             
-            # Calculate CRT signals
             df = self.calculate_crt_vectorized(df)
             logging.debug("CRT signals calculated")
             
-            # Calculate trade-related features
             df = self.calculate_trade_features(df, signal_type)
             logging.debug("Trade features calculated")
             
-            # Calculate categorical features
             df = self.calculate_categorical_features(df)
             logging.debug("Categorical features calculated")
             
-            # Calculate combo flags
             df = self.calculate_combo_flags(df, signal_type)
             logging.debug("Combo flags calculated")
             
-            # Calculate minutes closed
             df = self.calculate_minutes_closed(df, minutes_closed)
             logging.debug("Minutes closed calculated")
             
-            # Candle and volume features
             df['prev_volume'] = df['volume'].shift(1)
             df['body_size'] = abs(df['close'] - df['open'])
             df['wick_up'] = df['high'] - df[['close', 'open']].max(axis=1)
@@ -621,7 +593,6 @@ class FeatureEngineer:
             df['prev_wick_down'] = df['wick_down'].shift(1)
             logging.debug("Candle and volume features calculated")
             
-            # Derived metrics
             df['price_div_vol'] = df['adj close'] / (df['garman_klass_vol'] + 1e-6)
             df['rsi_div_macd'] = df['rsi'] / (df['macd_z'] + 1e-6)
             df['price_div_vwap'] = df['adj close'] / (df['vwap'] + 1e-6)
@@ -630,18 +601,15 @@ class FeatureEngineer:
             df['rrr_div_rsi'] = df['rrr'] / (df['rsi'] + 1e-6)
             logging.debug("Derived metrics calculated")
             
-            # Ensure CRT and trade type encoding
             df['crt_BUY'] = (df['crt'] == 'BUY').astype(int)
             df['crt_SELL'] = (df['crt'] == 'SELL').astype(int)
             df['trade_type_BUY'] = (signal_type == 'BUY').astype(int)
             df['trade_type_SELL'] = (signal_type == 'SELL').astype(int)
             logging.debug("CRT and trade type encoding applied")
             
-            # Select features in the correct order
             features = df.iloc[-1][FEATURES].astype(float)
             logging.debug(f"Selected features: {features}")
             
-            # Handle NaN values
             if features.isna().any():
                 logging.warning(f"Missing features: {features[features.isna()].index.tolist()}")
                 return None
@@ -701,7 +669,6 @@ class CandleScheduler(threading.Thread):
         logging.info("Starting CandleScheduler thread")
         while self.active:
             try:
-                # Fetch latest candle to pass to callback without sleeping
                 logging.info("Fetching latest candle")
                 latest_candle_df = fetch_candles().iloc[-1:] if fetch_candles() is not None else pd.DataFrame()
                 logging.debug(f"Latest candle dataframe: {latest_candle_df}")
@@ -713,7 +680,6 @@ class CandleScheduler(threading.Thread):
                     logging.info(f"Calling callback with minutes closed: {minutes_closed}")
                     self.callback(minutes_closed, latest_candle_df)
                 
-                # Small delay to avoid overwhelming API (1 second)
                 logging.debug("Sleeping 1 second to avoid API overload")
                 time.sleep(1)
                 
@@ -728,7 +694,7 @@ class TradingDetector:
     def __init__(self, model_path='/home/runner/work/surgeon-/surgeon-/ml_models', scaler_path='/home/runner/work/surgeon-/surgeon-/ml_models/scaler_oversample.joblib'):
         logging.info("Initializing TradingDetector")
         self.data = pd.DataFrame()
-        self.feature_engineer = FeatureEngineer(history_size=200)  # 200 candles (50 hours) for features
+        self.feature_engineer = FeatureEngineer(history_size=200)
         self.models = []
         self.scaler = None
         self.model_path = model_path
@@ -745,18 +711,18 @@ class TradingDetector:
         logging.info("TradingDetector initialized")
 
     def fetch_initial_candles(self):
-        logging.info("Fetching initial 200 candles")
+        logging.info("Fetching initial 201 candles")
         import oandapyV20.endpoints.instruments as instruments
         from oandapyV20 import API
         import pandas as pd
         api = API(environment="practice", access_token=os.getenv("OANDA_API_KEY"))
         params = {
-            "count": 200,
+            "count": 201,
             "granularity": "M15",
             "price": "M"
         }
         r = instruments.InstrumentsCandles(instrument=INSTRUMENT, params=params)
-        for attempt in range(3):  # Retry logic
+        for attempt in range(3):
             try:
                 logging.debug(f"API request attempt {attempt + 1}/3")
                 api.request(r)
@@ -770,15 +736,19 @@ class TradingDetector:
                     "high": float(c["mid"]["h"]),
                     "low": float(c["mid"]["l"]),
                     "close": float(c["mid"]["c"]),
-                    "volume": int(c.get("volume", 0))
-                } for c in candles if c.get("complete", False)])
+                    "volume": int(c.get("volume", 0)),
+                    "complete": c.get("complete", False)
+                } for c in candles])
                 df["time"] = pd.to_datetime(df["time"])
-                logging.info(f"Initial candles fetched: {len(df)} rows")
+                if len(df) < 200:
+                    logging.warning(f"Only {len(df)} candles fetched, retrying")
+                    raise ValueError("Insufficient candles")
+                logging.info(f"Initial candles fetched: {len(df)} rows, {len(df[df['complete'] == False])} incomplete")
                 return df
             except V20Error as e:
                 logging.error(f"API error (attempt {attempt + 1}/3): {e}")
                 if attempt < 2:
-                    time.sleep(5 * (attempt + 1))  # Exponential backoff
+                    time.sleep(5 * (attempt + 1))
                 else:
                     raise
         logging.error("Failed to fetch initial candles after 3 attempts")
@@ -789,7 +759,6 @@ class TradingDetector:
         import time
         global CRT_SIGNAL_COUNT, LAST_SIGNAL_TIME, SIGNALS, GLOBAL_LOCK
         
-        # Update data with latest candles
         if not latest_candles.empty:
             logging.info(f"Updating data with {len(latest_candles)} new candles")
             self.data = pd.concat([self.data, latest_candles]).drop_duplicates(subset=["time"]).sort_values("time").tail(200)
@@ -932,7 +901,6 @@ class TradingDetector:
         
         if last_row['crt'] in ['BUY', 'SELL']:
             logging.info(f"Detected signal: {last_row['crt']}")
-            # Calculate RSI zone for the signal
             rsi = last_row['rsi'] if 'rsi' in last_row else ta.rsi(df_history['close'], length=14).iloc[-1]
             rsi_zone = (
                 'unknown' if pd.isna(rsi) else
@@ -1074,7 +1042,7 @@ def run_bot():
     send_telegram(f"🚀 *Bot Started*\nInstrument: XAU/USD\nTimeframe: M15\nTime: {datetime.now(NY_TZ)}")
     
     detector = TradingDetector(model_path='/home/runner/work/surgeon-/surgeon-/ml_models', scaler_path='/home/runner/work/surgeon-/surgeon-/ml_models/scaler_oversample.joblib')
-    refresh_interval = 60  # 1 minute for 6 requests per 15-minute cycle
+    refresh_interval = 60
     logging.info(f"Set refresh interval to {refresh_interval} seconds")
     
     while True:
