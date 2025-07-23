@@ -7,24 +7,26 @@ on:
 jobs:
   trade:
     runs-on: ubuntu-latest
-    timeout-minutes: 350
+    timeout-minutes: 350  # Adjusted to 5 hours and 50 minutes
     
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
-      
+      with:
+        lfs: true  # Ensure LFS files are downloaded
+
     - name: Set up Python 3.10
       uses: actions/setup-python@v4
       with:
         python-version: '3.10'
-        
+
     - name: Install dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y libopenblas-dev
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        
+
     - name: Test Telegram connection
       run: |
         echo "Testing Telegram connectivity..."
@@ -39,12 +41,12 @@ jobs:
           echo "❌ Telegram test failed: $response"
           exit 1
         fi
-        
+
     - name: Debug ml_models folder
       run: |
         echo "Listing contents of ml_models folder:"
-        ls -la ml_models/ || echo "ml_models folder not found or empty"
-        
+        ls -la /home/runner/work/surgeon-/surgeon-/ml_models/ || echo "ml_models folder not found or empty"
+
     - name: Run Trading Bot
       env:
         OANDA_ACCOUNT_ID: ${{ secrets.OANDA_ACCOUNT_ID }}
