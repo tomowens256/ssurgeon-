@@ -683,20 +683,30 @@ class TradingDetector:
             "granularity": "M15",
             "price": "M"
         }
-        r = instruments.InstrumentsCandles(instrument="XAU/USD", params=params)
-        api.request(r)
-        candles = r.response.get("candles", [])
-        if not candles:
-            raise ValueError("Failed to fetch initial candles")
-        df = pd.DataFrame([{
-            "time": c["time"],
-            "open": float(c["mid"]["o"]),
-            "high": float(c["mid"]["h"]),
-            "low": float(c["mid"]["l"]),
-            "close": float(c["mid"]["c"])
-        } for c in candles])
-        df["time"] = pd.to_datetime(df["time"])
-        return df
+        r = instruments.InstrumentsCandles(instrument=INSTRUMENT, params=params)
+        for attempt in range(3):  # Retry logic
+            try:
+                api.request(r)
+                candles = r.response.get("candles", [])
+                if not candles:
+                    raise ValueError("No candles received from OANDA")
+                df = pd.DataFrame([{
+                    "time": c["time"],
+                    "open": float(c["mid"]["o"]),
+                    "high": float(c["mid"]["h"]),
+                    "low": float(c["mid"]["l"]),
+                    "close": float(c["mid"]["c"]),
+                    "volume": int(c.get("volume", 0))
+                } for c in candles if c.get("complete", False)])
+                df["time"] = pd.to_datetime(df["time"])
+                return df
+            except V20Error as e:
+                logging.error(f"API error (attempt {attempt + 1}/3): {e}")
+                if attempt < 2:
+                    time.sleep(5 * (attempt + 1))  # Exponential backoff
+                else:
+                    raise
+        raise Exception("Failed to fetch initial candles after 3 attempts")
 
     def process_pending_signals(self, minutes_closed, latest_candles):
         import time
@@ -720,12 +730,12 @@ class TradingDetector:
                 continue
                 
             val_start = time.time()
-            signal_candle_time = self.data.iloc[-1]['time'].strftime('%Y-%m-%d %H:%M:%S')  # Add signal candle time
+            signal_candle_time = self.data.iloc[-1]['time'].strftime('%Y-%m-%d %H:%M:%S')
             validation_result = self.validate(features)
             print(f"Feature generation took {(val_start - start_time):.2f}s")
             print(f"Validation took {(time.time() - val_start):.2f}s")
-            print(f"Model validation outcome: {int(validation_result)}")  # Add 1 or 0 outcome
-            print(f"Signal candle time: {signal_candle_time}")  # Add signal candle time
+            print(f"Model validation outcome: {int(validation_result)}")
+            print(f"Signal candle time: {signal_candle_time}")
             
             if validation_result:
                 with GLOBAL_LOCK:
@@ -748,7 +758,7 @@ class TradingDetector:
                     f"RSI Zone: {signal['rsi_zone']}\n"
                     f"Confidence: High"
                 )
-                logging.info(f"Alert triggered for signal: {signal['signal']}")
+                logging.info(f"Alert triggered for signal: {signal['signal']} at {signal_candle_time}")
             
             self.pending_signals.remove(signal)
 
