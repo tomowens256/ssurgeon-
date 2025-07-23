@@ -602,7 +602,6 @@ class CandleScheduler(threading.Thread):
         self.callback = None
         self.active = True
         self.next_candle = None
-        self.minutes_closed = 0
         self.event = threading.Event()
     
     def register_callback(self, callback):
@@ -612,28 +611,24 @@ class CandleScheduler(threading.Thread):
         now = datetime.now(NY_TZ)
         current_minute = now.minute
         remainder = current_minute % self.timeframe
-        
         if remainder == 0:
-            next_candle = now.replace(second=0, microsecond=0) + timedelta(minutes=self.timeframe)
-        else:
-            next_minute = current_minute - remainder + self.timeframe
-            if next_minute >= 60:
-                next_candle = now.replace(hour=now.hour+1, minute=0, second=0, microsecond=0)
-            else:
-                next_candle = now.replace(minute=next_minute, second=0, microsecond=0)
-        
-        return next_candle
+            return now.replace(second=0, microsecond=0) + timedelta(minutes=self.timeframe)
+        next_minute = current_minute - remainder + self.timeframe
+        if next_minute >= 60:
+            return now.replace(hour=now.hour + 1, minute=0, second=0, microsecond=0)
+        return now.replace(minute=next_minute, second=0, microsecond=0)
     
-    def calculate_minutes_closed(self):
+    def calculate_minutes_closed(self, latest_time):
+        if not latest_time:
+            return 0
         now = datetime.now(NY_TZ)
-        if self.next_candle:
-            elapsed = (now - (self.next_candle - timedelta(minutes=self.timeframe))).total_seconds() / 60
-            if elapsed < 15:
-                return 15
-            elif elapsed < 30:
-                return 30
-            elif elapsed < 45:
-                return 45
+        elapsed = (now - latest_time).total_seconds() / 60
+        if elapsed < 15:
+            return 15
+        elif elapsed < 30:
+            return 30
+        elif elapsed < 45:
+            return 45
         return 0
     
     def run(self):
@@ -642,20 +637,18 @@ class CandleScheduler(threading.Thread):
                 self.next_candle = self.calculate_next_candle()
                 now = datetime.now(NY_TZ)
                 sleep_seconds = (self.next_candle - now).total_seconds()
-                
                 if sleep_seconds > 0:
                     logging.info(f"Sleeping {sleep_seconds:.1f}s until next candle")
                     time.sleep(sleep_seconds)
                 
-                start_time = time.time()
-                self.minutes_closed = self.calculate_minutes_closed()
+                # Fetch latest candle to pass to callback
+                latest_candle_df = fetch_candles().iloc[-1:] if fetch_candles() is not None else pd.DataFrame()
+                latest_time = latest_candle_df['time'].iloc[-1] if not latest_candle_df.empty else None
+                minutes_closed = self.calculate_minutes_closed(latest_time)
                 
                 if self.callback:
-                    self.callback(self.minutes_closed)
+                    self.callback(minutes_closed, latest_candle_df)
                 
-                processing_time = time.time() - start_time
-                if processing_time < 30:
-                    time.sleep(30 - processing_time)
             except Exception as e:
                 logging.error(f"Scheduler error: {e}")
                 time.sleep(60)
@@ -664,10 +657,9 @@ class CandleScheduler(threading.Thread):
 # TRADING DETECTOR
 # ========================
 class TradingDetector:
-    def __init__(self, model_path='/home/runner/work/surgeon-/surgeon-/ml_models', scaler_path='/home/runner/work/surgeon-/surgeon-/ml_models'):
-        
+    def __init__(self, model_path='/home/runner/work/surgeon-/surgeon-/ml_models', scaler_path='/home/runner/work/surgeon-/surgeon-/ml_models/scaler_oversample.joblib'):
         self.data = pd.DataFrame()
-        self.feature_engineer = FeatureEngineer(history_size=200)
+        self.feature_engineer = FeatureEngineer(history_size=200)  # 200 candles (50 hours) for features
         self.models = []
         self.scaler = None
         self.model_path = model_path
@@ -675,8 +667,90 @@ class TradingDetector:
         self.scheduler = CandleScheduler(timeframe=15)
         self.pending_signals = deque(maxlen=100)
         self.load_resources()
+        
+        # Fetch initial 200 candles upfront
+        self.data = self.fetch_initial_candles()
         self.scheduler.register_callback(self.process_pending_signals)
         self.scheduler.start()
+
+    def fetch_initial_candles(self):
+        import oandapyV20.endpoints.instruments as instruments
+        from oandapyV20 import API
+        import pandas as pd
+        api = API(environment="practice", access_token=os.getenv("OANDA_API_KEY"))
+        params = {
+            "count": 200,
+            "granularity": "M15",
+            "price": "M"
+        }
+        r = instruments.InstrumentsCandles(instrument="XAU/USD", params=params)
+        api.request(r)
+        candles = r.response.get("candles", [])
+        if not candles:
+            raise ValueError("Failed to fetch initial candles")
+        df = pd.DataFrame([{
+            "time": c["time"],
+            "open": float(c["mid"]["o"]),
+            "high": float(c["mid"]["h"]),
+            "low": float(c["mid"]["l"]),
+            "close": float(c["mid"]["c"])
+        } for c in candles])
+        df["time"] = pd.to_datetime(df["time"])
+        return df
+
+    def process_pending_signals(self, minutes_closed, latest_candles):
+        import time
+        global CRT_SIGNAL_COUNT, LAST_SIGNAL_TIME, SIGNALS, GLOBAL_LOCK
+        
+        # Update data with latest candles
+        if not latest_candles.empty:
+            self.data = pd.concat([self.data, latest_candles]).drop_duplicates(subset=["time"]).sort_values("time").tail(200)
+        
+        if self.data.empty or len(self.data) < self.feature_engineer.history_size:
+            logging.warning(f"Insufficient data: {len(self.data)} rows")
+            return
+        
+        start_time = time.time()
+        df_history = self.data.tail(self.feature_engineer.history_size)
+        for signal in list(self.pending_signals):
+            features = self.feature_engineer.transform(df_history, signal['signal'], minutes_closed)
+            if features is None:
+                logging.warning(f"Feature extraction failed for signal: {signal['signal']}")
+                self.pending_signals.remove(signal)
+                continue
+                
+            val_start = time.time()
+            signal_candle_time = self.data.iloc[-1]['time'].strftime('%Y-%m-%d %H:%M:%S')  # Add signal candle time
+            validation_result = self.validate(features)
+            print(f"Feature generation took {(val_start - start_time):.2f}s")
+            print(f"Validation took {(time.time() - val_start):.2f}s")
+            print(f"Model validation outcome: {int(validation_result)}")  # Add 1 or 0 outcome
+            print(f"Signal candle time: {signal_candle_time}")  # Add signal candle time
+            
+            if validation_result:
+                with GLOBAL_LOCK:
+                    CRT_SIGNAL_COUNT += 1
+                    LAST_SIGNAL_TIME = time.time()
+                    SIGNALS.append({
+                        "time": time.time(),
+                        "pair": "XAU_USD",
+                        "timeframe": "M15",
+                        "signal": signal['signal'],
+                        "outcome": "pending",
+                        "rrr": None
+                    })
+                
+                alert_time = signal['time'].astimezone(NY_TZ)
+                send_telegram(
+                    f"🚀 *VALIDATED CRT* XAU/USD {signal['signal']}\n"
+                    f"Timeframe: M15\n"
+                    f"Time: {alert_time.strftime('%Y-%m-%d %H:%M')} NY\n"
+                    f"RSI Zone: {signal['rsi_zone']}\n"
+                    f"Confidence: High"
+                )
+                logging.info(f"Alert triggered for signal: {signal['signal']}")
+            
+            self.pending_signals.remove(signal)
 
     def load_resources(self):
         try:
@@ -718,57 +792,6 @@ class TradingDetector:
         except Exception as e:
             logging.error(f"Validation error: {e}")
             return False
-
-    def process_pending_signals(self, minutes_closed):
-        global CRT_SIGNAL_COUNT, LAST_SIGNAL_TIME, SIGNALS, GLOBAL_LOCK
-        
-        if not self.pending_signals or self.data.empty:
-            return
-            
-        try:
-            df_history = self.data.tail(self.feature_engineer.history_size)
-            if len(df_history) < self.feature_engineer.history_size:
-                logging.warning(f"Insufficient history data: {len(df_history)} rows")
-                return
-                
-            for signal in list(self.pending_signals):
-                features = self.feature_engineer.transform(
-                    df_history, 
-                    signal['signal'], 
-                    minutes_closed
-                )
-                
-                if features is None:
-                    logging.warning(f"Feature extraction failed for signal: {signal['signal']}")
-                    self.pending_signals.remove(signal)
-                    continue
-                
-                if self.validate(features):
-                    with GLOBAL_LOCK:
-                        CRT_SIGNAL_COUNT += 1
-                        LAST_SIGNAL_TIME = time.time()
-                        SIGNALS.append({
-                            "time": time.time(),
-                            "pair": "XAU_USD",
-                            "timeframe": "M15",
-                            "signal": signal['signal'],
-                            "outcome": "pending",
-                            "rrr": None
-                        })
-                    
-                    alert_time = signal['time'].astimezone(NY_TZ)
-                    send_telegram(
-                        f"🚀 *VALIDATED CRT* XAU/USD {signal['signal']}\n"
-                        f"Timeframe: M15\n"
-                        f"Time: {alert_time.strftime('%Y-%m-%d %H:%M')} NY\n"
-                        f"RSI Zone: {signal['rsi_zone']}\n"
-                        f"Confidence: High"
-                    )
-                    logging.info(f"Alert triggered for signal: {signal['signal']}")
-                
-                self.pending_signals.remove(signal)
-        except Exception as e:
-            logging.error(f"Signal processing error: {e}")
 
     def update_data(self, df_new):
         if df_new.empty:
@@ -813,7 +836,7 @@ class TradingDetector:
                 'rsi_zone': rsi_zone
             }
             self.pending_signals.append(signal_info)
-            logging.info(f"Signal queued for validation: {signal_info['signal']}")
+            logging.info(f"Signal queued for validation: {signal_info['signal']} at {last_row['time'].strftime('%Y-%m-%d %H:%M:%S')}")
 
 # ========================
 # FLASK UI ROUTES
