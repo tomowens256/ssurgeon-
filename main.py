@@ -122,7 +122,7 @@ def fetch_candles():
     logging.info(f"Fetching candles for {INSTRUMENT} with timeframe {TIMEFRAME}")
     params = {
         "granularity": TIMEFRAME,
-        "count": 200,
+        "count": 202,
         "price": "M"  # Midpoint prices
     }
     
