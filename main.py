@@ -919,7 +919,7 @@ def add_journal_entry(entry_type, content, image_url=None):
 def run_bot():
     send_telegram(f"🚀 *Bot Started*\nInstrument: XAU/USD\nTimeframe: M15\nTime: {datetime.now(NY_TZ)}")
     
-    detector = TradingDetector(model_path='./ml_models', scaler_path='scaler_oversample.joblib')
+    detector = TradingDetector(model_path='/home/runner/work/surgeon-/surgeon-/ml_models', scaler_path='/home/runner/work/surgeon-/surgeon-/ml_models/scaler_oversample.joblib')
     refresh_interval = 300  # 5 minutes
     
     while True:
