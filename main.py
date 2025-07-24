@@ -7,7 +7,6 @@ import pytz
 import numpy as np
 import pandas as pd
 import pandas_ta as ta
-import joblib
 import requests
 import re
 import traceback
@@ -169,9 +168,28 @@ def fetch_candles():
     return pd.DataFrame()
 
 # ========================
-# FEATURE ENGINEER (SIMPLIFIED FOR SIGNAL DETECTION)
+# FEATURE ENGINEER
 # ========================
 class FeatureEngineer:
+    def __init__(self):
+        self.features = [
+            'adj close', 'garman_klass_vol', 'rsi_20', 'bb_low', 'bb_mid', 'bb_high',
+            'atr_z', 'macd_z', 'dollar_volume', 'ma_10', 'ma_100', 'vwap', 'vwap_std',
+            'rsi', 'ma_20', 'ma_30', 'ma_40', 'ma_60', 'trend_strength_up',
+            'trend_strength_down', 'sl_price', 'tp_price', 'prev_volume', 'sl_distance',
+            'tp_distance', 'rrr', 'log_sl', 'prev_body_size', 'prev_wick_up',
+            'prev_wick_down', 'is_bad_combo', 'price_div_vol', 'rsi_div_macd',
+            'price_div_vwap', 'sl_div_atr', 'tp_div_atr', 'rrr_div_rsi',
+            'day_Friday', 'day_Monday', 'day_Sunday', 'day_Thursday', 'day_Tuesday',
+            'day_Wednesday', 'session_q1', 'session_q2', 'session_q3', 'session_q4',
+            'rsi_zone_neutral', 'rsi_zone_overbought', 'rsi_zone_oversold',
+            'rsi_zone_unknown', 'trend_direction_downtrend', 'trend_direction_sideways',
+            'trend_direction_uptrend', 'crt_BUY', 'crt_SELL', 'trade_type_BUY',
+            'trade_type_SELL', 'combo_flag_dead', 'combo_flag_fair', 'combo_flag_fine',
+            'combo_flag2_dead', 'combo_flag2_fair', 'combo_flag2_fine',
+            'minutes_closed_0', 'minutes_closed_15', 'minutes_closed_30', 'minutes_closed_45'
+        ]
+
     def calculate_crt_signal(self, df):
         """Calculate CRT signal on the current candle using the last 3 candles"""
         logger.info("Calculating CRT signals on last 3 candles")
@@ -204,6 +222,204 @@ class FeatureEngineer:
             logger.info(f"Detected signal: {signal_type} on current candle")
             return signal_type, {'entry': entry, 'sl': sl, 'tp': tp, 'time': c3['time']}
         return None, None
+
+    def calculate_technical_indicators(self, df):
+        logger.info("Calculating technical indicators")
+        df = df.copy()
+        
+        df['adj close'] = df['open']
+        logger.debug("Adjusted close calculated")
+        
+        df['garman_klass_vol'] = (
+            ((np.log(df['high']) - np.log(df['low'])) ** 2) / 2 -
+            (2 * np.log(2) - 1) * ((np.log(df['adj close']) - np.log(df['open'])) ** 2)
+        )
+        logger.debug("Garman-Klass volatility calculated")
+        
+        df['rsi_20'] = ta.rsi(df['adj close'], length=20)
+        df['rsi'] = ta.rsi(df['close'], length=14)
+        logger.debug("RSI calculated")
+        
+        bb = ta.bbands(np.log1p(df['adj close']), length=20)
+        df['bb_low'] = bb['BBL_20_2.0']
+        df['bb_mid'] = bb['BBM_20_2.0']
+        df['bb_high'] = bb['BBU_20_2.0']
+        logger.debug("Bollinger Bands calculated")
+        
+        atr = ta.atr(df['high'], df['low'], df['close'], length=14)
+        df['atr_z'] = (atr - atr.mean()) / atr.std()
+        logger.debug("ATR z-score calculated")
+        
+        macd = ta.macd(df['adj close'], fast=12, slow=26, signal=9)
+        df['macd_z'] = (macd['MACD_12_26_9'] - macd['MACD_12_26_9'].mean()) / macd['MACD_12_26_9'].std()
+        logger.debug("MACD z-score calculated")
+        
+        df['dollar_volume'] = (df['adj close'] * df['volume']) / 1e6
+        logger.debug("Dollar volume calculated")
+        
+        df['ma_10'] = df['adj close'].rolling(window=10).mean()
+        df['ma_100'] = df['adj close'].rolling(window=100).mean()
+        df['ma_20'] = df['close'].rolling(window=20).mean()
+        df['ma_30'] = df['close'].rolling(window=30).mean()
+        df['ma_40'] = df['close'].rolling(window=40).mean()
+        df['ma_60'] = df['close'].rolling(window=60).mean()
+        logger.debug("Moving averages calculated")
+        
+        vwap_num = (df['volume'] * (df['high'] + df['low'] + df['close']) / 3).cumsum()
+        vwap_den = df['volume'].cumsum()
+        df['vwap'] = vwap_num / vwap_den
+        df['vwap_std'] = df['vwap'].rolling(window=20).std()
+        logger.debug("VWAP and VWAP STD calculated")
+        
+        return df
+
+    def calculate_trade_features(self, df, signal_type, entry):
+        logger.info(f"Calculating trade features for signal type: {signal_type}")
+        df = df.copy()
+        last_row = df.iloc[-1]
+        prev_row = df.iloc[-2] if len(df) > 1 else last_row
+        logger.debug(f"Last row: {last_row}, Prev row: {prev_row}")
+        
+        if signal_type == 'SELL':
+            df['sl_price'] = prev_row['high']
+            risk = abs(entry - df['sl_price'])
+            df['tp_price'] = entry - 4 * risk
+        else:  # BUY
+            df['sl_price'] = prev_row['low']
+            risk = abs(entry - df['sl_price'])
+            df['tp_price'] = entry + 4 * risk
+        logger.debug(f"SL: {df['sl_price'].iloc[-1]}, TP: {df['tp_price'].iloc[-1]}")
+        
+        df['sl_distance'] = abs(entry - df['sl_price']) * 10
+        df['tp_distance'] = abs(df['tp_price'] - entry) * 10
+        df['rrr'] = df['tp_distance'] / df['sl_distance'].replace(0, np.nan)
+        df['log_sl'] = np.log1p(df['sl_price'])
+        logger.debug(f"SL Distance: {df['sl_distance'].iloc[-1]}, TP Distance: {df['tp_distance'].iloc[-1]}, RRR: {df['rrr'].iloc[-1]}")
+        
+        return df
+
+    def calculate_categorical_features(self, df):
+        logger.info("Calculating categorical features")
+        df = df.copy()
+        
+        df['day'] = df['time'].dt.day_name()
+        df = pd.get_dummies(df, columns=['day'], prefix='day', drop_first=False)
+        logger.debug("Day of week dummies created")
+        
+        def get_session(hour):
+            if 0 <= hour < 6:
+                return 'q2'
+            elif 6 <= hour < 12:
+                return 'q3'
+            elif 12 <= hour < 18:
+                return 'q4'
+            else:
+                return 'q1'
+        df['session'] = df['time'].dt.hour.apply(get_session)
+        df = pd.get_dummies(df, columns=['session'], prefix='session', drop_first=False)
+        logger.debug("Session dummies created")
+        
+        def rsi_zone(rsi):
+            if pd.isna(rsi):
+                return 'unknown'
+            elif rsi < 30:
+                return 'oversold'
+            elif rsi > 70:
+                return 'overbought'
+            else:
+                return 'neutral'
+        df['rsi_zone'] = df['rsi'].apply(rsi_zone)
+        df = pd.get_dummies(df, columns=['rsi_zone'], prefix='rsi_zone', drop_first=False)
+        logger.debug("RSI zone dummies created")
+        
+        def is_bullish_stack(row):
+            return int(row['ma_20'] > row['ma_30'] > row['ma_40'] > row['ma_60'])
+        def is_bearish_stack(row):
+            return int(row['ma_20'] < row['ma_30'] < row['ma_40'] < row['ma_60'])
+        
+        df['trend_strength_up'] = df.apply(is_bullish_stack, axis=1).astype(float)
+        df['trend_strength_down'] = df.apply(is_bearish_stack, axis=1).astype(float)
+        logger.debug("Trend strength calculated")
+        
+        def get_trend(row):
+            if row['trend_strength_up'] > row['trend_strength_down']:
+                return 'uptrend'
+            elif row['trend_strength_down'] > row['trend_strength_up']:
+                return 'downtrend'
+            else:
+                return 'sideways'
+        df['trend_direction'] = df.apply(get_trend, axis=1)
+        df = pd.get_dummies(df, columns=['trend_direction'], prefix='trend_direction', drop_first=False)
+        logger.debug("Trend direction dummies created")
+        
+        return df
+
+    def calculate_minutes_closed(self, df, minutes_closed):
+        logger.info(f"Calculating minutes closed: {minutes_closed}")
+        df = df.copy()
+        minute_cols = ['minutes_closed_0', 'minutes_closed_15', 'minutes_closed_30', 'minutes_closed_45']
+        
+        for col in minute_cols:
+            df[col] = 0
+            
+        if 0 <= minutes_closed < 15:
+            df['minutes_closed_15'] = 1
+        elif 15 <= minutes_closed < 30:
+            df['minutes_closed_30'] = 1
+        elif 30 <= minutes_closed < 45:
+            df['minutes_closed_45'] = 1
+        else:
+            df['minutes_closed_0'] = 1
+            
+        logger.debug(f"Minutes closed set: {dict(zip(minute_cols, df[minute_cols].iloc[0].tolist()))}")
+        return df
+
+    def generate_features(self, df, signal_type, minutes_closed):
+        logger.info(f"Generating features for signal type: {signal_type}, minutes closed: {minutes_closed}")
+        if len(df) < 200:
+            logger.warning(f"Insufficient data: {len(df)} rows, need 200")
+            return None
+        
+        df = df.tail(200).copy()
+        df = self.calculate_technical_indicators(df)
+        df = self.calculate_trade_features(df, signal_type, df.iloc[-1]['open'])
+        df = self.calculate_categorical_features(df)
+        df = self.calculate_minutes_closed(df, minutes_closed)
+        
+        df['prev_volume'] = df['volume'].shift(1)
+        df['body_size'] = abs(df['close'] - df['open'])
+        df['wick_up'] = df['high'] - df[['close', 'open']].max(axis=1)
+        df['wick_down'] = df[['close', 'open']].min(axis=1) - df['low']
+        df['prev_body_size'] = df['body_size'].shift(1)
+        df['prev_wick_up'] = df['wick_up'].shift(1)
+        df['prev_wick_down'] = df['wick_down'].shift(1)
+        logger.debug("Candle and volume features calculated")
+        
+        df['price_div_vol'] = df['adj close'] / (df['garman_klass_vol'] + 1e-6)
+        df['rsi_div_macd'] = df['rsi'] / (df['macd_z'] + 1e-6)
+        df['price_div_vwap'] = df['adj close'] / (df['vwap'] + 1e-6)
+        df['sl_div_atr'] = df['sl_distance'] / (df['atr_z'] + 1e-6)
+        df['tp_div_atr'] = df['tp_distance'] / (df['atr_z'] + 1e-6)
+        df['rrr_div_rsi'] = df['rrr'] / (df['rsi'] + 1e-6)
+        logger.debug("Derived metrics calculated")
+        
+        df['crt_BUY'] = (signal_type == 'BUY').astype(int)
+        df['crt_SELL'] = (signal_type == 'SELL').astype(int)
+        df['trade_type_BUY'] = (signal_type == 'BUY').astype(int)
+        df['trade_type_SELL'] = (signal_type == 'SELL').astype(int)
+        logger.debug("CRT and trade type encoding applied")
+        
+        features = df.iloc[-1][self.features].astype(float)
+        if features.isna().any():
+            missing = features[features.isna()].index.tolist()
+            logger.warning(f"Missing features: {missing}")
+            for col in missing:
+                if col in df.columns:
+                    features[col] = df[col].mean()
+                    logger.warning(f"Filled missing feature {col} with mean value")
+        
+        logger.info("Feature generation completed successfully")
+        return features
 
 # ========================
 # TRADING DETECTOR
@@ -265,6 +481,13 @@ class TradingDetector:
                 f"TP: {signal_data['tp']:.2f}\n"
                 f"SL: {signal_data['sl']:.2f}"
             )
+            
+            # Generate and send features
+            features = self.feature_engineer.generate_features(self.data, signal_type, minutes_closed)
+            if features is not None:
+                feature_msg = f"📊 *FEATURES* {INSTRUMENT.replace('_','/')} {signal_type}\n"
+                feature_msg += "\n".join([f"{feat}: {val:.4f}" for feat, val in features.items()])
+                send_telegram(feature_msg)
 
     def update_data(self, df_new):
         logger.info(f"Updating data with new dataframe of size {len(df_new)}")
@@ -279,13 +502,13 @@ class TradingDetector:
             last_existing_time = self.data['time'].max()
             new_data = df_new[df_new['time'] > last_existing_time]
             if not new_data.empty:
-                self.data = pd.concat([self.data, new_data]).drop_duplicates(subset=['time'], keep='last')
+                self.data = pd.concat([self.data, new_data]).drop_duplicates(subset=['time'], keep="last")
                 self.data = self.data.sort_values('time').reset_index(drop=True).tail(201)
                 logger.debug(f"Combined data shape: {self.data.shape}, latest time: {self.data['time'].max()}")
             else:
                 latest_new = df_new.iloc[-1]
                 if latest_new['time'] >= self.data['time'].max():
-                    self.data = pd.concat([self.data, df_new.tail(1)]).drop_duplicates(subset=['time'], keep='last')
+                    self.data = pd.concat([self.data, df_new.tail(1)]).drop_duplicates(subset=['time'], keep="last")
                     self.data = self.data.sort_values('time').reset_index(drop=True).tail(201)
                     logger.debug(f"Forced update with latest candle, new shape: {self.data.shape}, latest time: {self.data['time'].max()}")
 
@@ -397,4 +620,4 @@ if __name__ == "__main__":
             time.sleep(1)  # Keep main thread alive
     except KeyboardInterrupt:
         logger.info("Shutting down bot")
-        send_telegram("🛑 *Bot Stopped*")
+        send_telegram("🔔 *Bot Stopped*")
