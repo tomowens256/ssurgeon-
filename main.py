@@ -39,7 +39,7 @@ FEATURES = [
     'trend_direction_uptrend', 'crt_BUY', 'crt_SELL', 'trade_type_BUY',
     'trade_type_SELL', 'combo_flag_dead', 'combo_flag_fair', 'combo_flag_fine',
     'combo_flag2_dead', 'combo_flag2_fair', 'combo_flag2_fine',
-    'minutes_closed_0', 'minutes_closed_15', 'minutes_closed_30', 'minutes_closed_45'  # Fixed column names
+    'minutes_closed_0', 'minutes_closed_15', 'minutes_closed_30', 'minutes_closed_45'
 ]
 
 # Oanda configuration
@@ -416,7 +416,7 @@ class FeatureEngineer:
             (df['c2_close'] < df['c1_high']) &
             (df['open'] < df['c2_mid'])
         )
-        logger.debug("Applied buy and sell masks")
+        logger.debug(f"Buy mask: {buy_mask.any()}, Sell mask: {sell_mask.any()}")
         
         df.loc[buy_mask, 'crt'] = 'BUY'
         df.loc[sell_mask, 'crt'] = 'SELL'
@@ -581,9 +581,6 @@ class FeatureEngineer:
             df = self.calculate_technical_indicators(df)
             logger.debug("Technical indicators calculated")
             
-            df = self.calculate_crt_vectorized(df)
-            logger.debug("CRT signals calculated")
-            
             df = self.calculate_trade_features(df, signal_type)
             logger.debug("Trade features calculated")
             
@@ -613,8 +610,8 @@ class FeatureEngineer:
             df['rrr_div_rsi'] = df['rrr'] / (df['rsi'] + 1e-6)
             logger.debug("Derived metrics calculated")
             
-            df['crt_BUY'] = (df['crt'] == 'BUY').astype(int)
-            df['crt_SELL'] = (df['crt'] == 'SELL').astype(int)
+            df['crt_BUY'] = (signal_type == 'BUY').astype(int)
+            df['crt_SELL'] = (signal_type == 'SELL').astype(int)
             df['trade_type_BUY'] = (signal_type == 'BUY').astype(int)
             df['trade_type_SELL'] = (signal_type == 'SELL').astype(int)
             logger.debug("CRT and trade type encoding applied")
@@ -814,9 +811,7 @@ class TradingDetector:
                 send_telegram(
                     f"🚀 *VALIDATED CRT* XAU/USD {signal['signal']}\n"
                     f"Timeframe: M15\n"
-                    f"Time: {alert_time.strftime('%Y-%m-%d %H:%M')} NY\n"
-                    f"RSI Zone: {signal['rsi_zone']}\n"
-                    f"Confidence: High"
+                    f"Time: {alert_time.strftime('%Y-%m-%d %H:%M')} NY"
                 )
                 logger.info(f"Alert triggered for signal: {signal['signal']} at {signal_candle_time}")
             
@@ -884,7 +879,7 @@ class TradingDetector:
             
             avg_prob = np.mean(predictions, axis=0)[0]
             logger.debug(f"Average prediction probability: {avg_prob}")
-            return avg_prob >= 0.55
+            return avg_prob >= 0.5  # Adjusted threshold to 0.5 for binary validation
         except Exception as e:
             logger.error(f"Validation error: {str(e)}")
             logger.error(traceback.format_exc())
@@ -917,8 +912,7 @@ class TradingDetector:
                 logger.info("Data sufficient, checking signals")
                 self.check_signals()
         except Exception as e:
-            logger.error(f"Error in update_data: {str(e)}")
-            logger.error(traceback.format_exc())
+            logger.error(f"Error in update_data: {e}, Dataframe shape: {self.data.shape if 'self.data' in locals() else 'N/A'}")
 
     def check_signals(self):
         logger.info("Checking for signals")
@@ -933,22 +927,18 @@ class TradingDetector:
         
         if last_row['crt'] in ['BUY', 'SELL']:
             logger.info(f"Detected signal: {last_row['crt']}")
-            rsi = last_row['rsi'] if 'rsi' in last_row else ta.rsi(df_history['close'], length=14).iloc[-1]
-            rsi_zone = (
-                'unknown' if pd.isna(rsi) else
-                'oversold' if rsi < 30 else
-                'overbought' if rsi > 70 else
-                'neutral'
-            )
-            logger.debug(f"RSI: {rsi}, RSI Zone: {rsi_zone}")
-            
-            signal_info = {
-                'signal': last_row['crt'],
-                'time': last_row['time'],
-                'rsi_zone': rsi_zone
-            }
-            self.pending_signals.append(signal_info)
-            logger.info(f"Signal queued for validation: {signal_info['signal']} at {last_row['time'].strftime('%Y-%m-%d %H:%M:%S')}")
+            features = self.feature_engineer.transform(df_history, last_row['crt'], 0)  # Use 0 for minutes_closed as placeholder
+            if features is not None:
+                logger.info("Generating features for validation")
+                validation_result = self.validate(features)
+                logger.info(f"Model validation result: {validation_result}")
+                if validation_result:
+                    signal_info = {
+                        'signal': last_row['crt'],
+                        'time': last_row['time'],
+                    }
+                    self.pending_signals.append(signal_info)
+                    logger.info(f"Signal queued for validation: {signal_info['signal']} at {last_row['time'].strftime('%Y-%m-%d %H:%M:%S')}")
 
 # ========================
 # FLASK UI ROUTES
@@ -1096,7 +1086,7 @@ def run_bot():
                 logger.warning("No candles fetched in this cycle")
             time.sleep(60)  # Check every minute
         except Exception as e:
-            logger.error(f"Main loop error: {str(e)}")
+            logger.error(f"Main loop error: {e}")
             logger.error(traceback.format_exc())
             time.sleep(60)
 
