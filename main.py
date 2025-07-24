@@ -570,7 +570,7 @@ class TradingDetector:
                         if not send_telegram(scaled_msg):
                             logger.error("Failed to send scaled features after retries")
                     
-                    # Model predictions with error handling
+                    # Model predictions with ensemble voting (T=0.55)
                     if models:
                         pred_msg = f"🤖 *MODEL PREDICTIONS* {INSTRUMENT.replace('_','/')} {signal_type}\n"
                         try:
@@ -580,9 +580,13 @@ class TradingDetector:
                             if np.any(np.isnan(scaled_features)):
                                 logger.warning("NaN values detected in scaled_features, replacing with 0")
                                 scaled_features = np.nan_to_num(scaled_features, nan=0.0)
-                            predictions = [model.predict(scaled_features, verbose=0)[0] for model in models]
-                            for i, pred in enumerate(predictions):
-                                pred_msg += f"Model {i+1}: {pred[0]:.4f} (BUY), {pred[1]:.4f} (SELL)\n"
+                            # Predict with each model
+                            probs = np.array([model.predict(scaled_features, verbose=0)[0, 0] for model in models])
+                            avg_prob = np.mean(probs)  # Average probability across models
+                            # Apply threshold (T=0.55) for trade worthiness
+                            final_pred = 1 if avg_prob >= 0.55 else 0
+                            outcome = "Worth Taking" if final_pred == 1 else "Likely Loss"
+                            pred_msg += f"Ensemble Prediction: {avg_prob:.4f} (Threshold: 0.55)\nOutcome: {outcome}\n"
                             if not send_telegram(pred_msg):
                                 logger.error("Failed to send model predictions after retries")
                         except Exception as e:
