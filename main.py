@@ -124,7 +124,6 @@ def fetch_candles(last_time=None):
     }
     if last_time:
         params["from"] = last_time.strftime("%Y-%m-%dT%H:%M:%SZ")
-        params["to"] = (datetime.utcnow().replace(tzinfo=pytz.utc) + timedelta(minutes=15)).strftime("%Y-%m-%dT%H:%M:%SZ")
     
     sleep_time = 10
     max_attempts = 3
@@ -710,9 +709,7 @@ class CandleScheduler(threading.Thread):
 # ========================
 def run_bot():
     logger.info("Starting trading bot")
-    start_msg = f"🚀 *Bot Started*\nInstrument: {INSTRUMENT}\nTimeframe: {TIMEFRAME}\nTime: {datetime.now(NY_TZ).strftime('%Y-%m-%d %H:%M:%S %Z')}"
-    if not send_telegram(start_msg):
-        logger.warning("Failed to send start message to Telegram")
+    send_telegram(f"🚀 *Bot Started*\nInstrument: {INSTRUMENT}\nTimeframe: {TIMEFRAME}\nTime: {datetime.now(NY_TZ)}")
     
     try:
         detector = TradingDetector()
