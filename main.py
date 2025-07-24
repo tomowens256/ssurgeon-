@@ -303,8 +303,17 @@ class FeatureEngineer:
         df = df.copy()
         
         df['day'] = df['time'].dt.day_name()
+        # Ensure all days are present
+        all_days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Sunday']
+        for day in all_days:
+            if f'day_{day}' not in df.columns:
+                df[f'day_{day}'] = 0
         df = pd.get_dummies(df, columns=['day'], prefix='day', drop_first=False)
-        logger.debug("Day of week dummies created")
+        # Set day_Thursday to 1 (today), others to 0
+        today = datetime.now(NY_TZ).strftime('%A')
+        for day in all_days:
+            df[f'day_{day}'] = 1 if day == today else 0
+        logger.debug(f"Day dummies set for today: {today}")
         
         def get_session(hour):
             if 0 <= hour < 6:
@@ -403,11 +412,43 @@ class FeatureEngineer:
         df['rrr_div_rsi'] = df['rrr'] / (df['rsi'] + 1e-6)
         logger.debug("Derived metrics calculated")
         
+        # Calculate combo key and flags
+        combo_key = f"{df['rsi'].iloc[-1]:.2f}_{df['macd_z'].iloc[-1]:.2f}_{df['atr_z'].iloc[-1]:.2f}"
+        logger.debug(f"Combo key calculated: {combo_key}")
+        combo_flags = {'combo_flag_dead': 0, 'combo_flag_fair': 0, 'combo_flag_fine': 0}
+        combo_flags2 = {'combo_flag2_dead': 0, 'combo_flag2_fair': 0, 'combo_flag2_fine': 0}
+        # Simple logic: if RSI < 30 or MACD_Z < -1, mark as 'dead'
+        if df['rsi'].iloc[-1] < 30 or df['macd_z'].iloc[-1] < -1:
+            combo_flags['combo_flag_dead'] = 1
+            combo_flags2['combo_flag2_dead'] = 1
+        elif df['rsi'].iloc[-1] > 70 or df['macd_z'].iloc[-1] > 1:
+            combo_flags['combo_flag_fine'] = 1
+            combo_flags2['combo_flag2_fine'] = 1
+        else:
+            combo_flags['combo_flag_fair'] = 1
+            combo_flags2['combo_flag2_fair'] = 1
+        for flag, value in combo_flags.items():
+            df[flag] = value
+        for flag, value in combo_flags2.items():
+            df[flag] = value
+        logger.debug(f"Combo flags set: {combo_flags}, {combo_flags2}")
+        
+        # Set is_bad_combo based on combo_flag_dead
+        df['is_bad_combo'] = 1 if combo_flags['combo_flag_dead'] == 1 else 0
+        logger.debug(f"is_bad_combo set to: {df['is_bad_combo'].iloc[-1]}")
+        
         df['crt_BUY'] = int(signal_type == 'BUY')
         df['crt_SELL'] = int(signal_type == 'SELL')
         df['trade_type_BUY'] = int(signal_type == 'BUY')
         df['trade_type_SELL'] = int(signal_type == 'SELL')
         logger.debug("CRT and trade type encoding applied")
+        
+        # Add missing categorical features with default value 0
+        missing_features = [f for f in self.features if f not in df.columns]
+        for feature in missing_features:
+            if feature.startswith(('day_', 'combo_flag', 'is_bad_combo')):
+                df[feature] = 0
+                logger.warning(f"Added missing feature {feature} with default value 0")
         
         features = df.iloc[-1][self.features].astype(float)
         if features.isna().any():
@@ -417,6 +458,9 @@ class FeatureEngineer:
                 if col in df.columns:
                     features[col] = df[col].mean()
                     logger.warning(f"Filled missing feature {col} with mean value")
+                else:
+                    features[col] = 0
+                    logger.warning(f"Filled missing feature {col} with default value 0")
         
         logger.info("Feature generation completed successfully")
         return features
@@ -430,7 +474,7 @@ class TradingDetector:
         self.data = pd.DataFrame()
         self.feature_engineer = FeatureEngineer()
         self.scheduler = CandleScheduler(timeframe=15)
-        self.last_signal_time = None  # Add to track last signal
+        self.last_signal_time = None  # Track last signal
         
         logger.info("Loading initial 201 candles")
         self.data = self.fetch_initial_candles()
@@ -473,7 +517,7 @@ class TradingDetector:
         signal_type, signal_data = self.feature_engineer.calculate_crt_signal(self.data.tail(3))
         if signal_type and signal_data:
             current_time = datetime.now(NY_TZ)
-            # Check cooldown (15 minutes)
+            # Check cooldown and sleep until next candle
             if self.last_signal_time and (current_time - self.last_signal_time).total_seconds() < 15 * 60:
                 logger.info("Signal skipped due to cooldown")
                 return
@@ -496,7 +540,26 @@ class TradingDetector:
                 feature_msg += "\n".join([f"{feat}: {val:.4f}" for feat, val in features.items()])
                 send_telegram(feature_msg)
             
-            self.last_signal_time = current_time  # Update last signal time
+            self.last_signal_time = current_time
+            # Sleep until next candle open
+            next_candle_time = self._get_next_candle_time(current_time)
+            sleep_seconds = (next_candle_time - current_time).total_seconds()
+            logger.info(f"Sleeping {sleep_seconds:.1f} seconds until next candle open")
+            time.sleep(max(1, sleep_seconds))
+        else:
+            # Continue running every minute if no signal
+            time.sleep(60)
+
+    def _get_next_candle_time(self, current_time):
+        """Calculate the next 15-minute candle open time"""
+        minute = current_time.minute
+        remainder = minute % 15
+        if remainder == 0:
+            return current_time.replace(second=0, microsecond=0) + timedelta(minutes=15)
+        next_minute = minute - remainder + 15
+        if next_minute >= 60:
+            return current_time.replace(hour=current_time.hour + 1, minute=0, second=0, microsecond=0)
+        return current_time.replace(minute=next_minute, second=0, microsecond=0)
 
     def update_data(self, df_new):
         logger.info(f"Updating data with new dataframe of size {len(df_new)}")
