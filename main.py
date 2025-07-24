@@ -165,7 +165,7 @@ def fetch_candles(last_time=None):
                 logger.warning("No valid candles found in response")
                 continue
                 
-            df = pd.DataFrame(data)
+            df = pd.DataFrame(data).drop_duplicates(subset=['time'], keep='last')
             if last_time:
                 df = df[df['time'] > last_time].sort_values('time')
             logger.info(f"Successfully fetched {len(df)} candles")
@@ -244,7 +244,7 @@ class FeatureEngineer:
 
     def calculate_technical_indicators(self, df):
         logger.info("Calculating technical indicators")
-        df = df.copy()
+        df = df.copy().drop_duplicates(subset=['time'], keep='last')  # Ensure unique timestamps
         
         df['adj close'] = df['open']
         logger.debug("Adjusted close calculated")
@@ -293,7 +293,7 @@ class FeatureEngineer:
         return df
 
     def calculate_trade_features(self, df, signal_type, entry):
-        logger.info(f"Calculating trade features for signal type: {signal_type}")
+        logger.info(f"Calculating trade features for signal_type: {signal_type}")
         df = df.copy()
         last_row = df.iloc[-1]
         prev_row = df.iloc[-2] if len(df) > 1 else last_row
@@ -399,7 +399,7 @@ class FeatureEngineer:
         return df
 
     def generate_features(self, df, signal_type, minutes_closed):
-        logger.info(f"Generating features for signal type: {signal_type}, minutes closed: {minutes_closed}")
+        logger.info(f"Generating features for signal_type: {signal_type}, minutes closed: {minutes_closed}")
         if len(df) < 200:
             logger.warning(f"Insufficient data: {len(df)} rows, need 200")
             return None
@@ -573,6 +573,10 @@ class TradingDetector:
                     # Model predictions
                     if models:
                         pred_msg = f"🤖 *MODEL PREDICTIONS* {INSTRUMENT.replace('_','/')} {signal_type}\n"
+                        features_array = np.array(features, dtype=np.float32).reshape(1, -1)  # Ensure float32
+                        if np.any(np.isnan(features_array)):
+                            logger.warning("NaN values detected in features_array, replacing with 0")
+                            features_array = np.nan_to_num(features_array, nan=0.0)
                         predictions = [model.predict(features_array, verbose=0)[0] for model in models]
                         for i, pred in enumerate(predictions):
                             pred_msg += f"Model {i+1}: {pred[0]:.4f} (BUY), {pred[1]:.4f} (SELL)\n"
