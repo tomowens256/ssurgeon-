@@ -307,7 +307,7 @@ class FeatureEngineer:
             ("SELL_(70, 80]_(0.134, 0.527]", "dead"),
             ("SELL_(0, 20]_(-12.386, -0.496]", "fine"),
             ("BUY_(80, 100]_(0.527, 9.246]", "fine"),
-            ("SELL_(60, 70]_(-0.496, -0.138]", "dead"),
+            ("SELL_(60, 70]_(-0.138, 0.134]", "dead"),
             ("SELL_(30, 40]_(0.527, 9.246]", "fine"),
             ("BUY_(30, 40]_(0.134, 0.527]", "dead"),
             ("SELL_(60, 70]_(-12.386, -0.496]", "dead"),
@@ -391,39 +391,46 @@ class FeatureEngineer:
         return df
 
     def calculate_crt_vectorized(self, df):
+        """Vectorized implementation of CRT signal calculation"""
         logger.info("Calculating CRT signals")
         df = df.copy()
+
+        # Initialize crt column
         df['crt'] = None
-        
+
+        # Create shifted columns for previous candles
         df['c1_low'] = df['low'].shift(2)
         df['c1_high'] = df['high'].shift(2)
         df['c2_low'] = df['low'].shift(1)
         df['c2_high'] = df['high'].shift(1)
         df['c2_close'] = df['close'].shift(1)
-        logger.debug("Shifted candle data for CRT calculation")
-        
+
+        # Calculate candle metrics
         df['c2_range'] = df['c2_high'] - df['c2_low']
         df['c2_mid'] = df['c2_low'] + (0.5 * df['c2_range'])
-        logger.debug("Calculated c2 range and mid")
-        
+
+        # Vectorized conditions
         buy_mask = (
             (df['c2_low'] < df['c1_low']) &
             (df['c2_close'] > df['c1_low']) &
             (df['open'] > df['c2_mid'])
         )
+
         sell_mask = (
             (df['c2_high'] > df['c1_high']) &
             (df['c2_close'] < df['c1_high']) &
             (df['open'] < df['c2_mid'])
         )
-        logger.debug(f"Buy mask: {buy_mask.any()}, Sell mask: {sell_mask.any()}")
-        
+
+        # Apply masks
         df.loc[buy_mask, 'crt'] = 'BUY'
         df.loc[sell_mask, 'crt'] = 'SELL'
-        logger.debug("Assigned CRT signals")
-        
-        df.drop(columns=['c1_low', 'c1_high', 'c2_low', 'c2_high', 'c2_close', 'c2_range', 'c2_mid'], inplace=True)
-        logger.debug("Cleaned up temporary columns")
+
+        # Cleanup intermediate columns
+        df.drop(columns=['c1_low', 'c1_high', 'c2_low', 'c2_high',
+                        'c2_close', 'c2_range', 'c2_mid'], inplace=True)
+
+        logger.debug(f"CRT calculation complete, last row crt: {df['crt'].iloc[-1]}")
         return df
 
     def calculate_trade_features(self, df, signal_type):
@@ -759,10 +766,13 @@ class TradingDetector:
             # Convert to timestamp for comparison
             latest_time = latest_candles.iloc[0]['time']
             if not self.data.empty and latest_time > self.data['time'].max():
-                self.data = pd.concat([self.data, latest_candles]).drop_duplicates(subset=["time"]).sort_values("time").tail(200)
-                logger.debug(f"Updated data shape: {self.data.shape}")
+                self.data = pd.concat([self.data, latest_candles]).drop_duplicates(subset=["time"], keep="last").sort_values("time").tail(200)
+                logger.debug(f"Updated data shape: {self.data.shape}, latest time: {self.data['time'].max()}")
             else:
-                logger.info("No new data to add")
+                logger.info("No new data to add, checking latest candle")
+                # Force update with latest candle even if duplicate time
+                self.data = pd.concat([self.data, latest_candles]).sort_values("time").tail(200)
+                logger.debug(f"Forced update, new shape: {self.data.shape}")
         else:
             logger.warning("No new candles to update")
 
@@ -893,20 +903,26 @@ class TradingDetector:
         
         try:
             if self.data.empty:
-                self.data = df_new
+                self.data = df_new.dropna(subset=['time', 'open', 'high', 'low', 'close'])
                 logger.debug("Initialized data with new dataframe")
             else:
-                # Only add new data if it's newer than existing data
+                # Only add new data if it's newer than existing data, or force latest
                 last_existing_time = self.data['time'].max()
                 new_data = df_new[df_new['time'] > last_existing_time]
                 
                 if not new_data.empty:
-                    df_combined = pd.concat([self.data, new_data])
-                    df_combined = df_combined.drop_duplicates(subset=['time'], keep='last')
-                    self.data = df_combined.sort_values('time').reset_index(drop=True)
-                    logger.debug(f"Combined data shape: {self.data.shape}")
+                    df_combined = pd.concat([self.data, new_data]).drop_duplicates(subset=['time'], keep='last')
+                    self.data = df_combined.sort_values('time').reset_index(drop=True).tail(200)
+                    logger.debug(f"Combined data shape: {self.data.shape}, latest time: {self.data['time'].max()}")
                 else:
-                    logger.info("No new data to add")
+                    # Force update with the latest candle
+                    latest_new = df_new.iloc[-1]
+                    if latest_new['time'] >= self.data['time'].max():
+                        self.data = pd.concat([self.data, df_new.tail(1)]).drop_duplicates(subset=['time'], keep='last')
+                        self.data = self.data.sort_values('time').reset_index(drop=True).tail(200)
+                        logger.debug(f"Forced update with latest candle, new shape: {self.data.shape}, latest time: {self.data['time'].max()}")
+                    else:
+                        logger.info("No new data to add, data unchanged")
             
             if len(self.data) >= self.feature_engineer.history_size:
                 logger.info("Data sufficient, checking signals")
@@ -922,7 +938,7 @@ class TradingDetector:
             return
         
         df_history = self.feature_engineer.calculate_crt_vectorized(df_history)
-        logger.debug(f"CRT vectorized, last row: {df_history.iloc[-1]}")
+        logger.debug(f"CRT vectorized, last row crt: {df_history['crt'].iloc[-1]}")
         last_row = df_history.iloc[-1]
         
         if last_row['crt'] in ['BUY', 'SELL']:
