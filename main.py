@@ -403,10 +403,10 @@ class FeatureEngineer:
         df['rrr_div_rsi'] = df['rrr'] / (df['rsi'] + 1e-6)
         logger.debug("Derived metrics calculated")
         
-        df['crt_BUY'] = (signal_type == 'BUY').astype(int)
-        df['crt_SELL'] = (signal_type == 'SELL').astype(int)
-        df['trade_type_BUY'] = (signal_type == 'BUY').astype(int)
-        df['trade_type_SELL'] = (signal_type == 'SELL').astype(int)
+        df['crt_BUY'] = int(signal_type == 'BUY')
+        df['crt_SELL'] = int(signal_type == 'SELL')
+        df['trade_type_BUY'] = int(signal_type == 'BUY')
+        df['trade_type_SELL'] = int(signal_type == 'SELL')
         logger.debug("CRT and trade type encoding applied")
         
         features = df.iloc[-1][self.features].astype(float)
@@ -430,6 +430,7 @@ class TradingDetector:
         self.data = pd.DataFrame()
         self.feature_engineer = FeatureEngineer()
         self.scheduler = CandleScheduler(timeframe=15)
+        self.last_signal_time = None  # Add to track last signal
         
         logger.info("Loading initial 201 candles")
         self.data = self.fetch_initial_candles()
@@ -471,6 +472,12 @@ class TradingDetector:
         
         signal_type, signal_data = self.feature_engineer.calculate_crt_signal(self.data.tail(3))
         if signal_type and signal_data:
+            current_time = datetime.now(NY_TZ)
+            # Check cooldown (15 minutes)
+            if self.last_signal_time and (current_time - self.last_signal_time).total_seconds() < 15 * 60:
+                logger.info("Signal skipped due to cooldown")
+                return
+            
             logger.info(f"Signal validated: {signal_type}")
             alert_time = signal_data['time'].astimezone(NY_TZ)
             send_telegram(
@@ -488,6 +495,8 @@ class TradingDetector:
                 feature_msg = f"📊 *FEATURES* {INSTRUMENT.replace('_','/')} {signal_type}\n"
                 feature_msg += "\n".join([f"{feat}: {val:.4f}" for feat, val in features.items()])
                 send_telegram(feature_msg)
+            
+            self.last_signal_time = current_time  # Update last signal time
 
     def update_data(self, df_new):
         logger.info(f"Updating data with new dataframe of size {len(df_new)}")
