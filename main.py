@@ -128,8 +128,8 @@ def send_telegram(message):
         return False
 
 def fetch_candles():
-    """Fetch candles for XAU_USD M15 with robust error handling"""
-    logger.info(f"Fetching candles for {INSTRUMENT} with timeframe {TIMEFRAME}")
+    """Fetch 201 candles for XAU_USD M15 with robust error handling"""
+    logger.info(f"Fetching 201 candles for {INSTRUMENT} with timeframe {TIMEFRAME}")
     params = {
         "granularity": TIMEFRAME,
         "count": 201,
@@ -391,14 +391,14 @@ class FeatureEngineer:
         return df
 
     def calculate_crt_vectorized(self, df):
-        """Vectorized implementation of CRT signal calculation"""
-        logger.info("Calculating CRT signals")
+        """Vectorized implementation of CRT signal calculation on last 3 candles"""
+        logger.info("Calculating CRT signals on last 3 candles")
         df = df.copy()
 
         # Initialize crt column
         df['crt'] = None
 
-        # Create shifted columns for previous candles
+        # Create shifted columns for previous candles (only for last 3 rows)
         df['c1_low'] = df['low'].shift(2)
         df['c1_high'] = df['high'].shift(2)
         df['c2_low'] = df['low'].shift(1)
@@ -409,7 +409,7 @@ class FeatureEngineer:
         df['c2_range'] = df['c2_high'] - df['c2_low']
         df['c2_mid'] = df['c2_low'] + (0.5 * df['c2_range'])
 
-        # Vectorized conditions
+        # Vectorized conditions for the current candle (last row)
         buy_mask = (
             (df['c2_low'] < df['c1_low']) &
             (df['c2_close'] > df['c1_low']) &
@@ -422,9 +422,9 @@ class FeatureEngineer:
             (df['open'] < df['c2_mid'])
         )
 
-        # Apply masks
-        df.loc[buy_mask, 'crt'] = 'BUY'
-        df.loc[sell_mask, 'crt'] = 'SELL'
+        # Apply masks only to the current candle
+        df.loc[buy_mask & (df.index == len(df) - 1), 'crt'] = 'BUY'
+        df.loc[sell_mask & (df.index == len(df) - 1), 'crt'] = 'SELL'
 
         # Cleanup intermediate columns
         df.drop(columns=['c1_low', 'c1_high', 'c2_low', 'c2_high',
@@ -732,12 +732,12 @@ class TradingDetector:
             raise FileNotFoundError(f"Model path not found: {model_path}")
             
         self.load_resources()
-        logger.info("Loading initial candles")
+        logger.info("Loading initial 201 candles")
         self.data = self.fetch_initial_candles()
         
-        if self.data.empty:
-            logger.error("Failed to load initial candles")
-            raise RuntimeError("Initial candle fetch failed")
+        if self.data.empty or len(self.data) < 200:
+            logger.error("Failed to load sufficient initial candles")
+            raise RuntimeError("Initial candle fetch failed or insufficient data")
             
         logger.info(f"Initial data loaded with {len(self.data)} rows")
         self.scheduler.register_callback(self.process_pending_signals)
@@ -754,7 +754,7 @@ class TradingDetector:
                 return df
             logger.warning(f"Attempt {attempt+1} failed, retrying in 10s")
             time.sleep(10)
-        logger.error("Failed to fetch initial candles after 5 attempts")
+        logger.error("Failed to fetch initial 201 candles after 5 attempts")
         return pd.DataFrame()
 
     def process_pending_signals(self, minutes_closed, latest_candles):
@@ -766,23 +766,23 @@ class TradingDetector:
             # Convert to timestamp for comparison
             latest_time = latest_candles.iloc[0]['time']
             if not self.data.empty and latest_time > self.data['time'].max():
-                self.data = pd.concat([self.data, latest_candles]).drop_duplicates(subset=["time"], keep="last").sort_values("time").tail(200)
+                self.data = pd.concat([self.data, latest_candles]).drop_duplicates(subset=["time"], keep="last").sort_values("time").tail(201)
                 logger.debug(f"Updated data shape: {self.data.shape}, latest time: {self.data['time'].max()}")
             else:
                 logger.info("No new data to add, checking latest candle")
                 # Force update with latest candle even if duplicate time
-                self.data = pd.concat([self.data, latest_candles]).sort_values("time").tail(200)
+                self.data = pd.concat([self.data, latest_candles]).sort_values("time").tail(201)
                 logger.debug(f"Forced update, new shape: {self.data.shape}")
         else:
             logger.warning("No new candles to update")
 
-        if self.data.empty or len(self.data) < self.feature_engineer.history_size:
-            logger.warning(f"Insufficient data: {len(self.data)} rows, need {self.feature_engineer.history_size}")
+        if self.data.empty or len(self.data) < 200:
+            logger.warning(f"Insufficient data: {len(self.data)} rows, need at least 200")
             return
         
         start_time = time.time()
         logger.debug(f"Starting signal processing at {start_time}")
-        df_history = self.data.tail(self.feature_engineer.history_size)
+        df_history = self.data.tail(200)  # Use full 200-candle history
         logger.debug(f"Using history of {len(df_history)} rows")
         
         for signal in list(self.pending_signals):
@@ -903,7 +903,7 @@ class TradingDetector:
         
         try:
             if self.data.empty:
-                self.data = df_new.dropna(subset=['time', 'open', 'high', 'low', 'close'])
+                self.data = df_new.dropna(subset=['time', 'open', 'high', 'low', 'close']).tail(201)
                 logger.debug("Initialized data with new dataframe")
             else:
                 # Only add new data if it's newer than existing data, or force latest
@@ -912,19 +912,19 @@ class TradingDetector:
                 
                 if not new_data.empty:
                     df_combined = pd.concat([self.data, new_data]).drop_duplicates(subset=['time'], keep='last')
-                    self.data = df_combined.sort_values('time').reset_index(drop=True).tail(200)
+                    self.data = df_combined.sort_values('time').reset_index(drop=True).tail(201)
                     logger.debug(f"Combined data shape: {self.data.shape}, latest time: {self.data['time'].max()}")
                 else:
                     # Force update with the latest candle
                     latest_new = df_new.iloc[-1]
                     if latest_new['time'] >= self.data['time'].max():
                         self.data = pd.concat([self.data, df_new.tail(1)]).drop_duplicates(subset=['time'], keep='last')
-                        self.data = self.data.sort_values('time').reset_index(drop=True).tail(200)
+                        self.data = self.data.sort_values('time').reset_index(drop=True).tail(201)
                         logger.debug(f"Forced update with latest candle, new shape: {self.data.shape}, latest time: {self.data['time'].max()}")
                     else:
                         logger.info("No new data to add, data unchanged")
             
-            if len(self.data) >= self.feature_engineer.history_size:
+            if len(self.data) >= 200:
                 logger.info("Data sufficient, checking signals")
                 self.check_signals()
         except Exception as e:
@@ -944,18 +944,21 @@ class TradingDetector:
         
         if last_row['crt'] in ['BUY', 'SELL']:
             logger.info(f"Detected signal: {last_row['crt']} on current candle")
-            features = self.feature_engineer.transform(df_history, last_row['crt'], 0)  # Use 0 for minutes_closed as placeholder
-            if features is not None:
-                logger.info("Generating features for validation")
-                validation_result = self.validate(features)
-                logger.info(f"Model validation result: {validation_result}")
-                if validation_result:
-                    signal_info = {
-                        'signal': last_row['crt'],
-                        'time': last_row['time'],
-                    }
-                    self.pending_signals.append(signal_info)
-                    logger.info(f"Signal queued for validation: {signal_info['signal']} at {last_row['time'].strftime('%Y-%m-%d %H:%M:%S')}")
+            # Use full 200-candle history for feature generation
+            if len(self.data) >= 200:
+                df_full_history = self.data.tail(200)
+                features = self.feature_engineer.transform(df_full_history, last_row['crt'], 0)  # Use 0 for minutes_closed as placeholder
+                if features is not None:
+                    logger.info("Generating features for validation")
+                    validation_result = self.validate(features)
+                    logger.info(f"Model validation result: {validation_result}")
+                    if validation_result:
+                        signal_info = {
+                            'signal': last_row['crt'],
+                            'time': last_row['time'],
+                        }
+                        self.pending_signals.append(signal_info)
+                        logger.info(f"Signal queued for validation: {signal_info['signal']} at {last_row['time'].strftime('%Y-%m-%d %H:%M:%S')}")
 
 # ========================
 # FLASK UI ROUTES
