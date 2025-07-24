@@ -182,7 +182,7 @@ def fetch_candles(last_time=None):
             logger.error(f"Unexpected error fetching candles: {str(e)}")
             logger.error(traceback.format_exc())
     
-    logger.error(f"Failed to fetch candles after {max_attempts} attempts")
+    logger.error(f"Failed to fetch candles after {max_attempts} features")
     return pd.DataFrame()
 
 # ========================
@@ -570,18 +570,24 @@ class TradingDetector:
                         if not send_telegram(scaled_msg):
                             logger.error("Failed to send scaled features after retries")
                     
-                    # Model predictions
+                    # Model predictions with error handling
                     if models:
                         pred_msg = f"🤖 *MODEL PREDICTIONS* {INSTRUMENT.replace('_','/')} {signal_type}\n"
-                        features_array = np.array(features, dtype=np.float32).reshape(1, -1)  # Ensure float32
-                        if np.any(np.isnan(features_array)):
-                            logger.warning("NaN values detected in features_array, replacing with 0")
-                            features_array = np.nan_to_num(features_array, nan=0.0)
-                        predictions = [model.predict(features_array, verbose=0)[0] for model in models]
-                        for i, pred in enumerate(predictions):
-                            pred_msg += f"Model {i+1}: {pred[0]:.4f} (BUY), {pred[1]:.4f} (SELL)\n"
-                        if not send_telegram(pred_msg):
-                            logger.error("Failed to send model predictions after retries")
+                        try:
+                            features_array = np.array(features.values, dtype=np.float32).reshape(1, -1)  # Use values to match scaler order
+                            if np.any(np.isnan(features_array)):
+                                logger.warning("NaN values detected in features_array, replacing with 0")
+                                features_array = np.nan_to_num(features_array, nan=0.0)
+                            predictions = [model.predict(features_array, verbose=0)[0] for model in models]
+                            for i, pred in enumerate(predictions):
+                                pred_msg += f"Model {i+1}: {pred[0]:.4f} (BUY), {pred[1]:.4f} (SELL)\n"
+                            if not send_telegram(pred_msg):
+                                logger.error("Failed to send model predictions after retries")
+                        except Exception as e:
+                            logger.error(f"Model prediction failed: {str(e)}")
+                            logger.error(traceback.format_exc())
+                            pred_msg += "Error: Prediction failed, check logs."
+                            send_telegram(pred_msg)
                     else:
                         logger.error("No models loaded, skipping predictions")
 
