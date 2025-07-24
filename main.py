@@ -560,7 +560,10 @@ class TradingDetector:
                         features_array = np.array(features).reshape(1, -1)
                         scaled_features = scaler.transform(features_array).flatten()
                         scaled_msg = f"📏 *SCALED FEATURES* {INSTRUMENT.replace('_','/')} {signal_type}\n"
-                        scaled_pairs = [f"{feat.replace('_', '\\_')}: {val:.4f}" for feat, val in zip(self.feature_engineer.features, scaled_features)]
+                        scaled_pairs = []
+                        for feat, val in zip(self.feature_engineer.features, scaled_features):
+                            escaped_feat = feat.replace('_', '\\_')
+                            scaled_pairs.append(f"{escaped_feat}: {val:.4f}")
                         scaled_msg += "\n".join(scaled_pairs)
                         if not send_telegram(scaled_msg):
                             logger.error("Failed to send scaled features after retries")
