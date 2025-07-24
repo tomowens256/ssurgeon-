@@ -115,7 +115,7 @@ def send_telegram(message):
     return False
 
 def fetch_candles(last_time=None):
-    """Fetch 201 candles or new candles since last_time for XAU_USD M15"""
+    """Fetch new candles since last_time or 201 candles for XAU_USD M15"""
     logger.info(f"Fetching candles for {INSTRUMENT} with timeframe {TIMEFRAME}")
     params = {
         "granularity": TIMEFRAME,
@@ -123,7 +123,8 @@ def fetch_candles(last_time=None):
         "price": "M"
     }
     if last_time:
-        params["to"] = last_time.strftime("%Y-%m-%dT%H:%M:%SZ")
+        params["from"] = last_time.strftime("%Y-%m-%dT%H:%M:%SZ")
+        params["to"] = (datetime.utcnow().replace(tzinfo=pytz.utc) + timedelta(minutes=15)).strftime("%Y-%m-%dT%H:%M:%SZ")
     
     sleep_time = 10
     max_attempts = 3
@@ -518,22 +519,22 @@ class TradingDetector:
         if not latest_candles.empty:
             logger.info(f"Updating data with {len(latest_candles)} new candles")
             self.data = pd.concat([self.data, latest_candles]).drop_duplicates(subset=["time"], keep="last").sort_values("time").tail(201)
-            logger.debug(f"Updated data shape: {self.data.shape}, latest time: {self.data['time'].max()}")
+            logger.debug(f"Updated data shape: {self.data.shape}, latest time: {self.data['time'].max()}, last 3 rows: {self.data.tail(3)}")
         else:
             logger.warning("No new candles, using existing data")
-    
+
         if self.data.empty or len(self.data) < 3:
             logger.warning(f"Insufficient data: {len(self.data)} rows, need at least 3")
             return
-        
+
         signal_type, signal_data = self.feature_engineer.calculate_crt_signal(self.data.tail(3))
-        logger.debug(f"Signal type: {signal_type}, Signal data: {signal_data}")
+        logger.debug(f"Signal type: {signal_type}, Signal data: {signal_data}, Last 3 candles: {self.data.tail(3)}")
         if signal_type and signal_data:
             current_time = datetime.now(NY_TZ)
             if self.last_signal_time and (current_time - self.last_signal_time).total_seconds() < 15 * 60:
                 logger.info("Signal skipped due to cooldown")
                 return
-        
+
             logger.info(f"Signal validated: {signal_type}")
             alert_time = signal_data['time'].astimezone(NY_TZ)
             setup_msg = (
@@ -576,7 +577,6 @@ class TradingDetector:
                         try:
                             features_df = pd.DataFrame([features], columns=self.feature_engineer.features)
                             scaled_features = scaler.transform(features_df).astype(np.float32)
-                            # Add time step dimension for sequence input
                             scaled_features = scaled_features.reshape(1, 1, -1)  # (1, 1, 68)
                             if np.any(np.isnan(scaled_features)):
                                 logger.warning("NaN values detected in scaled_features, replacing with 0")
@@ -595,13 +595,11 @@ class TradingDetector:
                         logger.error("No models loaded, skipping predictions")
 
             self.last_signal_time = current_time
-            # Sleep until next candle open
             next_candle_time = self._get_next_candle_time(current_time)
             sleep_seconds = (next_candle_time - current_time).total_seconds()
             logger.info(f"Sleeping {sleep_seconds:.1f} seconds until next candle open")
             time.sleep(max(1, sleep_seconds))
         else:
-            # Continue running every minute if no signal
             time.sleep(60)
 
     def _get_next_candle_time(self, current_time):
@@ -712,7 +710,9 @@ class CandleScheduler(threading.Thread):
 # ========================
 def run_bot():
     logger.info("Starting trading bot")
-    send_telegram(f"🚀 *Bot Started*\nInstrument: {INSTRUMENT}\nTimeframe: {TIMEFRAME}\nTime: {datetime.now(NY_TZ)}")
+    start_msg = f"🚀 *Bot Started*\nInstrument: {INSTRUMENT}\nTimeframe: {TIMEFRAME}\nTime: {datetime.now(NY_TZ).strftime('%Y-%m-%d %H:%M:%S %Z')}"
+    if not send_telegram(start_msg):
+        logger.warning("Failed to send start message to Telegram")
     
     try:
         detector = TradingDetector()
