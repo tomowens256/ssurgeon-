@@ -932,17 +932,18 @@ class TradingDetector:
 
     def check_signals(self):
         logger.info("Checking for signals")
-        df_history = self.data.tail(self.feature_engineer.history_size)
-        if len(df_history) < self.feature_engineer.history_size:
-            logger.warning(f"Insufficient history data: {len(df_history)} rows")
+        if len(self.data) < 3:  # Need at least 3 candles (C1, C2, C3)
+            logger.warning(f"Insufficient data: {len(self.data)} rows, need at least 3")
             return
         
-        df_history = self.feature_engineer.calculate_crt_vectorized(df_history)
-        logger.debug(f"CRT vectorized, last row crt: {df_history['crt'].iloc[-1]}")
+        # Use only the last 3 candles for CRT calculation
+        df_last_three = self.data.tail(3)
+        df_history = self.feature_engineer.calculate_crt_vectorized(df_last_three)
+        logger.debug(f"CRT vectorized on last 3 candles, last row crt: {df_history['crt'].iloc[-1]}")
         last_row = df_history.iloc[-1]
         
         if last_row['crt'] in ['BUY', 'SELL']:
-            logger.info(f"Detected signal: {last_row['crt']}")
+            logger.info(f"Detected signal: {last_row['crt']} on current candle")
             features = self.feature_engineer.transform(df_history, last_row['crt'], 0)  # Use 0 for minutes_closed as placeholder
             if features is not None:
                 logger.info("Generating features for validation")
