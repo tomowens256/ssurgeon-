@@ -15,6 +15,7 @@ from oandapyV20 import API
 from oandapyV20.exceptions import V20Error
 import oandapyV20.endpoints.instruments as instruments
 import joblib
+from tensorflow.keras.models import load_model
 
 # ========================
 # CONSTANTS & CONFIG
@@ -54,6 +55,10 @@ oanda_api = API(access_token=API_KEY, environment="practice")
 # Load scaler
 scaler_path = os.path.join("ml_models", "scaler_oversample.joblib")
 scaler = joblib.load(scaler_path) if os.path.exists(scaler_path) else None
+
+# Load models
+models_dir = "ml_models"
+models = [load_model(os.path.join(models_dir, f)) for f in os.listdir(models_dir) if f.endswith(".keras")]
 
 # ========================
 # UTILITY FUNCTIONS
@@ -200,7 +205,7 @@ class FeatureEngineer:
             'trend_direction_uptrend', 'crt_BUY', 'crt_SELL', 'trade_type_BUY',
             'trade_type_SELL', 'combo_flag_dead', 'combo_flag_fair', 'combo_flag_fine',
             'combo_flag2_dead', 'combo_flag2_fair', 'combo_flag2_fine',
-            'minutes_closed_0', 'minutes_closed_15', 'minutes_closed_30', 'minutes_closed_45'
+            'minutes,closed_0', 'minutes,closed_15', 'minutes,closed_30', 'minutes,closed_45'
         ]
 
     def calculate_crt_signal(self, df):
@@ -376,19 +381,19 @@ class FeatureEngineer:
     def calculate_minutes_closed(self, df, minutes_closed):
         logger.info(f"Calculating minutes closed: {minutes_closed}")
         df = df.copy()
-        minute_cols = ['minutes_closed_0', 'minutes_closed_15', 'minutes_closed_30', 'minutes_closed_45']
+        minute_cols = ['minutes,closed_0', 'minutes,closed_15', 'minutes,closed_30', 'minutes,closed_45']
         
         for col in minute_cols:
             df[col] = 0
             
         if 0 <= minutes_closed < 15:
-            df['minutes_closed_15'] = 1
+            df['minutes,closed_15'] = 1
         elif 15 <= minutes_closed < 30:
-            df['minutes_closed_30'] = 1
+            df['minutes,closed_30'] = 1
         elif 30 <= minutes_closed < 45:
-            df['minutes_closed_45'] = 1
+            df['minutes,closed_45'] = 1
         else:
-            df['minutes_closed_0'] = 1
+            df['minutes,closed_0'] = 1
             
         logger.debug(f"Minutes closed set: {dict(zip(minute_cols, df[minute_cols].iloc[0].tolist()))}")
         return df
@@ -453,24 +458,21 @@ class FeatureEngineer:
         df['trade_type_SELL'] = int(signal_type == 'SELL')
         logger.debug("CRT and trade type encoding applied")
         
-        # Add missing categorical features with default value 0
-        missing_features = [f for f in self.features if f not in df.columns]
-        for feature in missing_features:
-            if feature.startswith(('day_', 'combo_flag', 'is_bad_combo')):
-                df[feature] = 0
-                logger.warning(f"Added missing feature {feature} with default value 0")
+        # Ensure all features are present in the exact order
+        features = pd.Series(index=self.features, dtype=float)
+        for feat in self.features:
+            if feat in df.columns:
+                features[feat] = df[feat].iloc[-1]
+            else:
+                logger.warning(f"Feature {feat} not found, setting to 0")
+                features[feat] = 0
         
-        features = df.iloc[-1][self.features].astype(float)
         if features.isna().any():
             missing = features[features.isna()].index.tolist()
             logger.warning(f"Missing features: {missing}")
             for col in missing:
-                if col in df.columns:
-                    features[col] = df[col].mean()
-                    logger.warning(f"Filled missing feature {col} with mean value")
-                else:
-                    features[col] = 0
-                    logger.warning(f"Filled missing feature {col} with default value 0")
+                features[col] = 0
+                logger.warning(f"Filled missing feature {col} with default value 0")
         
         logger.info("Feature generation completed successfully")
         return features
@@ -567,8 +569,17 @@ class TradingDetector:
                         scaled_msg += "\n".join(scaled_pairs)
                         if not send_telegram(scaled_msg):
                             logger.error("Failed to send scaled features after retries")
+                    
+                    # Model predictions
+                    if models:
+                        pred_msg = f"🤖 *MODEL PREDICTIONS* {INSTRUMENT.replace('_','/')} {signal_type}\n"
+                        predictions = [model.predict(features_array, verbose=0)[0] for model in models]
+                        for i, pred in enumerate(predictions):
+                            pred_msg += f"Model {i+1}: {pred[0]:.4f} (BUY), {pred[1]:.4f} (SELL)\n"
+                        if not send_telegram(pred_msg):
+                            logger.error("Failed to send model predictions after retries")
                     else:
-                        logger.error("Scaler not loaded, skipping scaling")
+                        logger.error("No models loaded, skipping predictions")
 
             self.last_signal_time = current_time
             # Sleep until next candle open
