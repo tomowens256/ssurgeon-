@@ -182,7 +182,7 @@ def fetch_candles(last_time=None):
             logger.error(f"Unexpected error fetching candles: {str(e)}")
             logger.error(traceback.format_exc())
     
-    logger.error(f"Failed to fetch candles after {max_attempts} features")
+    logger.error(f"Failed to fetch candles after {max_attempts} attempts")
     return pd.DataFrame()
 
 # ========================
@@ -559,8 +559,8 @@ class TradingDetector:
                     
                     # Scale features and send scaled features
                     if scaler is not None:
-                        features_array = np.array(features).reshape(1, -1)
-                        scaled_features = scaler.transform(features_array).flatten()
+                        features_df = pd.DataFrame([features], columns=self.feature_engineer.features)
+                        scaled_features = scaler.transform(features_df).flatten()
                         scaled_msg = f"📏 *SCALED FEATURES* {INSTRUMENT.replace('_','/')} {signal_type}\n"
                         scaled_pairs = []
                         for feat, val in zip(self.feature_engineer.features, scaled_features):
@@ -574,11 +574,12 @@ class TradingDetector:
                     if models:
                         pred_msg = f"🤖 *MODEL PREDICTIONS* {INSTRUMENT.replace('_','/')} {signal_type}\n"
                         try:
-                            features_array = np.array(features.values, dtype=np.float32).reshape(1, -1)  # Use values to match scaler order
-                            if np.any(np.isnan(features_array)):
-                                logger.warning("NaN values detected in features_array, replacing with 0")
-                                features_array = np.nan_to_num(features_array, nan=0.0)
-                            predictions = [model.predict(features_array, verbose=0)[0] for model in models]
+                            features_df = pd.DataFrame([features], columns=self.feature_engineer.features)
+                            scaled_features = scaler.transform(features_df).astype(np.float32)
+                            if np.any(np.isnan(scaled_features)):
+                                logger.warning("NaN values detected in scaled_features, replacing with 0")
+                                scaled_features = np.nan_to_num(scaled_features, nan=0.0)
+                            predictions = [model.predict(scaled_features.reshape(1, -1), verbose=0)[0] for model in models]
                             for i, pred in enumerate(predictions):
                                 pred_msg += f"Model {i+1}: {pred[0]:.4f} (BUY), {pred[1]:.4f} (SELL)\n"
                             if not send_telegram(pred_msg):
