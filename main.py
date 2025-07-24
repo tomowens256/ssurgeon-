@@ -546,7 +546,11 @@ class TradingDetector:
                 features = self.feature_engineer.generate_features(self.data, signal_type, minutes_closed)
                 if features is not None:
                     feature_msg = f"📊 *FEATURES* {INSTRUMENT.replace('_','/')} {signal_type}\n"
-                    formatted_features = [f"{feat.replace('_', '\\_')}: {val:.4f}" for feat, val in features.items()]
+                    # Fix for backslash issue
+                    formatted_features = []
+                    for feat, val in features.items():
+                        escaped_feat = feat.replace('_', '\\_')
+                        formatted_features.append(f"{escaped_feat}: {val:.4f}")
                     feature_msg += "\n".join(formatted_features)
                     if not send_telegram(feature_msg):
                         logger.error("Failed to send features after retries")
