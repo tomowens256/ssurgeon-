@@ -514,26 +514,26 @@ class TradingDetector:
         return pd.DataFrame()
 
     def process_signals(self, minutes_closed, latest_candles):
-        logger.info(f"Processing signals, minutes closed: {minutes_closed}")
+        logger.info(f"Processing signals, minutes closed: {minutes_closed}, candles: {len(latest_candles)}")
         if not latest_candles.empty:
             logger.info(f"Updating data with {len(latest_candles)} new candles")
             self.data = pd.concat([self.data, latest_candles]).drop_duplicates(subset=["time"], keep="last").sort_values("time").tail(201)
             logger.debug(f"Updated data shape: {self.data.shape}, latest time: {self.data['time'].max()}")
         else:
-            logger.warning("No new candles to update")
-
+            logger.warning("No new candles, using existing data")
+    
         if self.data.empty or len(self.data) < 3:
             logger.warning(f"Insufficient data: {len(self.data)} rows, need at least 3")
             return
         
         signal_type, signal_data = self.feature_engineer.calculate_crt_signal(self.data.tail(3))
+        logger.debug(f"Signal type: {signal_type}, Signal data: {signal_data}")
         if signal_type and signal_data:
             current_time = datetime.now(NY_TZ)
-            # Check cooldown and sleep until next candle
             if self.last_signal_time and (current_time - self.last_signal_time).total_seconds() < 15 * 60:
                 logger.info("Signal skipped due to cooldown")
                 return
-            
+        
             logger.info(f"Signal validated: {signal_type}")
             alert_time = signal_data['time'].astimezone(NY_TZ)
             setup_msg = (
@@ -672,17 +672,20 @@ class CandleScheduler(threading.Thread):
                 df_candles = fetch_candles()
                 
                 if df_candles.empty:
-                    logger.warning("No candles fetched")
-                    time.sleep(60)
-                    continue
-                
-                latest_candle = df_candles.iloc[-1]
-                latest_time = latest_candle['time']
-                minutes_closed = self.calculate_minutes_closed(latest_time)
-                
-                if self.callback:
-                    logger.info(f"Calling callback with minutes closed: {minutes_closed}")
-                    self.callback(minutes_closed, df_candles.tail(1))
+                    logger.warning("No candles fetched, forcing callback with existing data")
+                    if self.data and len(self.data) >= 3:
+                        latest_time = self.data['time'].max()
+                        minutes_closed = self.calculate_minutes_closed(latest_time)
+                        if self.callback:
+                            logger.info(f"Forcing callback with minutes closed: {minutes_closed}")
+                            self.callback(minutes_closed, self.data.tail(3))
+                else:
+                    latest_candle = df_candles.iloc[-1]
+                    latest_time = latest_candle['time']
+                    minutes_closed = self.calculate_minutes_closed(latest_time)
+                    if self.callback:
+                        logger.info(f"Calling callback with minutes closed: {minutes_closed}")
+                        self.callback(minutes_closed, df_candles.tail(1))
                 
                 now = datetime.now(NY_TZ)
                 next_run = self.calculate_next_candle()
