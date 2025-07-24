@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from oandapyV20 import API
 from oandapyV20.exceptions import V20Error
 import oandapyV20.endpoints.instruments as instruments
+import joblib
 
 # ========================
 # CONSTANTS & CONFIG
@@ -49,6 +50,10 @@ logger = logging.getLogger(__name__)
 
 # Initialize Oanda API
 oanda_api = API(access_token=API_KEY, environment="practice")
+
+# Load scaler
+scaler_path = os.path.join("ml_models", "scaler_oversample.joblib")
+scaler = joblib.load(scaler_path) if os.path.exists(scaler_path) else None
 
 # ========================
 # UTILITY FUNCTIONS
@@ -315,13 +320,9 @@ class FeatureEngineer:
         # Ensure all days are present
         all_days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Sunday']
         for day in all_days:
-            if f'day_{day}' not in df.columns:
-                df[f'day_{day}'] = 0
-        df = pd.get_dummies(df, columns=['day'], prefix='day', drop_first=False)
-        # Set day_Thursday to 1 (today), others to 0
+            df[f'day_{day}'] = 0
         today = datetime.now(NY_TZ).strftime('%A')
-        for day in all_days:
-            df[f'day_{day}'] = 1 if day == today else 0
+        df[f'day_{today}'] = 1
         logger.debug(f"Day dummies set for today: {today}")
         
         def get_session(hour):
@@ -546,7 +547,6 @@ class TradingDetector:
                 features = self.feature_engineer.generate_features(self.data, signal_type, minutes_closed)
                 if features is not None:
                     feature_msg = f"📊 *FEATURES* {INSTRUMENT.replace('_','/')} {signal_type}\n"
-                    # Fix for backslash issue
                     formatted_features = []
                     for feat, val in features.items():
                         escaped_feat = feat.replace('_', '\\_')
@@ -554,7 +554,19 @@ class TradingDetector:
                     feature_msg += "\n".join(formatted_features)
                     if not send_telegram(feature_msg):
                         logger.error("Failed to send features after retries")
-            
+                    
+                    # Scale features and send scaled features
+                    if scaler is not None:
+                        features_array = np.array(features).reshape(1, -1)
+                        scaled_features = scaler.transform(features_array).flatten()
+                        scaled_msg = f"📏 *SCALED FEATURES* {INSTRUMENT.replace('_','/')} {signal_type}\n"
+                        scaled_pairs = [f"{feat.replace('_', '\\_')}: {val:.4f}" for feat, val in zip(self.feature_engineer.features, scaled_features)]
+                        scaled_msg += "\n".join(scaled_pairs)
+                        if not send_telegram(scaled_msg):
+                            logger.error("Failed to send scaled features after retries")
+                    else:
+                        logger.error("Scaler not loaded, skipping scaling")
+
             self.last_signal_time = current_time
             # Sleep until next candle open
             next_candle_time = self._get_next_candle_time(current_time)
