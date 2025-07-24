@@ -576,10 +576,12 @@ class TradingDetector:
                         try:
                             features_df = pd.DataFrame([features], columns=self.feature_engineer.features)
                             scaled_features = scaler.transform(features_df).astype(np.float32)
+                            # Add time step dimension for sequence input
+                            scaled_features = scaled_features.reshape(1, 1, -1)  # (1, 1, 68)
                             if np.any(np.isnan(scaled_features)):
                                 logger.warning("NaN values detected in scaled_features, replacing with 0")
                                 scaled_features = np.nan_to_num(scaled_features, nan=0.0)
-                            predictions = [model.predict(scaled_features.reshape(1, -1), verbose=0)[0] for model in models]
+                            predictions = [model.predict(scaled_features, verbose=0)[0] for model in models]
                             for i, pred in enumerate(predictions):
                                 pred_msg += f"Model {i+1}: {pred[0]:.4f} (BUY), {pred[1]:.4f} (SELL)\n"
                             if not send_telegram(pred_msg):
