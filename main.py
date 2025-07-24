@@ -120,7 +120,7 @@ def fetch_candles(last_time=None):
     params = {
         "granularity": TIMEFRAME,
         "count": 201,
-        "price": "M"
+        "price": "B"  # Changed from "M" to "B" for bid prices
     }
     if last_time:
         params["from"] = last_time.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -142,9 +142,9 @@ def fetch_candles(last_time=None):
             
             data = []
             for candle in candles:
-                price_data = candle.get('mid', {})
+                price_data = candle.get('bid', {})  # Changed from 'mid' to 'bid'
                 if not price_data:
-                    logger.warning(f"Skipping candle with missing mid price data: {candle}")
+                    logger.warning(f"Skipping candle with missing bid price data: {candle}")
                     continue
                 
                 try:
