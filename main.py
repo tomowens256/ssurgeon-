@@ -546,7 +546,8 @@ class TradingDetector:
                 features = self.feature_engineer.generate_features(self.data, signal_type, minutes_closed)
                 if features is not None:
                     feature_msg = f"📊 *FEATURES* {INSTRUMENT.replace('_','/')} {signal_type}\n"
-                    feature_msg += "\n".join([f"{feat.replace('_', '\\_')}: {val:.4f}" for feat, val in features.items()])
+                    formatted_features = [f"{feat.replace('_', '\\_')}: {val:.4f}" for feat, val in features.items()]
+                    feature_msg += "\n".join(formatted_features)
                     if not send_telegram(feature_msg):
                         logger.error("Failed to send features after retries")
             
