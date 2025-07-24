@@ -67,7 +67,7 @@ def parse_oanda_time(time_str):
         return datetime.now(NY_TZ)
 
 def send_telegram(message):
-    """Send formatted message to Telegram with detailed error handling"""
+    """Send formatted message to Telegram with detailed error handling and retries"""
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         logger.warning("Telegram credentials not set, skipping message")
         return False
@@ -77,37 +77,43 @@ def send_telegram(message):
         message = message[:4000] + "... [TRUNCATED]"
     
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    try:
-        response = requests.post(url, json={
-            'chat_id': TELEGRAM_CHAT_ID,
-            'text': message,
-            'parse_mode': 'Markdown'
-        }, timeout=10)
-        
-        logger.info(f"Telegram response: {response.status_code} - {response.text}")
-        
-        if response.status_code != 200:
-            logger.error(f"Telegram error: {response.status_code} - {response.text}")
-            return False
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            response = requests.post(url, json={
+                'chat_id': TELEGRAM_CHAT_ID,
+                'text': message,
+                'parse_mode': 'Markdown'
+            }, timeout=10)
             
-        if not response.json().get('ok'):
-            logger.error(f"Telegram API error: {response.json()}")
-            return False
+            logger.info(f"Telegram response: {response.status_code} - {response.text}")
             
-        logger.info("Telegram message sent successfully")
-        return True
-    except Exception as e:
-        logger.error(f"Telegram connection failed: {str(e)}")
-        return False
+            if response.status_code == 200 and response.json().get('ok'):
+                logger.info("Telegram message sent successfully")
+                return True
+            else:
+                logger.error(f"Telegram error: {response.status_code} - {response.text}")
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)  # Exponential backoff
+                continue
+        except Exception as e:
+            logger.error(f"Telegram connection failed: {str(e)}")
+            if attempt < max_retries - 1:
+                time.sleep(2 ** attempt)
+            continue
+    logger.error(f"Failed to send Telegram message after {max_retries} attempts")
+    return False
 
-def fetch_candles():
-    """Fetch 201 candles for XAU_USD M15 with robust error handling"""
-    logger.info(f"Fetching 201 candles for {INSTRUMENT} with timeframe {TIMEFRAME}")
+def fetch_candles(last_time=None):
+    """Fetch 201 candles or new candles since last_time for XAU_USD M15"""
+    logger.info(f"Fetching candles for {INSTRUMENT} with timeframe {TIMEFRAME}")
     params = {
         "granularity": TIMEFRAME,
         "count": 201,
         "price": "M"
     }
+    if last_time:
+        params["to"] = last_time.strftime("%Y-%m-%dT%H:%M:%SZ")
     
     sleep_time = 10
     max_attempts = 3
@@ -150,6 +156,8 @@ def fetch_candles():
                 continue
                 
             df = pd.DataFrame(data)
+            if last_time:
+                df = df[df['time'] > last_time].sort_values('time')
             logger.info(f"Successfully fetched {len(df)} candles")
             return df
             
@@ -220,8 +228,9 @@ class FeatureEngineer:
         
         if signal_type:
             logger.info(f"Detected signal: {signal_type} on current candle")
-            return signal_type, {'entry': entry, 'sl': sl, 'tp': tp, 'time': c3['time']}
-        return None, None
+        else:
+            logger.debug("No signal detected")
+        return signal_type, {'entry': entry, 'sl': sl, 'tp': tp, 'time': c3['time']} if signal_type else (None, None)
 
     def calculate_technical_indicators(self, df):
         logger.info("Calculating technical indicators")
@@ -524,7 +533,7 @@ class TradingDetector:
             
             logger.info(f"Signal validated: {signal_type}")
             alert_time = signal_data['time'].astimezone(NY_TZ)
-            send_telegram(
+            setup_msg = (
                 f"🔔 *SETUP* {INSTRUMENT.replace('_','/')} {signal_type}\n"
                 f"Timeframe: {TIMEFRAME}\n"
                 f"Time: {alert_time.strftime('%Y-%m-%d %H:%M')} NY\n"
@@ -532,13 +541,14 @@ class TradingDetector:
                 f"TP: {signal_data['tp']:.2f}\n"
                 f"SL: {signal_data['sl']:.2f}"
             )
-            
-            # Generate and send features
-            features = self.feature_engineer.generate_features(self.data, signal_type, minutes_closed)
-            if features is not None:
-                feature_msg = f"📊 *FEATURES* {INSTRUMENT.replace('_','/')} {signal_type}\n"
-                feature_msg += "\n".join([f"{feat}: {val:.4f}" for feat, val in features.items()])
-                send_telegram(feature_msg)
+            if send_telegram(setup_msg):
+                # Generate and send features
+                features = self.feature_engineer.generate_features(self.data, signal_type, minutes_closed)
+                if features is not None:
+                    feature_msg = f"📊 *FEATURES* {INSTRUMENT.replace('_','/')} {signal_type}\n"
+                    feature_msg += "\n".join([f"{feat.replace('_', '\\_')}: {val:.4f}" for feat, val in features.items()])
+                    if not send_telegram(feature_msg):
+                        logger.error("Failed to send features after retries")
             
             self.last_signal_time = current_time
             # Sleep until next candle open
@@ -640,7 +650,7 @@ class CandleScheduler(threading.Thread):
                     self.callback(minutes_closed, df_candles.tail(1))
                 
                 now = datetime.now(NY_TZ)
-                next_run = now + timedelta(minutes=15 - (now.minute % 15), seconds=0, microseconds=0)
+                next_run = self.calculate_next_candle()
                 sleep_seconds = (next_run - now).total_seconds()
                 logger.info(f"Sleeping {sleep_seconds:.1f} seconds until next candle")
                 time.sleep(max(1, sleep_seconds))
@@ -669,12 +679,13 @@ def run_bot():
     while True:
         try:
             logger.info("Running bot cycle")
-            df = fetch_candles()
+            last_time = detector.data['time'].max() if not detector.data.empty else None
+            df = fetch_candles(last_time)
             if not df.empty:
-                logger.info(f"Fetched {len(df)} candles, updating data")
+                logger.info(f"Fetched {len(df)} new candles, updating data")
                 detector.update_data(df)
             else:
-                logger.warning("No candles fetched in this cycle")
+                logger.warning("No new candles fetched in this cycle")
             time.sleep(60)  # Check every minute
         except Exception as e:
             logger.error(f"Main loop error: {e}")
