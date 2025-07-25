@@ -60,6 +60,9 @@ scaler = joblib.load(scaler_path) if os.path.exists(scaler_path) else None
 models_dir = "ml_models"
 models = [load_model(os.path.join(models_dir, f)) for f in os.listdir(models_dir) if f.endswith(".keras")]
 
+# Dictionary to store trades
+active_trades = {}
+
 # ========================
 # UTILITY FUNCTIONS
 # ========================
@@ -229,7 +232,7 @@ class FeatureEngineer:
         tp = None
         
         # SELL Signal (looser condition: close slightly below high)
-        if (c2['high'] > c1['high']) and (c2['close'] < c1['high'] + 0.1):  # Adjusted threshold
+        if (c2['high'] > c1['high']) and (c2['close'] < c1['high'] + 0.1):
             signal_type = 'SELL'
             sl = c2['high']
             risk = abs(entry - sl)
@@ -237,7 +240,7 @@ class FeatureEngineer:
             logger.info(f"SELL signal detected: c2 high={c2['high']}, c1 high={c1['high']}, c2 close={c2['close']}")
         
         # BUY Signal
-        elif (c2['low'] < c1['low']) and (c2['close'] > c1['low'] - 0.1):  # Adjusted threshold
+        elif (c2['low'] < c1['low']) and (c2['close'] > c1['low'] - 0.1):
             signal_type = 'BUY'
             sl = c2['low']
             risk = abs(entry - sl)
@@ -489,10 +492,7 @@ class TradingDetector:
         self.data = pd.DataFrame()
         self.feature_engineer = FeatureEngineer()
         self.scheduler = CandleScheduler(timeframe=15)
-        self.last_signal_time = None
-        self.active_trades = []  # (entry, sl, tp, start_time, index)
         self.last_signal_candle = None
-        self.last_scaled_features = None  # Store the last scaled features for consistency check
         
         logger.info("Loading initial 201 candles")
         self.data = self.fetch_initial_candles()
@@ -580,69 +580,114 @@ class TradingDetector:
         signal_type, signal_data = self.feature_engineer.calculate_crt_signal(self.data.tail(3))
         if signal_type and signal_data:
             current_candle = self.data.iloc[-1]
+            # Check if this is a new signal based on candle time and price change
             if (self.last_signal_candle is None or 
                 current_candle['time'] > self.last_signal_candle['time'] or 
                 (current_candle['time'] == self.last_signal_candle['time'] and 
                  abs(current_candle['close'] - self.last_signal_candle['close']) > 0.5)):
                 self.last_signal_candle = current_candle
-                self.last_signal_time = current_time
                 
-                logger.info(f"Signal validated: {signal_type}")
-                alert_time = signal_data['time'].astimezone(NY_TZ)
-                setup_msg = (
-                    f"🔔 *SETUP* {INSTRUMENT.replace('_','/')} {signal_type}\n"
-                    f"Timeframe: {TIMEFRAME}\n"
-                    f"Time: {alert_time.strftime('%Y-%m-%d %H:%M')} NY\n"
-                    f"Entry: {signal_data['entry']:.2f}\n"
-                    f"TP: {signal_data['tp']:.2f}\n"
-                    f"SL: {signal_data['sl']:.2f}\n"
-                    f"Candle Age: {candle_age:.2f} minutes"
-                )
-                if send_telegram(setup_msg):
-                    features = self.feature_engineer.generate_features(self.data, signal_type, 0)
-                    if features is not None:
-                        self.last_scaled_features = scaler.transform(pd.DataFrame([features], columns=self.feature_engineer.features)).flatten() if scaler else None
-                        feature_msg = f"📊 *FEATURES* {INSTRUMENT.replace('_','/')} {signal_type}\n"
-                        formatted_features = []
-                        for feat, val in features.items():
-                            escaped_feat = feat.replace('_', '\\_')
-                            formatted_features.append(f"{escaped_feat}: {val:.4f}")
-                        feature_msg += "\n".join(formatted_features)
-                        if not send_telegram(feature_msg):
-                            logger.error("Failed to send features after retries")
+                # Check if this signal matches an existing trade
+                is_new_trade = True
+                for trade_id, trade in list(active_trades.items()):
+                    if trade['sl'] == signal_data['sl'] and not trade.get('outcome'):
+                        is_new_trade = False
+                        logger.info(f"Matching SL found, skipping reprocessing for trade {trade_id}")
+                        break
+                
+                if is_new_trade:
+                    logger.info(f"New signal validated: {signal_type}")
+                    alert_time = signal_data['time'].astimezone(NY_TZ)
+                    setup_msg = (
+                        f"🔔 *SETUP* {INSTRUMENT.replace('_','/')} {signal_type}\n"
+                        f"Timeframe: {TIMEFRAME}\n"
+                        f"Time: {alert_time.strftime('%Y-%m-%d %H:%M')} NY\n"
+                        f"Entry: {signal_data['entry']:.2f}\n"
+                        f"TP: {signal_data['tp']:.2f}\n"
+                        f"SL: {signal_data['sl']:.2f}\n"
+                        f"Candle Age: {candle_age:.2f} minutes"
+                    )
+                    if send_telegram(setup_msg):
+                        features = self.feature_engineer.generate_features(self.data, signal_type, 0)
+                        if features is not None:
+                            feature_msg = f"📊 *FEATURES* {INSTRUMENT.replace('_','/')} {signal_type}\n"
+                            formatted_features = []
+                            for feat, val in features.items():
+                                escaped_feat = feat.replace('_', '\\_')
+                                formatted_features.append(f"{escaped_feat}: {val:.4f}")
+                            feature_msg += "\n".join(formatted_features)
+                            if not send_telegram(feature_msg):
+                                logger.error("Failed to send features after retries")
 
-                    if scaler is not None and self.last_scaled_features is not None and models:
-                        pred_msg = f"🤖 *MODEL PREDICTIONS* {INSTRUMENT.replace('_','/')} {signal_type}\n"
-                        scaled_features = self.last_scaled_features.reshape(1, 1, -1)
-                        if np.any(np.isnan(scaled_features)):
-                            logger.warning("NaN values detected in scaled_features, replacing with 0")
-                            scaled_features = np.nan_to_num(scaled_features, nan=0.0)
-                        
-                        predictions = []
-                        for i in range(10):  # Generate 10 predictions
+                        if scaler is not None and models:
+                            features_df = pd.DataFrame([features], columns=self.feature_engineer.features)
+                            scaled_features = scaler.transform(features_df).flatten()
+                            if np.any(np.isnan(scaled_features)):
+                                logger.warning("NaN values detected in scaled_features, replacing with 0")
+                                scaled_features = np.nan_to_num(scaled_features, nan=0.0)
+                            
+                            scaled_features = scaled_features.reshape(1, 1, -1)
                             probs = np.array([model.predict(scaled_features, verbose=0)[0, 0] for model in models])
                             avg_prob = np.mean(probs)
                             final_pred = 1 if avg_prob >= 0.55 else 0
                             outcome = "Worth Taking" if final_pred == 1 else "Likely Loss"
-                            predictions.append(f"Prediction {i+1}: {avg_prob:.4f} (Outcome: {outcome})")
-                        
-                        pred_msg += "\n".join(predictions)
-                        if not send_telegram(pred_msg):
-                            logger.error("Failed to send model predictions after retries")
+                            pred_msg = f"🤖 *MODEL PREDICTIONS* {INSTRUMENT.replace('_','/')} {signal_type}\n"
+                            predictions = [f"Prediction {i+1}: {avg_prob:.4f} (Outcome: {outcome})" for i in range(10)]
+                            pred_msg += "\n".join(predictions)
+                            if not send_telegram(pred_msg):
+                                logger.error("Failed to send model predictions after retries")
                             
-                        if final_pred == 1:
-                            trade = (signal_data['entry'], signal_data['sl'], signal_data['tp'], current_time, len(self.data) - 1)
-                            self.active_trades.append(trade)
-                            logger.info(f"Trade stored: {trade}")
-                    else:
-                        logger.error("No models or scaler loaded")
-                        pred_msg = f"🤖 *MODEL PREDICTIONS* {INSTRUMENT.replace('_','/')} {signal_type}\nError: No models or scaler loaded."
-                        send_telegram(pred_msg)
+                            # Store new trade in dictionary with prediction
+                            trade_id = f"{signal_type}_{current_time.timestamp()}"
+                            active_trades[trade_id] = {
+                                'entry': signal_data['entry'],
+                                'sl': signal_data['sl'],
+                                'tp': signal_data['tp'],
+                                'time': current_time,
+                                'prediction': avg_prob,
+                                'outcome': None
+                            }
+                            logger.info(f"New trade stored: {trade_id} with prediction {avg_prob:.4f}")
+                        else:
+                            logger.error("No models or scaler loaded")
+                            pred_msg = f"🤖 *MODEL PREDICTIONS* {INSTRUMENT.replace('_','/')} {signal_type}\nError: No models or scaler loaded."
+                            send_telegram(pred_msg)
             else:
                 logger.debug("Signal skipped due to similar candle conditions")
-        else:
-            logger.debug("No signal detected, resetting last signal candle")
-            self.last_signal_candle = None
+
+        # Check outcomes for all active trades
+        latest_candle = self.data.iloc[-1]
+        for trade_id, trade in list(active_trades.items()):
+            if trade.get('outcome') is None:
+                entry, sl, tp = trade['entry'], trade['sl'], trade['tp']
+                if trade['prediction'] >= 0.55:  # Only check if predicted as worth taking
+                    if entry > sl:  # SELL trade
+                        if latest_candle['high'] >= sl:
+                            trade['outcome'] = 'Hit SL (Loss)'
+                            logger.info(f"SELL trade {trade_id} outcome: Hit SL at {latest_candle['high']}")
+                        elif latest_candle['low'] <= tp:
+                            trade['outcome'] = 'Hit TP (Win)'
+                            logger.info(f"SELL trade {trade_id} outcome: Hit TP at {latest_candle['low']}")
+                    else:  # BUY trade
+                        if latest_candle['low'] <= sl:
+                            trade['outcome'] = 'Hit SL (Loss)'
+                            logger.info(f"BUY trade {trade_id} outcome: Hit SL at {latest_candle['low']}")
+                        elif latest_candle['high'] >= tp:
+                            trade['outcome'] = 'Hit TP (Win)'
+                            logger.info(f"BUY trade {trade_id} outcome: Hit TP at {latest_candle['high']}")
+                
+                if trade.get('outcome'):
+                    outcome_msg = (
+                        f"📈 *Trade Outcome*\n"
+                        f"Entry: {entry:.2f}\n"
+                        f"SL: {sl:.2f}\n"
+                        f"TP: {tp:.2f}\n"
+                        f"Prediction: {trade['prediction']:.4f}\n"
+                        f"Outcome: {trade['outcome']}\n"
+                        f"Time: {current_time.strftime('%Y-%m-%d %H:%M')} NY"
+                    )
+                    if not send_telegram(outcome_msg):
+                        logger.error(f"Failed to send outcome for trade {trade_id}")
 
         if latest_candles.empty and candle_age > 1:
             next_candle_time = self._get_next_candle_time(current_time)
@@ -651,45 +696,6 @@ class TradingDetector:
             time.sleep(max(1, sleep_seconds))
         else:
             time.sleep(60)  # Check again in 1 minute if new data
-
-        self.check_trade_results(latest_candles)
-
-    def check_trade_results(self, latest_candles):
-        """Check trade outcomes after each candle request"""
-        if not self.active_trades:
-            return
-
-        current_time = datetime.now(NY_TZ)
-        latest_candle = latest_candles.iloc[-1] if not latest_candles.empty else self.data.iloc[-1]
-        completed_trades = []
-
-        for trade in self.active_trades[:]:
-            entry, sl, tp, start_time, trade_index = trade
-            logger.info(f"Checking trade: Entry={entry}, SL={sl}, TP={tp}")
-
-            if entry > sl:  # SELL trade
-                if latest_candle['high'] >= sl:
-                    outcome = 'Hit SL (Loss)'
-                    logger.info(f"SELL trade loss: Price {latest_candle['high']} >= SL {sl}")
-                elif latest_candle['low'] <= tp:
-                    outcome = 'Hit TP (Win)'
-                    logger.info(f"SELL trade win: Price {latest_candle['low']} <= TP {tp}")
-                else:
-                    continue
-            else:  # BUY trade (for future consistency, though not checked here per request)
-                continue
-
-            completed_trades.append((entry, sl, tp, start_time, trade_index, outcome, current_time))
-            self.active_trades.remove(trade)
-            outcome_msg = (
-                f"📈 *Trade Outcome*\n"
-                f"Entry: {entry:.2f}\n"
-                f"SL: {sl:.2f}\n"
-                f"TP: {tp:.2f}\n"
-                f"Outcome: {outcome}\n"
-                f"Time: {current_time.strftime('%Y-%m-%d %H:%M')} NY"
-            )
-            send_telegram(outcome_msg)
 
 # ========================
 # CANDLE SCHEDULER
