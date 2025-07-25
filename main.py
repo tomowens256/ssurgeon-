@@ -150,7 +150,8 @@ def fetch_candles(last_time=None):
     params = {
         "granularity": TIMEFRAME,
         "count": 201,
-        "price": "B"  # Bid prices
+        "price": "B",  # Bid prices
+        "alignmentTimezone": "America/New_York"  # Ensure proper time alignment
     }
     if last_time:
         params["from"] = last_time.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -243,41 +244,65 @@ class FeatureEngineer:
         ]
 
     def calculate_crt_signal(self, df):
-        """Calculate CRT signal on the current candle using the last 3 candles with detailed logging"""
-        logger.info("Calculating CRT signals on last 3 candles")
+        """Vectorized CRT signal calculation"""
+        logger.info("Vectorized CRT signal calculation on last 3 candles")
         if len(df) < 3:
             logger.warning(f"Insufficient data: {len(df)} rows, need at least 3")
             return None, None
 
-        c1, c2, c3 = df.iloc[-3], df.iloc[-2], df.iloc[-1]
-        logger.debug(f"Candle data: c1={c1}, c2={c2}, c3={c3}")
+        # Create working copy
+        df = df.copy().tail(3)
+        
+        # Create shifted columns for previous candles
+        df['c1_low'] = df['low'].shift(2)
+        df['c1_high'] = df['high'].shift(2)
+        df['c2_low'] = df['low'].shift(1)
+        df['c2_high'] = df['high'].shift(1)
+        df['c2_close'] = df['close'].shift(1)
 
-        signal_type = None
-        entry = c3['open']
-        sl = None
-        tp = None
-        
-        # SELL Signal (looser condition: close slightly below high)
-        if (c2['high'] > c1['high']) and (c2['close'] < c1['high'] + 0.1):
-            signal_type = 'SELL'
-            sl = c2['high']
-            risk = abs(entry - sl)
-            tp = entry - 4 * risk
-            logger.info(f"SELL signal detected: c2 high={c2['high']}, c1 high={c1['high']}, c2 close={c2['close']}")
-        
-        # BUY Signal
-        elif (c2['low'] < c1['low']) and (c2['close'] > c1['low'] - 0.1):
+        # Calculate candle metrics
+        df['c2_range'] = df['c2_high'] - df['c2_low']
+        df['c2_mid'] = df['c2_low'] + (0.5 * df['c2_range'])
+
+        # Vectorized conditions
+        buy_mask = (
+            (df['c2_low'] < df['c1_low']) &
+            (df['c2_close'] > df['c1_low']) &
+            (df['open'] > df['c2_mid'])
+        )
+
+        sell_mask = (
+            (df['c2_high'] > df['c1_high']) &
+            (df['c2_close'] < df['c1_high']) &
+            (df['open'] < df['c2_mid'])
+        )
+
+        # Extract signal for current candle
+        current = df.iloc[-1]
+        if buy_mask.iloc[-1]:
             signal_type = 'BUY'
-            sl = c2['low']
+            entry = current['open']
+            sl = current['c2_low']
             risk = abs(entry - sl)
             tp = entry + 4 * risk
-            logger.info(f"BUY signal detected: c2 low={c2['low']}, c1 low={c1['low']}, c2 close={c2['close']}")
-        
-        if signal_type:
-            logger.info(f"Detected signal: {signal_type} on current candle at {c3['time']}")
+            logger.info(f"BUY signal detected: c2 low={current['c2_low']} < c1 low={current['c1_low']}, "
+                        f"c2 close={current['c2_close']} > c1 low={current['c1_low']}, "
+                        f"current open={entry} > c2 mid={current['c2_mid']:.2f}")
+        elif sell_mask.iloc[-1]:
+            signal_type = 'SELL'
+            entry = current['open']
+            sl = current['c2_high']
+            risk = abs(sl - entry)
+            tp = entry - 4 * risk
+            logger.info(f"SELL signal detected: c2 high={current['c2_high']} > c1 high={current['c1_high']}, "
+                        f"c2 close={current['c2_close']} < c1 high={current['c1_high']}, "
+                        f"current open={entry} < c2 mid={current['c2_mid']:.2f}")
         else:
-            logger.debug("No signal detected")
-        return signal_type, {'entry': entry, 'sl': sl, 'tp': tp, 'time': c3['time']} if signal_type else (None, None)
+            logger.info("No signal detected based on current candle pattern")
+            return None, None
+        
+        logger.info(f"Detected signal: {signal_type} on current candle at {current['time']}")
+        return signal_type, {'entry': entry, 'sl': sl, 'tp': tp, 'time': current['time']}
 
     def calculate_technical_indicators(self, df):
         logger.info("Calculating technical indicators")
@@ -639,7 +664,7 @@ class TradingDetector:
         candle_age = self.calculate_candle_age(current_time, latest_candle_time)
         logger.info(f"Candle age: {candle_age:.2f} minutes")
 
-        signal_type, signal_data = self.feature_engineer.calculate_crt_signal(self.data.tail(3))
+        signal_type, signal_data = self.feature_engineer.calculate_crt_signal(self.data)
         if signal_type and signal_data:
             current_candle = self.data.iloc[-1]
             # Check if this is a new signal based on candle time and price change
@@ -832,12 +857,17 @@ class CandleScheduler(threading.Thread):
                             logger.info(f"Forcing callback with minutes closed: {minutes_closed}")
                             self.callback(minutes_closed, self.data.tail(3))
                 else:
-                    latest_candle = df_candles.iloc[-1]
-                    latest_time = latest_candle['time']
-                    minutes_closed = self.calculate_minutes_closed(latest_time)
-                    if self.callback:
-                        logger.info(f"Calling callback with minutes closed: {minutes_closed}")
-                        self.callback(minutes_closed, df_candles.tail(1))
+                    # Filter to only complete candles
+                    complete_candles = df_candles[df_candles['complete'] == True]
+                    if not complete_candles.empty:
+                        latest_candle = complete_candles.iloc[-1]
+                        latest_time = latest_candle['time']
+                        minutes_closed = self.calculate_minutes_closed(latest_time)
+                        if self.callback:
+                            logger.info(f"Calling callback with minutes closed: {minutes_closed}")
+                            self.callback(minutes_closed, complete_candles.tail(1))
+                    else:
+                        logger.warning("No complete candles in fetched data")
                 
                 now = datetime.now(NY_TZ)
                 next_run = self.calculate_next_candle()
