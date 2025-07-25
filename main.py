@@ -631,6 +631,11 @@ class TradingDetector:
                         pred_msg += f"Ensemble Prediction: {avg_prob:.4f} (Threshold: 0.55)\nOutcome: {outcome}\n"
                         if not send_telegram(pred_msg):
                             logger.error("Failed to send model predictions after retries")
+                        
+                        if final_pred == 1:
+                            trade = (signal_data['entry'], signal_data['sl'], signal_data['tp'], current_time, len(self.data) - 1)
+                            self.active_trades.append(trade)
+                            logger.info(f"Trade stored: {trade}")
                     except Exception as e:
                         logger.error(f"Model prediction failed: {str(e)}")
                         pred_msg += "Error: Prediction failed, check logs."
@@ -639,11 +644,6 @@ class TradingDetector:
                     logger.error("No models loaded")
                     pred_msg = f"🤖 *MODEL PREDICTIONS* {INSTRUMENT.replace('_','/')} {signal_type}\nError: No models loaded."
                     send_telegram(pred_msg)
-
-                trade_index = len(self.data) - 1
-                trade = (signal_data['entry'], signal_data['sl'], signal_data['tp'], current_time, trade_index)
-                self.active_trades.append(trade)
-                logger.info(f"Trade stored: {trade}")
 
             self.last_signal_time = current_time
         else:
@@ -657,101 +657,44 @@ class TradingDetector:
         else:
             time.sleep(60)  # Check again in 1 minute if new data
 
-        self.check_trade_outcomes()
+        self.check_trade_results(latest_candles)
 
-    def check_trade_outcomes(self):
-        """Check if any active trade hits SL or TP using lookahead logic"""
-        if not hasattr(self, 'active_trades') or not self.active_trades:
+    def check_trade_results(self, latest_candles):
+        """Check trade outcomes after each candle request"""
+        if not self.active_trades:
             return
 
         current_time = datetime.now(NY_TZ)
+        latest_candle = latest_candles.iloc[-1] if not latest_candles.empty else self.data.iloc[-1]
         completed_trades = []
-        for trade in self.active_trades[:]:  # Iterate over a copy to modify list
+
+        for trade in self.active_trades[:]:
             entry, sl, tp, start_time, trade_index = trade
-            logger.info(f"Checking trade: Entry={entry}, SL={sl}, TP={tp}, Index={trade_index}")
+            logger.info(f"Checking trade: Entry={entry}, SL={sl}, TP={tp}")
 
-            trade_data = self.data.iloc[trade_index:].copy().reset_index(drop=True)
-            if len(trade_data) < 1:
-                continue
-
-            latest_candle_time = trade_data.iloc[-1]['time']
-            candle_age = self.calculate_candle_age(current_time, latest_candle_time)
-            if candle_age < 2:  # Skip if candle is too new
-                logger.info(f"Skipping outcome check, candle age {candle_age:.2f} minutes < 2 minutes")
-                continue
-
-            trade_type = 'SELL' if entry > sl else 'BUY'
-            risk = abs(entry - sl)
-            rr = 0
-            outcome = 'open'
-            sl_hit = False
-            tp_hit = False
-
-            # Check only the latest candle unless new data is available
-            latest_candle = trade_data.iloc[-1]
-            if trade_type == 'SELL':
+            if entry > sl:  # SELL trade
                 if latest_candle['high'] >= sl:
-                    sl_hit = True
-                    logger.info(f"SL hit detected at high={latest_candle['high']} >= SL={sl}")
+                    outcome = 'Hit SL (Loss)'
+                    logger.info(f"SELL trade loss: Price {latest_candle['high']} >= SL {sl}")
                 elif latest_candle['low'] <= tp:
-                    tp_hit = True
-                    logger.info(f"TP hit detected at low={latest_candle['low']} <= TP={tp}")
-            else:  # BUY
-                if latest_candle['low'] <= sl:
-                    sl_hit = True
-                    logger.info(f"SL hit detected at low={latest_candle['low']} <= SL={sl}")
-                elif latest_candle['high'] >= tp:
-                    tp_hit = True
-                    logger.info(f"TP hit detected at high={latest_candle['high']} >= TP={tp}")
+                    outcome = 'Hit TP (Win)'
+                    logger.info(f"SELL trade win: Price {latest_candle['low']} <= TP {tp}")
+                else:
+                    continue
+            else:  # BUY trade (for future consistency, though not checked here per request)
+                continue
 
-            if not (sl_hit or tp_hit) and len(trade_data) > 1:
-                # Look ahead only if more than one candle is available
-                lookahead = 15
-                for j in range(1, min(lookahead + 1, len(trade_data))):
-                    candle = trade_data.iloc[j]
-                    if sl_hit or tp_hit:
-                        break
-                    if trade_type == 'SELL':
-                        if candle['high'] >= sl:
-                            sl_hit = True
-                            logger.info(f"SL hit detected at high={candle['high']} >= SL={sl} in lookahead")
-                            break
-                        elif candle['low'] <= tp:
-                            tp_hit = True
-                            logger.info(f"TP hit detected at low={candle['low']} <= TP={tp} in lookahead")
-                            break
-                    else:  # BUY
-                        if candle['low'] <= sl:
-                            sl_hit = True
-                            logger.info(f"SL hit detected at low={candle['low']} <= SL={sl} in lookahead")
-                            break
-                        elif candle['high'] >= tp:
-                            tp_hit = True
-                            logger.info(f"TP hit detected at high={candle['high']} >= TP={tp} in lookahead")
-                            break
-
-            if sl_hit:
-                rr = -1
-                outcome = 'Hit SL'
-            elif tp_hit:
-                rr = 4
-                outcome = 'Hit TP'
-
-            if outcome != 'open':
-                end_time = current_time if sl_hit or tp_hit else trade_data.iloc[-1]['time'].astimezone(NY_TZ)
-                completed_trades.append((entry, sl, tp, start_time, trade_index, outcome, end_time))
-                self.active_trades.remove(trade)
-                logger.info(f"Trade outcome: {outcome} at {end_time}")
-
-                outcome_msg = (
-                    f"📈 *Trade Outcome*\n"
-                    f"Entry: {entry:.2f}\n"
-                    f"SL: {sl:.2f}\n"
-                    f"TP: {tp:.2f}\n"
-                    f"Outcome: {outcome}\n"
-                    f"Time: {end_time.strftime('%Y-%m-%d %H:%M')} NY"
-                )
-                send_telegram(outcome_msg)
+            completed_trades.append((entry, sl, tp, start_time, trade_index, outcome, current_time))
+            self.active_trades.remove(trade)
+            outcome_msg = (
+                f"📈 *Trade Outcome*\n"
+                f"Entry: {entry:.2f}\n"
+                f"SL: {sl:.2f}\n"
+                f"TP: {tp:.2f}\n"
+                f"Outcome: {outcome}\n"
+                f"Time: {current_time.strftime('%Y-%m-%d %H:%M')} NY"
+            )
+            send_telegram(outcome_msg)
 
 # ========================
 # CANDLE SCHEDULER
