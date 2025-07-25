@@ -492,6 +492,7 @@ class TradingDetector:
         self.last_signal_time = None
         self.active_trades = []  # (entry, sl, tp, start_time, index)
         self.last_signal_candle = None
+        self.last_scaled_features = None  # Store the last scaled features for consistency check
         
         logger.info("Loading initial 201 candles")
         self.data = self.fetch_initial_candles()
@@ -600,6 +601,7 @@ class TradingDetector:
                 if send_telegram(setup_msg):
                     features = self.feature_engineer.generate_features(self.data, signal_type, 0)
                     if features is not None:
+                        self.last_scaled_features = scaler.transform(pd.DataFrame([features], columns=self.feature_engineer.features)).flatten() if scaler else None
                         feature_msg = f"📊 *FEATURES* {INSTRUMENT.replace('_','/')} {signal_type}\n"
                         formatted_features = []
                         for feat, val in features.items():
@@ -609,46 +611,32 @@ class TradingDetector:
                         if not send_telegram(feature_msg):
                             logger.error("Failed to send features after retries")
 
-                    if scaler is not None:
-                        features_df = pd.DataFrame([features], columns=self.feature_engineer.features)
-                        scaled_features = scaler.transform(features_df).flatten()
-                        scaled_msg = f"📏 *SCALED FEATURES* {INSTRUMENT.replace('_','/')} {signal_type}\n"
-                        scaled_pairs = []
-                        for feat, val in zip(self.feature_engineer.features, scaled_features):
-                            escaped_feat = feat.replace('_', '\\_')
-                            scaled_pairs.append(f"{escaped_feat}: {val:.4f}")
-                        scaled_msg += "\n".join(scaled_pairs)
-                        if not send_telegram(scaled_msg):
-                            logger.error("Failed to send scaled features after retries")
-
-                    if models:
+                    if scaler is not None and self.last_scaled_features is not None and models:
                         pred_msg = f"🤖 *MODEL PREDICTIONS* {INSTRUMENT.replace('_','/')} {signal_type}\n"
-                        try:
-                            features_df = pd.DataFrame([features], columns=self.feature_engineer.features)
-                            scaled_features = scaler.transform(features_df).astype(np.float32)
-                            scaled_features = scaled_features.reshape(1, 1, -1)
-                            if np.any(np.isnan(scaled_features)):
-                                logger.warning("NaN values detected in scaled_features, replacing with 0")
-                                scaled_features = np.nan_to_num(scaled_features, nan=0.0)
+                        scaled_features = self.last_scaled_features.reshape(1, 1, -1)
+                        if np.any(np.isnan(scaled_features)):
+                            logger.warning("NaN values detected in scaled_features, replacing with 0")
+                            scaled_features = np.nan_to_num(scaled_features, nan=0.0)
+                        
+                        predictions = []
+                        for i in range(10):  # Generate 10 predictions
                             probs = np.array([model.predict(scaled_features, verbose=0)[0, 0] for model in models])
                             avg_prob = np.mean(probs)
                             final_pred = 1 if avg_prob >= 0.55 else 0
                             outcome = "Worth Taking" if final_pred == 1 else "Likely Loss"
-                            pred_msg += f"Ensemble Prediction: {avg_prob:.4f} (Threshold: 0.55)\nOutcome: {outcome}\n"
-                            if not send_telegram(pred_msg):
-                                logger.error("Failed to send model predictions after retries")
+                            predictions.append(f"Prediction {i+1}: {avg_prob:.4f} (Outcome: {outcome})")
+                        
+                        pred_msg += "\n".join(predictions)
+                        if not send_telegram(pred_msg):
+                            logger.error("Failed to send model predictions after retries")
                             
-                            if final_pred == 1:
-                                trade = (signal_data['entry'], signal_data['sl'], signal_data['tp'], current_time, len(self.data) - 1)
-                                self.active_trades.append(trade)
-                                logger.info(f"Trade stored: {trade}")
-                        except Exception as e:
-                            logger.error(f"Model prediction failed: {str(e)}")
-                            pred_msg += "Error: Prediction failed, check logs."
-                            send_telegram(pred_msg)
+                        if final_pred == 1:
+                            trade = (signal_data['entry'], signal_data['sl'], signal_data['tp'], current_time, len(self.data) - 1)
+                            self.active_trades.append(trade)
+                            logger.info(f"Trade stored: {trade}")
                     else:
-                        logger.error("No models loaded")
-                        pred_msg = f"🤖 *MODEL PREDICTIONS* {INSTRUMENT.replace('_','/')} {signal_type}\nError: No models loaded."
+                        logger.error("No models or scaler loaded")
+                        pred_msg = f"🤖 *MODEL PREDICTIONS* {INSTRUMENT.replace('_','/')} {signal_type}\nError: No models or scaler loaded."
                         send_telegram(pred_msg)
             else:
                 logger.debug("Signal skipped due to similar candle conditions")
