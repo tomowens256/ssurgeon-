@@ -707,8 +707,10 @@ class TradingDetector:
                                     'sl': signal_data['sl'],
                                     'tp': signal_data['tp'],
                                     'time': current_time,
+                                    'signal_time': signal_data['time'],  # Store signal candle time
                                     'prediction': avg_prob,
-                                    'outcome': None
+                                    'outcome': None,
+                                    'checked': False  # Flag to prevent immediate checking
                                 }
                                 logger.info(f"New trade stored: {trade_id} with prediction {avg_prob:.4f}")
                         else:
@@ -716,39 +718,60 @@ class TradingDetector:
             else:
                 logger.debug("Signal skipped due to similar candle conditions")
 
+        # MODIFIED OUTCOME CHECKING SECTION
         # Check outcomes for all active trades
-        latest_candle = self.data.iloc[-1]
-        for trade_id, trade in list(active_trades.items()):
-            if trade.get('outcome') is None:
-                entry, sl, tp = trade['entry'], trade['sl'], trade['tp']
-                if trade['prediction'] >= 0.55:  # Only check if predicted as worth taking
-                    if entry > sl:  # SELL trade
-                        if latest_candle['high'] >= sl:
-                            trade['outcome'] = 'Hit SL (Loss)'
-                            logger.info(f"SELL trade {trade_id} outcome: Hit SL at {latest_candle['high']}")
-                        elif latest_candle['low'] <= tp:
-                            trade['outcome'] = 'Hit TP (Win)'
-                            logger.info(f"SELL trade {trade_id} outcome: Hit TP at {latest_candle['low']}")
-                    else:  # BUY trade
-                        if latest_candle['low'] <= sl:
-                            trade['outcome'] = 'Hit SL (Loss)'
-                            logger.info(f"BUY trade {trade_id} outcome: Hit SL at {latest_candle['low']}")
-                        elif latest_candle['high'] >= tp:
-                            trade['outcome'] = 'Hit TP (Win)'
-                            logger.info(f"BUY trade {trade_id} outcome: Hit TP at {latest_candle['high']}")
-                
-                if trade.get('outcome'):
-                    outcome_msg = (
-                        f"📈 *Trade Outcome*\n"
-                        f"Entry: {entry:.2f}\n"
-                        f"SL: {sl:.2f}\n"
-                        f"TP: {tp:.2f}\n"
-                        f"Prediction: {trade['prediction']:.4f}\n"
-                        f"Outcome: {trade['outcome']}\n"
-                        f"Time: {current_time.strftime('%Y-%m-%d %H:%M')} NY"
-                    )
-                    if not send_telegram(outcome_msg):
-                        logger.error(f"Failed to send outcome for trade {trade_id}")
+        if len(self.data) > 0:
+            latest_candle = self.data.iloc[-1]
+            for trade_id, trade in list(active_trades.items()):
+                if trade.get('outcome') is None and not trade.get('checked', False):
+                    # Skip checking on the same candle as the signal
+                    if latest_candle['time'] == trade['signal_time']:
+                        logger.debug(f"Skipping outcome check for {trade_id} - still on signal candle")
+                        continue
+                    
+                    # Mark as checked so we only evaluate once per candle
+                    trade['checked'] = True
+                    
+                    entry, sl, tp = trade['entry'], trade['sl'], trade['tp']
+                    logger.info(f"Checking outcome for trade {trade_id}: entry={entry}, sl={sl}, tp={tp}")
+                    
+                    if trade['prediction'] >= 0.55:  # Only check if predicted as worth taking
+                        # SELL trade: entry > sl
+                        if entry > sl:
+                            if latest_candle['high'] >= sl:
+                                trade['outcome'] = 'Hit SL (Loss)'
+                                logger.info(f"SELL trade {trade_id} outcome: Hit SL at {latest_candle['high']}")
+                            elif latest_candle['low'] <= tp:
+                                trade['outcome'] = 'Hit TP (Win)'
+                                logger.info(f"SELL trade {trade_id} outcome: Hit TP at {latest_candle['low']}")
+                        
+                        # BUY trade: entry < sl
+                        else:
+                            if latest_candle['low'] <= sl:
+                                trade['outcome'] = 'Hit SL (Loss)'
+                                logger.info(f"BUY trade {trade_id} outcome: Hit SL at {latest_candle['low']}")
+                            elif latest_candle['high'] >= tp:
+                                trade['outcome'] = 'Hit TP (Win)'
+                                logger.info(f"BUY trade {trade_id} outcome: Hit TP at {latest_candle['high']}")
+                    
+                    # If outcome determined, send notification
+                    if trade.get('outcome'):
+                        outcome_msg = (
+                            f"📈 *Trade Outcome*\n"
+                            f"Signal Time: {trade['signal_time'].strftime('%Y-%m-%d %H:%M')} NY\n"
+                            f"Entry: {entry:.2f}\n"
+                            f"SL: {sl:.2f}\n"
+                            f"TP: {tp:.2f}\n"
+                            f"Prediction: {trade['prediction']:.4f}\n"
+                            f"Outcome: {trade['outcome']}\n"
+                            f"Detected at: {current_time.strftime('%Y-%m-%d %H:%M')} NY"
+                        )
+                        if not send_telegram(outcome_msg):
+                            logger.error(f"Failed to send outcome for trade {trade_id}")
+                elif trade.get('outcome') and trade.get('checked'):
+                    # Remove closed trades from active tracking
+                    del active_trades[trade_id]
+                    logger.info(f"Removed closed trade: {trade_id}")
 
         if latest_candles.empty and candle_age > 1:
             next_candle_time = self._get_next_candle_time(current_time)
