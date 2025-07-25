@@ -10,6 +10,7 @@ from tensorflow import keras
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import StandardScaler
+import os
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -31,7 +32,10 @@ bot = telegram.Bot(token=TELEGRAM_TOKEN)
 # Global variables
 active_trades = {}
 scaler = StandardScaler()
-model = keras.models.load_model('your_trained_model.h5')
+model_path = next((f for f in os.listdir('ml_models') if f.endswith('.keras')), None)
+if not model_path:
+    raise FileNotFoundError("No .keras model found in ml_models/")
+model = keras.models.load_model(f'ml_models/{model_path}')  # Load the first .keras file
 
 def setup():
     logger.info("Launching main application")
@@ -169,7 +173,7 @@ def update_loop():
                 'type': signal,
                 'entry_time': datetime.strptime(candles[-1]['time'], '%Y-%m-%dT%H:%M:%S.%f000Z'),
                 'entry_price': float(candles[-1]['close']),
-                'sl': float(candles[-1]['high']) + 1.68 if signal == 'SELL' else float(candles[-1]['low']) - 1.68,
+                'sl': float(candles[-1]['high']) + 1.68 if signal == 'SELL' else float(candles[-1]['low'] - 1.68),
                 'tp': float(candles[-1]['close']) - 6.72 if signal == 'SELL' else float(candles[-1]['close']) + 6.72,
                 'outcome': 'Open'
             }
