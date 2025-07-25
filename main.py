@@ -322,7 +322,6 @@ class FeatureEngineer:
         df = df.copy()
         
         df['day'] = df['time'].dt.day_name()
-        # Ensure all days are present
         all_days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Sunday']
         for day in all_days:
             df[f'day_{day}'] = 0
@@ -427,7 +426,6 @@ class FeatureEngineer:
         df['rrr_div_rsi'] = df['rrr'] / (df['rsi'] + 1e-6)
         logger.debug("Derived metrics calculated")
         
-        # Calculate combo key and flags
         combo_key = f"{df['rsi'].iloc[-1]:.2f}_{df['macd_z'].iloc[-1]:.2f}_{df['atr_z'].iloc[-1]:.2f}"
         logger.debug(f"Combo key calculated: {combo_key}")
         combo_flags = {'combo_flag_dead': 0, 'combo_flag_fair': 0, 'combo_flag_fine': 0}
@@ -527,11 +525,35 @@ class TradingDetector:
             return current_time.replace(hour=current_time.hour + 1, minute=0, second=0, microsecond=0)
         return current_time.replace(minute=next_minute, second=0, microsecond=0)
 
+    def update_data(self, df_new):
+        """Update the data with new candles"""
+        logger.info(f"Updating data with new dataframe of size {len(df_new)}")
+        if df_new.empty:
+            logger.warning("Received empty dataframe in update_data")
+            return
+        
+        if self.data.empty:
+            self.data = df_new.dropna(subset=['time', 'open', 'high', 'low', 'close']).tail(201)
+            logger.debug("Initialized data with new dataframe")
+        else:
+            last_existing_time = self.data['time'].max()
+            new_data = df_new[df_new['time'] > last_existing_time]
+            if not new_data.empty:
+                self.data = pd.concat([self.data, new_data]).drop_duplicates(subset=['time'], keep="last")
+                self.data = self.data.sort_values('time').reset_index(drop=True).tail(201)
+                logger.debug(f"Combined data shape: {self.data.shape}, latest time: {self.data['time'].max()}")
+            else:
+                latest_new = df_new.iloc[-1]
+                if latest_new['time'] >= self.data['time'].max():
+                    self.data = pd.concat([self.data, df_new.tail(1)]).drop_duplicates(subset=['time'], keep="last")
+                    self.data = self.data.sort_values('time').reset_index(drop=True).tail(201)
+                    logger.debug(f"Forced update with latest candle, new shape: {self.data.shape}, latest time: {self.data['time'].max()}")
+
     def process_signals(self, minutes_closed, latest_candles):
         logger.info(f"Processing signals, minutes closed: {minutes_closed}, candles: {len(latest_candles)}")
         if not latest_candles.empty:
             logger.info(f"Updating data with {len(latest_candles)} new candles")
-            self.data = pd.concat([self.data, latest_candles]).drop_duplicates(subset=["time"], keep="last").sort_values("time").tail(201)
+            self.update_data(latest_candles)
             logger.debug(f"Updated data shape: {self.data.shape}, latest time: {self.data['time'].max()}, last 3 rows: {self.data.tail(3)}")
         else:
             logger.warning("No new candles, using existing data")
