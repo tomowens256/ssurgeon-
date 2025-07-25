@@ -1,7 +1,8 @@
 name: Run Trading Bot
+
 on:
   schedule:
-    - cron: '*/350 * * * *'  # Run every 350 minutes
+    - cron: '0 16 * * *'  # Run at 19:00 EAT (UTC+3) every 350 minutes, adjusted from 14:57 EAT
   workflow_dispatch:
 
 jobs:
