@@ -432,7 +432,6 @@ class FeatureEngineer:
         logger.debug(f"Combo key calculated: {combo_key}")
         combo_flags = {'combo_flag_dead': 0, 'combo_flag_fair': 0, 'combo_flag_fine': 0}
         combo_flags2 = {'combo_flag2_dead': 0, 'combo_flag2_fair': 0, 'combo_flag2_fine': 0}
-        # Simple logic: if RSI < 30 or MACD_Z < -1, mark as 'dead'
         if df['rsi'].iloc[-1] < 30 or df['macd_z'].iloc[-1] < -1:
             combo_flags['combo_flag_dead'] = 1
             combo_flags2['combo_flag2_dead'] = 1
@@ -448,7 +447,6 @@ class FeatureEngineer:
             df[flag] = value
         logger.debug(f"Combo flags set: {combo_flags}, {combo_flags2}")
         
-        # Set is_bad_combo based on combo_flag_dead
         df['is_bad_combo'] = 1 if combo_flags['combo_flag_dead'] == 1 else 0
         logger.debug(f"is_bad_combo set to: {df['is_bad_combo'].iloc[-1]}")
         
@@ -458,7 +456,6 @@ class FeatureEngineer:
         df['trade_type_SELL'] = int(signal_type == 'SELL')
         logger.debug("CRT and trade type encoding applied")
         
-        # Ensure all features are present in the exact order
         features = pd.Series(index=self.features, dtype=float)
         for feat in self.features:
             if feat in df.columns:
@@ -486,7 +483,8 @@ class TradingDetector:
         self.data = pd.DataFrame()
         self.feature_engineer = FeatureEngineer()
         self.scheduler = CandleScheduler(timeframe=15)
-        self.last_signal_time = None  # Track last signal
+        self.last_signal_time = None
+        self.active_trades = []  # (entry, sl, tp, start_time)
         
         logger.info("Loading initial 201 candles")
         self.data = self.fetch_initial_candles()
@@ -513,6 +511,22 @@ class TradingDetector:
         logger.error("Failed to fetch initial 201 candles after 5 attempts")
         return pd.DataFrame()
 
+    def calculate_candle_age(self, current_time, candle_time):
+        """Calculate age of the candle in minutes"""
+        elapsed = (current_time - candle_time).total_seconds() / 60
+        return min(15, max(0, elapsed))
+
+    def _get_next_candle_time(self, current_time):
+        """Calculate the next 15-minute candle open time"""
+        minute = current_time.minute
+        remainder = minute % 15
+        if remainder == 0:
+            return current_time.replace(second=0, microsecond=0) + timedelta(minutes=15)
+        next_minute = minute - remainder + 15
+        if next_minute >= 60:
+            return current_time.replace(hour=current_time.hour + 1, minute=0, second=0, microsecond=0)
+        return current_time.replace(minute=next_minute, second=0, microsecond=0)
+
     def process_signals(self, minutes_closed, latest_candles):
         logger.info(f"Processing signals, minutes closed: {minutes_closed}, candles: {len(latest_candles)}")
         if not latest_candles.empty:
@@ -526,9 +540,16 @@ class TradingDetector:
             logger.warning(f"Insufficient data: {len(self.data)} rows, need at least 3")
             return
 
-        # Only process signal on completed candle (minutes_closed = 0)
-        if minutes_closed != 0:
-            logger.info(f"Skipping signal, minutes closed: {minutes_closed}, waiting for candle completion")
+        latest_candle_time = self.data.iloc[-1]['time']
+        current_time = datetime.now(NY_TZ)
+        candle_age = self.calculate_candle_age(current_time, latest_candle_time)
+        logger.info(f"Candle age: {candle_age:.2f} minutes")
+
+        if candle_age > 1:  # Wait for next candle if too late
+            next_candle_time = self._get_next_candle_time(current_time)
+            sleep_seconds = (next_candle_time - current_time).total_seconds()
+            logger.info(f"Waiting for next candle, sleeping {sleep_seconds:.1f} seconds")
+            time.sleep(max(1, sleep_seconds))
             return
 
         signal_type, signal_data = self.feature_engineer.calculate_crt_signal(self.data.tail(3))
@@ -539,7 +560,7 @@ class TradingDetector:
                 logger.info("Signal skipped due to cooldown")
                 return
 
-            logger.info(f"Signal validated: {signal_type}")
+            logger.info(f"Signal validated at candle open: {signal_type}")
             alert_time = signal_data['time'].astimezone(NY_TZ)
             setup_msg = (
                 f"🔔 *SETUP* {INSTRUMENT.replace('_','/')} {signal_type}\n"
@@ -547,11 +568,11 @@ class TradingDetector:
                 f"Time: {alert_time.strftime('%Y-%m-%d %H:%M')} NY\n"
                 f"Entry: {signal_data['entry']:.2f}\n"
                 f"TP: {signal_data['tp']:.2f}\n"
-                f"SL: {signal_data['sl']:.2f}"
+                f"SL: {signal_data['sl']:.2f}\n"
+                f"Candle Age: {candle_age:.2f} minutes"
             )
             if send_telegram(setup_msg):
-                # Generate and send features
-                features = self.feature_engineer.generate_features(self.data, signal_type, minutes_closed)
+                features = self.feature_engineer.generate_features(self.data, signal_type, 0)
                 if features is not None:
                     feature_msg = f"📊 *FEATURES* {INSTRUMENT.replace('_','/')} {signal_type}\n"
                     formatted_features = []
@@ -561,90 +582,89 @@ class TradingDetector:
                     feature_msg += "\n".join(formatted_features)
                     if not send_telegram(feature_msg):
                         logger.error("Failed to send features after retries")
-                    
-                    # Scale features and send scaled features
-                    if scaler is not None:
+
+                if scaler is not None:
+                    features_df = pd.DataFrame([features], columns=self.feature_engineer.features)
+                    scaled_features = scaler.transform(features_df).flatten()
+                    scaled_msg = f"📏 *SCALED FEATURES* {INSTRUMENT.replace('_','/')} {signal_type}\n"
+                    scaled_pairs = []
+                    for feat, val in zip(self.feature_engineer.features, scaled_features):
+                        escaped_feat = feat.replace('_', '\\_')
+                        scaled_pairs.append(f"{escaped_feat}: {val:.4f}")
+                    scaled_msg += "\n".join(scaled_pairs)
+                    if not send_telegram(scaled_msg):
+                        logger.error("Failed to send scaled features after retries")
+
+                if models:
+                    pred_msg = f"🤖 *MODEL PREDICTIONS* {INSTRUMENT.replace('_','/')} {signal_type}\n"
+                    try:
                         features_df = pd.DataFrame([features], columns=self.feature_engineer.features)
-                        scaled_features = scaler.transform(features_df).flatten()
-                        scaled_msg = f"📏 *SCALED FEATURES* {INSTRUMENT.replace('_','/')} {signal_type}\n"
-                        scaled_pairs = []
-                        for feat, val in zip(self.feature_engineer.features, scaled_features):
-                            escaped_feat = feat.replace('_', '\\_')
-                            scaled_pairs.append(f"{escaped_feat}: {val:.4f}")
-                        scaled_msg += "\n".join(scaled_pairs)
-                        if not send_telegram(scaled_msg):
-                            logger.error("Failed to send scaled features after retries")
-                    
-                    # Ensure model prediction is always included
-                    if models:
-                        pred_msg = f"🤖 *MODEL PREDICTIONS* {INSTRUMENT.replace('_','/')} {signal_type}\n"
-                        try:
-                            features_df = pd.DataFrame([features], columns=self.feature_engineer.features)
-                            scaled_features = scaler.transform(features_df).astype(np.float32)
-                            scaled_features = scaled_features.reshape(1, 1, -1)  # (1, 1, 68)
-                            if np.any(np.isnan(scaled_features)):
-                                logger.warning("NaN values detected in scaled_features, replacing with 0")
-                                scaled_features = np.nan_to_num(scaled_features, nan=0.0)
-                            # Predict with each model
-                            probs = np.array([model.predict(scaled_features, verbose=0)[0, 0] for model in models])
-                            avg_prob = np.mean(probs)  # Average probability across models
-                            # Apply threshold (T=0.55) for trade worthiness
-                            final_pred = 1 if avg_prob >= 0.55 else 0
-                            outcome = "Worth Taking" if final_pred == 1 else "Likely Loss"
-                            pred_msg += f"Ensemble Prediction: {avg_prob:.4f} (Threshold: 0.55)\nOutcome: {outcome}\n"
-                            if not send_telegram(pred_msg):
-                                logger.error("Failed to send model predictions after retries")
-                        except Exception as e:
-                            logger.error(f"Model prediction failed: {str(e)}")
-                            logger.error(traceback.format_exc())
-                            pred_msg += "Error: Prediction failed, check logs."
-                            send_telegram(pred_msg)
-                    else:
-                        logger.error("No models loaded, skipping predictions")
-                        pred_msg = f"🤖 *MODEL PREDICTIONS* {INSTRUMENT.replace('_','/')} {signal_type}\nError: No models loaded."
+                        scaled_features = scaler.transform(features_df).astype(np.float32)
+                        scaled_features = scaled_features.reshape(1, 1, -1)
+                        if np.any(np.isnan(scaled_features)):
+                            logger.warning("NaN values detected in scaled_features, replacing with 0")
+                            scaled_features = np.nan_to_num(scaled_features, nan=0.0)
+                        probs = np.array([model.predict(scaled_features, verbose=0)[0, 0] for model in models])
+                        avg_prob = np.mean(probs)
+                        final_pred = 1 if avg_prob >= 0.55 else 0
+                        outcome = "Worth Taking" if final_pred == 1 else "Likely Loss"
+                        pred_msg += f"Ensemble Prediction: {avg_prob:.4f} (Threshold: 0.55)\nOutcome: {outcome}\n"
+                        if not send_telegram(pred_msg):
+                            logger.error("Failed to send model predictions after retries")
+                    except Exception as e:
+                        logger.error(f"Model prediction failed: {str(e)}")
+                        pred_msg += "Error: Prediction failed, check logs."
                         send_telegram(pred_msg)
+                else:
+                    logger.error("No models loaded")
+                    pred_msg = f"🤖 *MODEL PREDICTIONS* {INSTRUMENT.replace('_','/')} {signal_type}\nError: No models loaded."
+                    send_telegram(pred_msg)
+
+                trade = (signal_data['entry'], signal_data['sl'], signal_data['tp'], current_time)
+                self.active_trades.append(trade)
+                logger.info(f"Trade stored: {trade}")
 
             self.last_signal_time = current_time
             next_candle_time = self._get_next_candle_time(current_time)
             sleep_seconds = (next_candle_time - current_time).total_seconds()
             logger.info(f"Sleeping {sleep_seconds:.1f} seconds until next candle open")
             time.sleep(max(1, sleep_seconds))
-    else:
-        time.sleep(60)
-
-    def _get_next_candle_time(self, current_time):
-        """Calculate the next 15-minute candle open time"""
-        minute = current_time.minute
-        remainder = minute % 15
-        if remainder == 0:
-            return current_time.replace(second=0, microsecond=0) + timedelta(minutes=15)
-        next_minute = minute - remainder + 15
-        if next_minute >= 60:
-            return current_time.replace(hour=current_time.hour + 1, minute=0, second=0, microsecond=0)
-        return current_time.replace(minute=next_minute, second=0, microsecond=0)
-
-    def update_data(self, df_new):
-        logger.info(f"Updating data with new dataframe of size {len(df_new)}")
-        if df_new.empty:
-            logger.warning("Received empty dataframe in update_data")
-            return
-        
-        if self.data.empty:
-            self.data = df_new.dropna(subset=['time', 'open', 'high', 'low', 'close']).tail(201)
-            logger.debug("Initialized data with new dataframe")
         else:
-            last_existing_time = self.data['time'].max()
-            new_data = df_new[df_new['time'] > last_existing_time]
-            if not new_data.empty:
-                self.data = pd.concat([self.data, new_data]).drop_duplicates(subset=['time'], keep="last")
-                self.data = self.data.sort_values('time').reset_index(drop=True).tail(201)
-                logger.debug(f"Combined data shape: {self.data.shape}, latest time: {self.data['time'].max()}")
-            else:
-                latest_new = df_new.iloc[-1]
-                if latest_new['time'] >= self.data['time'].max():
-                    self.data = pd.concat([self.data, df_new.tail(1)]).drop_duplicates(subset=['time'], keep="last")
-                    self.data = self.data.sort_values('time').reset_index(drop=True).tail(201)
-                    logger.debug(f"Forced update with latest candle, new shape: {self.data.shape}, latest time: {self.data['time'].max()}")
+            time.sleep(60)
+
+        self.check_trade_outcomes()
+
+    def check_trade_outcomes(self):
+        """Check if any active trade hits SL or TP"""
+        if not hasattr(self, 'active_trades') or not self.active_trades:
+            return
+
+        current_price = self.data.iloc[-1]['close']  # Use latest close as current price
+        completed_trades = []
+        for trade in self.active_trades:
+            entry, sl, tp, start_time = trade
+            if current_price <= sl:
+                outcome = "Hit SL"
+                logger.info(f"Trade {trade} outcome: {outcome}")
+                completed_trades.append(trade + (outcome, datetime.now(NY_TZ)))
+            elif current_price >= tp:
+                outcome = "Hit TP"
+                logger.info(f"Trade {trade} outcome: {outcome}")
+                completed_trades.append(trade + (outcome, datetime.now(NY_TZ)))
+        
+        if completed_trades:
+            self.active_trades = [t for t in self.active_trades if t not in [ct[:4] for ct in completed_trades]]
+            for trade in completed_trades:
+                entry, sl, tp, start_time, outcome, end_time = trade
+                outcome_msg = (
+                    f"📈 *Trade Outcome*\n"
+                    f"Entry: {entry:.2f}\n"
+                    f"SL: {sl:.2f}\n"
+                    f"TP: {tp:.2f}\n"
+                    f"Outcome: {outcome}\n"
+                    f"Time: {end_time.strftime('%Y-%m-%d %H:%M')} NY"
+                )
+                send_telegram(outcome_msg)
 
 # ========================
 # CANDLE SCHEDULER
@@ -690,7 +710,7 @@ class CandleScheduler(threading.Thread):
                 
                 if df_candles.empty:
                     logger.warning("No candles fetched, forcing callback with existing data")
-                    if self.data and len(self.data) >= 3:
+                    if hasattr(self, 'data') and self.data is not None and len(self.data) >= 3:
                         latest_time = self.data['time'].max()
                         minutes_closed = self.calculate_minutes_closed(latest_time)
                         if self.callback:
