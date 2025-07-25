@@ -120,7 +120,7 @@ def fetch_candles(last_time=None):
     params = {
         "granularity": TIMEFRAME,
         "count": 201,
-        "price": "B"  # Changed from "M" to "B" for bid prices
+        "price": "B"  # Bid prices
     }
     if last_time:
         params["from"] = last_time.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -142,7 +142,7 @@ def fetch_candles(last_time=None):
             
             data = []
             for candle in candles:
-                price_data = candle.get('bid', {})  # Changed from 'mid' to 'bid'
+                price_data = candle.get('bid', {})
                 if not price_data:
                     logger.warning(f"Skipping candle with missing bid price data: {candle}")
                     continue
@@ -526,6 +526,11 @@ class TradingDetector:
             logger.warning(f"Insufficient data: {len(self.data)} rows, need at least 3")
             return
 
+        # Only process signal on completed candle (minutes_closed = 0)
+        if minutes_closed != 0:
+            logger.info(f"Skipping signal, minutes closed: {minutes_closed}, waiting for candle completion")
+            return
+
         signal_type, signal_data = self.feature_engineer.calculate_crt_signal(self.data.tail(3))
         logger.debug(f"Signal type: {signal_type}, Signal data: {signal_data}, Last 3 candles: {self.data.tail(3)}")
         if signal_type and signal_data:
@@ -570,7 +575,7 @@ class TradingDetector:
                         if not send_telegram(scaled_msg):
                             logger.error("Failed to send scaled features after retries")
                     
-                    # Model predictions with ensemble voting (T=0.55)
+                    # Ensure model prediction is always included
                     if models:
                         pred_msg = f"🤖 *MODEL PREDICTIONS* {INSTRUMENT.replace('_','/')} {signal_type}\n"
                         try:
@@ -596,14 +601,16 @@ class TradingDetector:
                             send_telegram(pred_msg)
                     else:
                         logger.error("No models loaded, skipping predictions")
+                        pred_msg = f"🤖 *MODEL PREDICTIONS* {INSTRUMENT.replace('_','/')} {signal_type}\nError: No models loaded."
+                        send_telegram(pred_msg)
 
             self.last_signal_time = current_time
             next_candle_time = self._get_next_candle_time(current_time)
             sleep_seconds = (next_candle_time - current_time).total_seconds()
             logger.info(f"Sleeping {sleep_seconds:.1f} seconds until next candle open")
             time.sleep(max(1, sleep_seconds))
-        else:
-            time.sleep(60)
+    else:
+        time.sleep(60)
 
     def _get_next_candle_time(self, current_time):
         """Calculate the next 15-minute candle open time"""
