@@ -32,6 +32,18 @@ API_KEY = os.getenv("OANDA_API_KEY")
 INSTRUMENT = "XAU_USD"
 TIMEFRAME = "M15"
 
+# Specific models to load (your preferred ensemble)
+MODEL_FILES = [
+    'model_f1_0.0000_20250719_090727.keras',
+    'model_f1_0.0000_20250719_092134.keras',
+    'model_f1_0.0000_20250719_093712.keras',
+    'model_f1_0.0000_20250719_095056.keras',
+    'model_f1_0.0000_20250719_100411.keras',
+    'model_f1_0.0000_20250719_102457.keras',
+    'model_f1_0.0000_20250719_104011.keras',
+    'model_f1_0.0000_20250719_110914.keras'
+]
+
 # Global variables
 GLOBAL_LOCK = threading.Lock()
 CRT_SIGNAL_COUNT = 0
@@ -56,9 +68,23 @@ oanda_api = API(access_token=API_KEY, environment="practice")
 scaler_path = os.path.join("ml_models", "scaler_oversample.joblib")
 scaler = joblib.load(scaler_path) if os.path.exists(scaler_path) else None
 
-# Load models
+# Load specific models (your preferred ensemble)
 models_dir = "ml_models"
-models = [load_model(os.path.join(models_dir, f)) for f in os.listdir(models_dir) if f.endswith(".keras")]
+models = []
+for model_file in MODEL_FILES:
+    model_path = os.path.join(models_dir, model_file)
+    if os.path.exists(model_path):
+        try:
+            models.append(load_model(model_path))
+            logger.info(f"Loaded model: {model_file}")
+        except Exception as e:
+            logger.error(f"Error loading model {model_file}: {str(e)}")
+    else:
+        logger.error(f"Model file not found: {model_path}")
+
+if not models:
+    logger.error("CRITICAL: No models loaded! Exiting.")
+    sys.exit(1)
 
 # Dictionary to store trades
 active_trades = {}
@@ -559,6 +585,42 @@ class TradingDetector:
                     self.data = self.data.sort_values('time').reset_index(drop=True).tail(201)
                     logger.debug(f"Forced update with latest candle, new shape: {self.data.shape}, latest time: {self.data['time'].max()}")
 
+    def predict_ensemble(self, features_df):
+        """Predict using your preferred ensemble voting logic (T=0.55)"""
+        logger.info("Running ensemble prediction with 8 specific models")
+        
+        # Validate input shape
+        if features_df.shape[1] != 68:
+            logger.error(f"Feature mismatch: Expected 68 features, got {features_df.shape[1]}")
+            return None, None, None
+        
+        try:
+            # Convert to numpy and scale
+            features_array = features_df.values
+            scaled_features = scaler.transform(features_array)
+            
+            # Reshape for LSTM (samples, timesteps, features)
+            reshaped_features = np.expand_dims(scaled_features, axis=1)
+            
+            # Get predictions from all models
+            probabilities = []
+            for model in models:
+                prob = model.predict(reshaped_features, verbose=0)[0][0]
+                probabilities.append(prob)
+            
+            # Calculate average probability
+            avg_prob = np.mean(probabilities)
+            final_pred = 1 if avg_prob >= 0.55 else 0
+            outcome = "Worth Taking" if final_pred == 1 else "Likely Loss"
+            
+            logger.info(f"Ensemble prediction: Avg prob={avg_prob:.4f}, Outcome={outcome}")
+            return avg_prob, outcome, probabilities
+        
+        except Exception as e:
+            logger.error(f"Prediction failed: {str(e)}")
+            logger.error(traceback.format_exc())
+            return None, None, None
+
     def process_signals(self, minutes_closed, latest_candles):
         logger.info(f"Processing signals, minutes closed: {minutes_closed}, candles: {len(latest_candles)}")
         if not latest_candles.empty:
@@ -621,37 +683,36 @@ class TradingDetector:
 
                         if scaler is not None and models:
                             features_df = pd.DataFrame([features], columns=self.feature_engineer.features)
-                            scaled_features = scaler.transform(features_df).flatten()
-                            if np.any(np.isnan(scaled_features)):
-                                logger.warning("NaN values detected in scaled_features, replacing with 0")
-                                scaled_features = np.nan_to_num(scaled_features, nan=0.0)
                             
-                            scaled_features = scaled_features.reshape(1, 1, -1)
-                            probs = np.array([model.predict(scaled_features, verbose=0)[0, 0] for model in models])
-                            avg_prob = np.mean(probs)
-                            final_pred = 1 if avg_prob >= 0.55 else 0
-                            outcome = "Worth Taking" if final_pred == 1 else "Likely Loss"
-                            pred_msg = f"🤖 *MODEL PREDICTIONS* {INSTRUMENT.replace('_','/')} {signal_type}\n"
-                            predictions = [f"Prediction {i+1}: {avg_prob:.4f} (Outcome: {outcome})" for i in range(10)]
-                            pred_msg += "\n".join(predictions)
-                            if not send_telegram(pred_msg):
-                                logger.error("Failed to send model predictions after retries")
+                            # Use your preferred prediction method
+                            avg_prob, outcome, all_probs = self.predict_ensemble(features_df)
                             
-                            # Store new trade in dictionary with prediction
-                            trade_id = f"{signal_type}_{current_time.timestamp()}"
-                            active_trades[trade_id] = {
-                                'entry': signal_data['entry'],
-                                'sl': signal_data['sl'],
-                                'tp': signal_data['tp'],
-                                'time': current_time,
-                                'prediction': avg_prob,
-                                'outcome': None
-                            }
-                            logger.info(f"New trade stored: {trade_id} with prediction {avg_prob:.4f}")
+                            if avg_prob is not None:
+                                pred_msg = f"🤖 *ENSEMBLE PREDICTION* {INSTRUMENT.replace('_','/')} {signal_type}\n"
+                                pred_msg += f"Average Probability: {avg_prob:.4f}\n"
+                                pred_msg += f"Final Decision: {outcome}\n\n"
+                                pred_msg += "*Individual Model Probabilities:*\n"
+                                
+                                # List all model probabilities
+                                for i, prob in enumerate(all_probs):
+                                    pred_msg += f"Model {i+1}: {prob:.4f}\n"
+                                
+                                if not send_telegram(pred_msg):
+                                    logger.error("Failed to send model predictions")
+                                
+                                # Store new trade with prediction
+                                trade_id = f"{signal_type}_{current_time.timestamp()}"
+                                active_trades[trade_id] = {
+                                    'entry': signal_data['entry'],
+                                    'sl': signal_data['sl'],
+                                    'tp': signal_data['tp'],
+                                    'time': current_time,
+                                    'prediction': avg_prob,
+                                    'outcome': None
+                                }
+                                logger.info(f"New trade stored: {trade_id} with prediction {avg_prob:.4f}")
                         else:
-                            logger.error("No models or scaler loaded")
-                            pred_msg = f"🤖 *MODEL PREDICTIONS* {INSTRUMENT.replace('_','/')} {signal_type}\nError: No models or scaler loaded."
-                            send_telegram(pred_msg)
+                            logger.error("No scaler or models loaded")
             else:
                 logger.debug("Signal skipped due to similar candle conditions")
 
