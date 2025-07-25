@@ -86,6 +86,7 @@ def send_telegram(message):
     if len(message) > 4000:
         message = message[:4000] + "... [TRUNCATED]"
     
+    message = message.replace('_', '\_')  # Escape underscores for Markdown
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     max_retries = 3
     for attempt in range(max_retries):
@@ -126,7 +127,7 @@ def fetch_candles(last_time=None):
         params["from"] = last_time.strftime("%Y-%m-%dT%H:%M:%SZ")
     
     sleep_time = 10
-    max_attempts = 3
+    max_attempts = 5
     
     for attempt in range(max_attempts):
         try:
@@ -176,6 +177,10 @@ def fetch_candles(last_time=None):
                 logger.warning(f"Rate limit hit, sleeping {sleep_time}s (attempt {attempt+1}/{max_attempts})")
                 time.sleep(sleep_time)
                 sleep_time *= 2
+            elif e.status == 502:
+                wait_time = sleep_time * (2 ** attempt)
+                logger.error(f"Oanda API error: 502 Bad Gateway (Attempt {attempt+1}/{max_attempts}), retrying in {wait_time}s")
+                time.sleep(wait_time)
             else:
                 logger.error(f"Oanda API error: {str(e)}")
         except Exception as e:
@@ -237,14 +242,14 @@ class FeatureEngineer:
             tp = entry + 4 * risk
         
         if signal_type:
-            logger.info(f"Detected signal: {signal_type} on current candle")
+            logger.info(f"Detected signal: {signal_type} on current candle at {c3['time']}")
         else:
             logger.debug("No signal detected")
         return signal_type, {'entry': entry, 'sl': sl, 'tp': tp, 'time': c3['time']} if signal_type else (None, None)
 
     def calculate_technical_indicators(self, df):
         logger.info("Calculating technical indicators")
-        df = df.copy().drop_duplicates(subset=['time'], keep='last')  # Ensure unique timestamps
+        df = df.copy().drop_duplicates(subset=['time'], keep='last')
         
         df['adj close'] = df['open']
         logger.debug("Adjusted close calculated")
@@ -567,7 +572,6 @@ class TradingDetector:
         candle_age = self.calculate_candle_age(current_time, latest_candle_time)
         logger.info(f"Candle age: {candle_age:.2f} minutes")
 
-        # Process signal regardless of age if new data is present
         signal_type, signal_data = self.feature_engineer.calculate_crt_signal(self.data.tail(3))
         logger.debug(f"Signal type: {signal_type}, Signal data: {signal_data}, Last 3 candles: {self.data.tail(3)}")
         if signal_type and signal_data:
@@ -645,7 +649,6 @@ class TradingDetector:
         else:
             logger.debug("No signal detected, checking for sleep or next cycle")
 
-        # Sleep until next candle only if no new signal or data
         if latest_candles.empty and candle_age > 1:
             next_candle_time = self._get_next_candle_time(current_time)
             sleep_seconds = (next_candle_time - current_time).total_seconds()
@@ -667,7 +670,6 @@ class TradingDetector:
             entry, sl, tp, start_time, trade_index = trade
             logger.info(f"Checking trade: Entry={entry}, SL={sl}, TP={tp}, Index={trade_index}")
 
-            # Get data from trade index onwards
             trade_data = self.data.iloc[trade_index:].copy().reset_index(drop=True)
             if len(trade_data) < 1:
                 continue
@@ -679,7 +681,6 @@ class TradingDetector:
             sl_hit = False
             tp_hit = False
 
-            # Check entry candle first
             entry_candle = trade_data.iloc[0]
             if trade_type == 'SELL':
                 if entry_candle['high'] >= sl:
@@ -692,7 +693,6 @@ class TradingDetector:
                 elif entry_candle['high'] >= tp:
                     tp_hit = True
 
-            # Check forward candles (15-minute lookahead)
             lookahead = 15
             for j in range(1, min(lookahead + 1, len(trade_data))):
                 if sl_hit or tp_hit:
@@ -713,7 +713,6 @@ class TradingDetector:
                         tp_hit = True
                         break
 
-            # Determine outcome
             if sl_hit:
                 rr = -1
                 outcome = 'Hit SL'
