@@ -510,7 +510,7 @@ class TradingDetector:
         return pd.DataFrame()
 
     def calculate_candle_age(self, current_time, candle_time):
-        """Calculate age of the candle in minutes"""
+        """Calculate age of the latest candle in minutes"""
         elapsed = (current_time - candle_time).total_seconds() / 60
         return min(15, max(0, elapsed))
 
@@ -567,13 +567,7 @@ class TradingDetector:
         candle_age = self.calculate_candle_age(current_time, latest_candle_time)
         logger.info(f"Candle age: {candle_age:.2f} minutes")
 
-        if candle_age > 1:  # Wait for next candle if too late
-            next_candle_time = self._get_next_candle_time(current_time)
-            sleep_seconds = (next_candle_time - current_time).total_seconds()
-            logger.info(f"Waiting for next candle, sleeping {sleep_seconds:.1f} seconds")
-            time.sleep(max(1, sleep_seconds))
-            return
-
+        # Process signal regardless of age if new data is present
         signal_type, signal_data = self.feature_engineer.calculate_crt_signal(self.data.tail(3))
         logger.debug(f"Signal type: {signal_type}, Signal data: {signal_data}, Last 3 candles: {self.data.tail(3)}")
         if signal_type and signal_data:
@@ -582,7 +576,7 @@ class TradingDetector:
                 logger.info("Signal skipped due to cooldown")
                 return
 
-            logger.info(f"Signal validated at candle open: {signal_type}")
+            logger.info(f"Signal validated: {signal_type}")
             alert_time = signal_data['time'].astimezone(NY_TZ)
             setup_msg = (
                 f"🔔 *SETUP* {INSTRUMENT.replace('_','/')} {signal_type}\n"
@@ -647,12 +641,17 @@ class TradingDetector:
                 logger.info(f"Trade stored: {trade}")
 
             self.last_signal_time = current_time
+        else:
+            logger.debug("No signal detected, checking for sleep or next cycle")
+
+        # Sleep until next candle only if no new signal or data
+        if latest_candles.empty and candle_age > 1:
             next_candle_time = self._get_next_candle_time(current_time)
             sleep_seconds = (next_candle_time - current_time).total_seconds()
-            logger.info(f"Sleeping {sleep_seconds:.1f} seconds until next candle open")
+            logger.info(f"Waiting for next candle, sleeping {sleep_seconds:.1f} seconds")
             time.sleep(max(1, sleep_seconds))
         else:
-            time.sleep(60)
+            time.sleep(60)  # Check again in 1 minute if new data
 
         self.check_trade_outcomes()
 
