@@ -214,32 +214,35 @@ class FeatureEngineer:
         ]
 
     def calculate_crt_signal(self, df):
-        """Calculate CRT signal on the current candle using the last 3 candles"""
+        """Calculate CRT signal on the current candle using the last 3 candles with detailed logging"""
         logger.info("Calculating CRT signals on last 3 candles")
         if len(df) < 3:
             logger.warning(f"Insufficient data: {len(df)} rows, need at least 3")
             return None, None
 
         c1, c2, c3 = df.iloc[-3], df.iloc[-2], df.iloc[-1]
-        
+        logger.debug(f"Candle data: c1={c1}, c2={c2}, c3={c3}")
+
         signal_type = None
         entry = c3['open']
         sl = None
         tp = None
         
-        # SELL Signal
-        if (c2['high'] > c1['high']) and (c2['close'] < c1['high']):
+        # SELL Signal (looser condition: close slightly below high)
+        if (c2['high'] > c1['high']) and (c2['close'] < c1['high'] + 0.1):  # Adjusted threshold
             signal_type = 'SELL'
             sl = c2['high']
             risk = abs(entry - sl)
             tp = entry - 4 * risk
+            logger.info(f"SELL signal detected: c2 high={c2['high']}, c1 high={c1['high']}, c2 close={c2['close']}")
         
         # BUY Signal
-        elif (c2['low'] < c1['low']) and (c2['close'] > c1['low']):
+        elif (c2['low'] < c1['low']) and (c2['close'] > c1['low'] - 0.1):  # Adjusted threshold
             signal_type = 'BUY'
             sl = c2['low']
             risk = abs(entry - sl)
             tp = entry + 4 * risk
+            logger.info(f"BUY signal detected: c2 low={c2['low']}, c1 low={c1['low']}, c2 close={c2['close']}")
         
         if signal_type:
             logger.info(f"Detected signal: {signal_type} on current candle at {c3['time']}")
@@ -573,7 +576,6 @@ class TradingDetector:
         logger.info(f"Candle age: {candle_age:.2f} minutes")
 
         signal_type, signal_data = self.feature_engineer.calculate_crt_signal(self.data.tail(3))
-        logger.debug(f"Signal type: {signal_type}, Signal data: {signal_data}, Last 3 candles: {self.data.tail(3)}")
         if signal_type and signal_data:
             current_time = datetime.now(NY_TZ)
             if self.last_signal_time and (current_time - self.last_signal_time).total_seconds() < 15 * 60:
