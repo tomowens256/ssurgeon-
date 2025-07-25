@@ -674,6 +674,12 @@ class TradingDetector:
             if len(trade_data) < 1:
                 continue
 
+            latest_candle_time = trade_data.iloc[-1]['time']
+            candle_age = self.calculate_candle_age(current_time, latest_candle_time)
+            if candle_age < 2:  # Skip if candle is too new
+                logger.info(f"Skipping outcome check, candle age {candle_age:.2f} minutes < 2 minutes")
+                continue
+
             trade_type = 'SELL' if entry > sl else 'BUY'
             risk = abs(entry - sl)
             rr = 0
@@ -681,37 +687,48 @@ class TradingDetector:
             sl_hit = False
             tp_hit = False
 
-            entry_candle = trade_data.iloc[0]
+            # Check only the latest candle unless new data is available
+            latest_candle = trade_data.iloc[-1]
             if trade_type == 'SELL':
-                if entry_candle['high'] >= sl:
+                if latest_candle['high'] >= sl:
                     sl_hit = True
-                elif entry_candle['low'] <= tp:
+                    logger.info(f"SL hit detected at high={latest_candle['high']} >= SL={sl}")
+                elif latest_candle['low'] <= tp:
                     tp_hit = True
+                    logger.info(f"TP hit detected at low={latest_candle['low']} <= TP={tp}")
             else:  # BUY
-                if entry_candle['low'] <= sl:
+                if latest_candle['low'] <= sl:
                     sl_hit = True
-                elif entry_candle['high'] >= tp:
+                    logger.info(f"SL hit detected at low={latest_candle['low']} <= SL={sl}")
+                elif latest_candle['high'] >= tp:
                     tp_hit = True
+                    logger.info(f"TP hit detected at high={latest_candle['high']} >= TP={tp}")
 
-            lookahead = 15
-            for j in range(1, min(lookahead + 1, len(trade_data))):
-                if sl_hit or tp_hit:
-                    break
-                candle = trade_data.iloc[j]
-                if trade_type == 'SELL':
-                    if candle['high'] >= sl:
-                        sl_hit = True
+            if not (sl_hit or tp_hit) and len(trade_data) > 1:
+                # Look ahead only if more than one candle is available
+                lookahead = 15
+                for j in range(1, min(lookahead + 1, len(trade_data))):
+                    candle = trade_data.iloc[j]
+                    if sl_hit or tp_hit:
                         break
-                    elif candle['low'] <= tp:
-                        tp_hit = True
-                        break
-                else:  # BUY
-                    if candle['low'] <= sl:
-                        sl_hit = True
-                        break
-                    elif candle['high'] >= tp:
-                        tp_hit = True
-                        break
+                    if trade_type == 'SELL':
+                        if candle['high'] >= sl:
+                            sl_hit = True
+                            logger.info(f"SL hit detected at high={candle['high']} >= SL={sl} in lookahead")
+                            break
+                        elif candle['low'] <= tp:
+                            tp_hit = True
+                            logger.info(f"TP hit detected at low={candle['low']} <= TP={tp} in lookahead")
+                            break
+                    else:  # BUY
+                        if candle['low'] <= sl:
+                            sl_hit = True
+                            logger.info(f"SL hit detected at low={candle['low']} <= SL={sl} in lookahead")
+                            break
+                        elif candle['high'] >= tp:
+                            tp_hit = True
+                            logger.info(f"TP hit detected at high={candle['high']} >= TP={tp} in lookahead")
+                            break
 
             if sl_hit:
                 rr = -1
@@ -721,7 +738,7 @@ class TradingDetector:
                 outcome = 'Hit TP'
 
             if outcome != 'open':
-                end_time = current_time if sl_hit or tp_hit else trade_data.iloc[j]['time'].astimezone(NY_TZ)
+                end_time = current_time if sl_hit or tp_hit else trade_data.iloc[-1]['time'].astimezone(NY_TZ)
                 completed_trades.append((entry, sl, tp, start_time, trade_index, outcome, end_time))
                 self.active_trades.remove(trade)
                 logger.info(f"Trade outcome: {outcome} at {end_time}")
