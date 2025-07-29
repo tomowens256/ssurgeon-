@@ -2,24 +2,30 @@ name: Run Trading Bot
 
 on:
   schedule:
-    - cron: '0 16 * * *'  # Run at 19:00 EAT (UTC+3) every 350 minutes, adjusted from 14:57 EAT
+    # Run at market open (19:00 EAT) and every 6 hours during market hours
+    - cron: '0 16 * * 1-5'  # Mon-Fri 16:00 UTC (19:00 EAT)
+    - cron: '0 22 * * 1-5'  # Mon-Fri 22:00 UTC (01:00 EAT next day)
+    - cron: '0 4 * * 2-6'   # Tue-Sat 04:00 UTC (07:00 EAT)
   workflow_dispatch:
 
 jobs:
   trade:
     runs-on: ubuntu-latest
-    timeout-minutes: 350  # Adjusted to 5 hours and 50 minutes
-    
+    timeout-minutes: 350  # 5h50m to avoid 6h limit
+    strategy:
+      matrix:
+        python-version: ['3.10']
+        
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
-        lfs: true  # Ensure LFS files are downloaded
+        lfs: true
 
-    - name: Set up Python 3.10
+    - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v4
       with:
-        python-version: '3.10'
+        python-version: ${{ matrix.python-version }}
 
     - name: Install dependencies
       run: |
@@ -33,25 +39,59 @@ jobs:
         echo "Testing Telegram connectivity..."
         response=$(curl -s -X POST \
           -H "Content-Type: application/json" \
-          -d '{"chat_id":"'${{ secrets.TELEGRAM_CHAT_ID }}'", "text":"GitHub Actions connection test"}' \
+          -d '{"chat_id":"'${{ secrets.TELEGRAM_CHAT_ID }}'", "text":"🚀 Trading Bot Started: ${{ github.run_id }}"}' \
           https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage)
         
         if [[ $response == *"\"ok\":true"* ]]; then
-          echo "✅ Telegram test successful!"
+          echo "✅ Telegram connection successful!"
         else
-          echo "❌ Telegram test failed: $response"
+          echo "❌ Telegram connection failed: $response"
           exit 1
         fi
 
-    - name: Debug ml_models folder
-      run: |
-        echo "Listing contents of ml_models folder:"
-        ls -la /home/runner/work/surgeon-/surgeon-/ml_models/ || echo "ml_models folder not found or empty"
-
-    - name: Run Trading Bot
+    - name: Run Trading Bot with Auto-Chaining
       env:
         OANDA_ACCOUNT_ID: ${{ secrets.OANDA_ACCOUNT_ID }}
         OANDA_API_KEY: ${{ secrets.OANDA_API_KEY }}
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-      run: python main.py
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        # Run main trading script with timeout
+        timeout 340m python -u main.py | tee run.log
+        
+        # Capture exit status
+        EXIT_CODE=$?
+        
+        # Send log to Telegram
+        LOG_CONTENT=$(tail -c 4000 run.log | sed 's/\x1b\[[0-9;]*m//g')
+        curl -s -X POST \
+          -H "Content-Type: application/json" \
+          -d "{\"chat_id\":\"$TELEGRAM_CHAT_ID\", \"text\":\"Bot exited with code $EXIT_CODE\n\nLog snippet:\n$LOG_CONTENT\"}" \
+          https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage
+        
+        # Chain next run if normal exit
+        if [ $EXIT_CODE -eq 0 ] || [ $EXIT_CODE -eq 124 ]; then
+          echo "🔄 Chaining next workflow run"
+          
+          # Calculate next run time (5h50m from now)
+          NEXT_RUN_TIME=$(date -u -d "+5 hours 50 minutes" +"%H:%M UTC")
+          
+          curl -s -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/workflows/$GITHUB_WORKFLOW/dispatches" \
+            -d "{\"ref\":\"$GITHUB_REF\"}"
+          
+          curl -s -X POST \
+            -H "Content-Type: application/json" \
+            -d "{\"chat_id\":\"$TELEGRAM_CHAT_ID\", \"text\":\"♻️ Chaining next run at ${NEXT_RUN_TIME}\"}" \
+            https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage
+        else
+          echo "⛔ Not chaining due to error exit"
+          curl -s -X POST \
+            -H "Content-Type: application/json" \
+            -d "{\"chat_id\":\"$TELEGRAM_CHAT_ID\", \"text\":\"❌ Bot stopped, not chaining due to error\"}" \
+            https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage
+        fi
