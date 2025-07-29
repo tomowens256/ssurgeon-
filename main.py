@@ -31,6 +31,7 @@ API_KEY = os.getenv("OANDA_API_KEY")
 # Only needed instrument and timeframe
 INSTRUMENT = "XAU_USD"
 TIMEFRAME = "M15"
+CANDLE_COUNT = 201  # Exactly 201 candles
 
 # Specific models to load (your preferred ensemble)
 MODEL_FILES = [
@@ -145,12 +146,12 @@ def send_telegram(message):
     return False
 
 def fetch_candles(last_time=None):
-    """Fetch new candles since last_time or 201 candles for XAU_USD M15"""
-    logger.info(f"Fetching candles for {INSTRUMENT} with timeframe {TIMEFRAME}")
+    """Fetch exactly 201 candles for XAU_USD M15 with full precision"""
+    logger.info(f"Fetching {CANDLE_COUNT} candles for {INSTRUMENT} with timeframe {TIMEFRAME}")
     params = {
         "granularity": TIMEFRAME,
-        "count": 201,
-        "price": "B",  # Bid prices
+        "count": CANDLE_COUNT,
+        "price": "M",  # Mid prices with full precision
         "alignmentTimezone": "America/New_York"  # Ensure proper time alignment
     }
     if last_time:
@@ -173,19 +174,19 @@ def fetch_candles(last_time=None):
             
             data = []
             for candle in candles:
-                price_data = candle.get('bid', {})
+                price_data = candle.get('mid', {})
                 if not price_data:
-                    logger.warning(f"Skipping candle with missing bid price data: {candle}")
+                    logger.warning(f"Skipping candle with missing price data: {candle}")
                     continue
                 
                 try:
                     parsed_time = parse_oanda_time(candle['time'])
                     data.append({
                         'time': parsed_time,
-                        'open': float(price_data['o']),
-                        'high': float(price_data['h']),
-                        'low': float(price_data['l']),
-                        'close': float(price_data['c']),
+                        'open': float(price_data['o']),  # Full precision
+                        'high': float(price_data['h']),  # Full precision
+                        'low': float(price_data['l']),   # Full precision
+                        'close': float(price_data['c']), # Full precision
                         'volume': int(candle.get('volume', 0)),
                         'complete': candle.get('complete', False)
                     })
@@ -689,9 +690,9 @@ class TradingDetector:
                         f"🔔 *SETUP* {INSTRUMENT.replace('_','/')} {signal_type}\n"
                         f"Timeframe: {TIMEFRAME}\n"
                         f"Time: {alert_time.strftime('%Y-%m-%d %H:%M')} NY\n"
-                        f"Entry: {signal_data['entry']:.2f}\n"
-                        f"TP: {signal_data['tp']:.2f}\n"
-                        f"SL: {signal_data['sl']:.2f}\n"
+                        f"Entry: {signal_data['entry']:.5f}\n"  # Full precision
+                        f"TP: {signal_data['tp']:.5f}\n"        # Full precision
+                        f"SL: {signal_data['sl']:.5f}\n"        # Full precision
                         f"Candle Age: {candle_age:.2f} minutes"
                     )
                     if send_telegram(setup_msg):
@@ -701,7 +702,7 @@ class TradingDetector:
                             formatted_features = []
                             for feat, val in features.items():
                                 escaped_feat = feat.replace('_', '\\_')
-                                formatted_features.append(f"{escaped_feat}: {val:.4f}")
+                                formatted_features.append(f"{escaped_feat}: {val:.6f}")  # Full precision
                             feature_msg += "\n".join(formatted_features)
                             if not send_telegram(feature_msg):
                                 logger.error("Failed to send features after retries")
@@ -714,13 +715,13 @@ class TradingDetector:
                             
                             if avg_prob is not None:
                                 pred_msg = f"🤖 *ENSEMBLE PREDICTION* {INSTRUMENT.replace('_','/')} {signal_type}\n"
-                                pred_msg += f"Average Probability: {avg_prob:.4f}\n"
+                                pred_msg += f"Average Probability: {avg_prob:.6f}\n"  # Full precision
                                 pred_msg += f"Final Decision: {outcome}\n\n"
                                 pred_msg += "*Individual Model Probabilities:*\n"
                                 
                                 # List all model probabilities
                                 for i, prob in enumerate(all_probs):
-                                    pred_msg += f"Model {i+1}: {prob:.4f}\n"
+                                    pred_msg += f"Model {i+1}: {prob:.6f}\n"  # Full precision
                                 
                                 if not send_telegram(pred_msg):
                                     logger.error("Failed to send model predictions")
@@ -737,7 +738,7 @@ class TradingDetector:
                                     'outcome': None,
                                     'checked': False  # Flag to prevent immediate checking
                                 }
-                                logger.info(f"New trade stored: {trade_id} with prediction {avg_prob:.4f}")
+                                logger.info(f"New trade stored: {trade_id} with prediction {avg_prob:.6f}")
                         else:
                             logger.error("No scaler or models loaded")
             else:
@@ -784,10 +785,10 @@ class TradingDetector:
                         outcome_msg = (
                             f"📈 *Trade Outcome*\n"
                             f"Signal Time: {trade['signal_time'].strftime('%Y-%m-%d %H:%M')} NY\n"
-                            f"Entry: {entry:.2f}\n"
-                            f"SL: {sl:.2f}\n"
-                            f"TP: {tp:.2f}\n"
-                            f"Prediction: {trade['prediction']:.4f}\n"
+                            f"Entry: {entry:.5f}\n"  # Full precision
+                            f"SL: {sl:.5f}\n"        # Full precision
+                            f"TP: {tp:.5f}\n"        # Full precision
+                            f"Prediction: {trade['prediction']:.6f}\n"  # Full precision
                             f"Outcome: {trade['outcome']}\n"
                             f"Detected at: {current_time.strftime('%Y-%m-%d %H:%M')} NY"
                         )
