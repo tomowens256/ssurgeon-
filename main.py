@@ -372,11 +372,11 @@ class FeatureEngineer:
         
         if signal_type == 'SELL':
             df['sl_price'] = prev_row['high']
-            risk = abs(entry - df['sl_price'])
+            risk = abs(entry - df['sl_price'].iloc[-1])
             df['tp_price'] = entry - 4 * risk
         else:  # BUY
             df['sl_price'] = prev_row['low']
-            risk = abs(entry - df['sl_price'])
+            risk = abs(entry - df['sl_price'].iloc[-1])
             df['tp_price'] = entry + 4 * risk
         logger.debug(f"SL: {df['sl_price'].iloc[-1]}, TP: {df['tp_price'].iloc[-1]}")
         
@@ -566,7 +566,7 @@ class RealTimeDetector:
                     time.sleep(REALTIME_POLL_INTERVAL)
                     continue
                     
-                # Get latest candle
+                # Get latest candle (candle 3 - current/incomplete)
                 latest_candle = self.detector.data.iloc[-1]
                 
                 # Calculate candle age in minutes
@@ -658,16 +658,19 @@ class TradingDetector:
         else:
             last_existing_time = self.data['time'].max()
             new_data = df_new[df_new['time'] > last_existing_time]
+            same_time_data = df_new[df_new['time'] == last_existing_time]
+            
+            # Update existing candle if time matches
+            if not same_time_data.empty:
+                self.data = self.data[self.data['time'] < last_existing_time]
+                self.data = pd.concat([self.data, same_time_data])
+            
             if not new_data.empty:
-                self.data = pd.concat([self.data, new_data]).drop_duplicates(subset=['time'], keep="last")
-                self.data = self.data.sort_values('time').reset_index(drop=True).tail(201)
-                logger.debug(f"Combined data shape: {self.data.shape}, latest time: {self.data['time'].max()}")
-            else:
-                latest_new = df_new.iloc[-1]
-                if latest_new['time'] >= self.data['time'].max():
-                    self.data = pd.concat([self.data, df_new.tail(1)]).drop_duplicates(subset=['time'], keep="last")
-                    self.data = self.data.sort_values('time').reset_index(drop=True).tail(201)
-                    logger.debug(f"Forced update with latest candle, new shape: {self.data.shape}, latest time: {self.data['time'].max()}")
+                self.data = pd.concat([self.data, new_data])
+            
+            # Ensure we keep only the last 201 candles
+            self.data = self.data.sort_values('time').reset_index(drop=True).tail(201)
+            logger.debug(f"Combined data shape: {self.data.shape}, latest time: {self.data['time'].max()}, last 3 rows: {self.data.tail(3)}")
 
     def predict_ensemble(self, features_df):
         """Predict using your preferred ensemble voting logic (T=0.55)"""
@@ -723,6 +726,7 @@ class TradingDetector:
         candle_age = self.calculate_candle_age(current_time, latest_candle_time)
         logger.info(f"Candle age: {candle_age:.2f} minutes")
 
+        # CRT SIGNAL DETECTION (using candle 3 as current)
         signal_type, signal_data = self.feature_engineer.calculate_crt_signal(self.data)
         if signal_type and signal_data:
             current_candle = self.data.iloc[-1]
@@ -736,7 +740,7 @@ class TradingDetector:
                 # Check if this signal matches an existing trade
                 is_new_trade = True
                 for trade_id, trade in list(active_trades.items()):
-                    if trade['sl'] == signal_data['sl'] and not trade.get('outcome'):
+                    if trade['sl'] == signal_data['sl'] and trade.get('outcome') is None:
                         is_new_trade = False
                         logger.info(f"Matching SL found, skipping reprocessing for trade {trade_id}")
                         break
@@ -748,9 +752,9 @@ class TradingDetector:
                         f"🔔 *SETUP* {INSTRUMENT.replace('_','/')} {signal_type}\n"
                         f"Timeframe: {TIMEFRAME}\n"
                         f"Time: {alert_time.strftime('%Y-%m-%d %H:%M')} NY\n"
-                        f"Entry: {signal_data['entry']:.5f}\n"  # Full precision
-                        f"TP: {signal_data['tp']:.5f}\n"        # Full precision
-                        f"SL: {signal_data['sl']:.5f}\n"        # Full precision
+                        f"Entry: {signal_data['entry']:.5f}\n"
+                        f"TP: {signal_data['tp']:.5f}\n"
+                        f"SL: {signal_data['sl']:.5f}\n"
                         f"Candle Age: {candle_age:.2f} minutes"
                     )
                     if send_telegram(setup_msg):
@@ -760,7 +764,7 @@ class TradingDetector:
                             formatted_features = []
                             for feat, val in features.items():
                                 escaped_feat = feat.replace('_', '\\_')
-                                formatted_features.append(f"{escaped_feat}: {val:.6f}")  # Full precision
+                                formatted_features.append(f"{escaped_feat}: {val:.6f}")
                             feature_msg += "\n".join(formatted_features)
                             if not send_telegram(feature_msg):
                                 logger.error("Failed to send features after retries")
@@ -773,13 +777,13 @@ class TradingDetector:
                             
                             if avg_prob is not None:
                                 pred_msg = f"🤖 *ENSEMBLE PREDICTION* {INSTRUMENT.replace('_','/')} {signal_type}\n"
-                                pred_msg += f"Average Probability: {avg_prob:.6f}\n"  # Full precision
+                                pred_msg += f"Average Probability: {avg_prob:.6f}\n"
                                 pred_msg += f"Final Decision: {outcome}\n\n"
                                 pred_msg += "*Individual Model Probabilities:*\n"
                                 
                                 # List all model probabilities
                                 for i, prob in enumerate(all_probs):
-                                    pred_msg += f"Model {i+1}: {prob:.6f}\n"  # Full precision
+                                    pred_msg += f"Model {i+1}: {prob:.6f}\n"
                                 
                                 if not send_telegram(pred_msg):
                                     logger.error("Failed to send model predictions")
@@ -793,8 +797,7 @@ class TradingDetector:
                                     'time': current_time,
                                     'signal_time': signal_data['time'],  # Store signal candle time
                                     'prediction': avg_prob,
-                                    'outcome': None,
-                                    'checked': False  # Flag to prevent immediate checking
+                                    'outcome': None
                                 }
                                 logger.info(f"New trade stored: {trade_id} with prediction {avg_prob:.6f}")
                         else:
@@ -802,60 +805,47 @@ class TradingDetector:
             else:
                 logger.debug("Signal skipped due to similar candle conditions")
 
-        # MODIFIED OUTCOME CHECKING SECTION
-        # Check outcomes for all active trades
-        if len(self.data) > 0:
+        # TRADE OUTCOME CHECKING (only on completed candles)
+        if len(self.data) > 0 and minutes_closed == 15:  # Only check when candle completes
             latest_candle = self.data.iloc[-1]
             for trade_id, trade in list(active_trades.items()):
-                if trade.get('outcome') is None and not trade.get('checked', False):
-                    # Skip checking on the same candle as the signal
-                    if latest_candle['time'] == trade['signal_time']:
-                        logger.debug(f"Skipping outcome check for {trade_id} - still on signal candle")
-                        continue
-                    
-                    # Mark as checked so we only evaluate once per candle
-                    trade['checked'] = True
-                    
+                if trade.get('outcome') is None:
                     entry, sl, tp = trade['entry'], trade['sl'], trade['tp']
                     logger.info(f"Checking outcome for trade {trade_id}: entry={entry}, sl={sl}, tp={tp}")
                     
-                    if trade['prediction'] >= 0.55:  # Only check if predicted as worth taking
-                        # SELL trade: entry > sl
-                        if entry > sl:
-                            if latest_candle['high'] >= sl:
-                                trade['outcome'] = 'Hit SL (Loss)'
-                                logger.info(f"SELL trade {trade_id} outcome: Hit SL at {latest_candle['high']:.5f}")
-                            elif latest_candle['low'] <= tp:
-                                trade['outcome'] = 'Hit TP (Win)'
-                                logger.info(f"SELL trade {trade_id} outcome: Hit TP at {latest_candle['low']:.5f}")
-                        
-                        # BUY trade: entry < sl
-                        else:
-                            if latest_candle['low'] <= sl:
-                                trade['outcome'] = 'Hit SL (Loss)'
-                                logger.info(f"BUY trade {trade_id} outcome: Hit SL at {latest_candle['low']:.5f}")
-                            elif latest_candle['high'] >= tp:
-                                trade['outcome'] = 'Hit TP (Win)'
-                                logger.info(f"BUY trade {trade_id} outcome: Hit TP at {latest_candle['high']:.5f}")
+                    # SELL trade: entry > sl
+                    if entry > sl:
+                        if latest_candle['high'] >= sl:
+                            trade['outcome'] = 'Hit SL (Loss)'
+                            logger.info(f"SELL trade {trade_id} outcome: Hit SL at {latest_candle['high']:.5f}")
+                        elif latest_candle['low'] <= tp:
+                            trade['outcome'] = 'Hit TP (Win)'
+                            logger.info(f"SELL trade {trade_id} outcome: Hit TP at {latest_candle['low']:.5f}")
+                    # BUY trade: entry < sl
+                    else:
+                        if latest_candle['low'] <= sl:
+                            trade['outcome'] = 'Hit SL (Loss)'
+                            logger.info(f"BUY trade {trade_id} outcome: Hit SL at {latest_candle['low']:.5f}")
+                        elif latest_candle['high'] >= tp:
+                            trade['outcome'] = 'Hit TP (Win)'
+                            logger.info(f"BUY trade {trade_id} outcome: Hit TP at {latest_candle['high']:.5f}")
                     
-                    # If outcome determined, send notification
+                    # If outcome determined, send notification and remove trade
                     if trade.get('outcome'):
                         outcome_msg = (
                             f"📈 *Trade Outcome*\n"
                             f"Signal Time: {trade['signal_time'].strftime('%Y-%m-%d %H:%M')} NY\n"
-                            f"Entry: {entry:.5f}\n"  # Full precision
-                            f"SL: {sl:.5f}\n"        # Full precision
-                            f"TP: {tp:.5f}\n"        # Full precision
-                            f"Prediction: {trade['prediction']:.6f}\n"  # Full precision
+                            f"Entry: {entry:.5f}\n"
+                            f"SL: {sl:.5f}\n"
+                            f"TP: {tp:.5f}\n"
+                            f"Prediction: {trade['prediction']:.6f}\n"
                             f"Outcome: {trade['outcome']}\n"
                             f"Detected at: {current_time.strftime('%Y-%m-%d %H:%M')} NY"
                         )
                         if not send_telegram(outcome_msg):
                             logger.error(f"Failed to send outcome for trade {trade_id}")
-                elif trade.get('outcome') and trade.get('checked'):
-                    # Remove closed trades from active tracking
-                    del active_trades[trade_id]
-                    logger.info(f"Removed closed trade: {trade_id}")
+                        # Remove the trade from active_trades
+                        del active_trades[trade_id]
 
 # ========================
 # CANDLE SCHEDULER
