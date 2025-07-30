@@ -16,6 +16,7 @@ from oandapyV20.exceptions import V20Error
 import oandapyV20.endpoints.instruments as instruments
 import joblib
 from tensorflow.keras.models import load_model
+import queue
 
 # ========================
 # CONSTANTS & CONFIG
@@ -32,6 +33,8 @@ API_KEY = os.getenv("OANDA_API_KEY")
 INSTRUMENT = "XAU_USD"
 TIMEFRAME = "M15"
 CANDLE_COUNT = 201  # Exactly 201 candles
+REALTIME_POLL_INTERVAL = 5  # Seconds between real-time checks
+MIN_CANDLE_AGE_FOR_SIGNAL = 0.5  # Minimum 30 seconds candle age to check signals
 
 # Specific models to load (your preferred ensemble)
 MODEL_FILES = [
@@ -50,6 +53,7 @@ GLOBAL_LOCK = threading.Lock()
 CRT_SIGNAL_COUNT = 0
 LAST_SIGNAL_TIME = 0
 SIGNALS = []
+REALTIME_DATA_QUEUE = queue.Queue()
 
 # Initialize logging
 logging.basicConfig(
@@ -152,7 +156,8 @@ def fetch_candles(last_time=None):
         "granularity": TIMEFRAME,
         "count": CANDLE_COUNT,
         "price": "M",  # Mid prices with full precision
-        "alignmentTimezone": "America/New_York"  # Ensure proper time alignment
+        "alignmentTimezone": "America/New_York",  # Ensure proper time alignment
+        "includeCurrent": True  # Include incomplete current candle
     }
     if last_time:
         params["from"] = last_time.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -181,6 +186,8 @@ def fetch_candles(last_time=None):
                 
                 try:
                     parsed_time = parse_oanda_time(candle['time'])
+                    is_complete = candle.get('complete', False)
+                    
                     data.append({
                         'time': parsed_time,
                         'open': float(price_data['o']),  # Full precision
@@ -188,7 +195,8 @@ def fetch_candles(last_time=None):
                         'low': float(price_data['l']),   # Full precision
                         'close': float(price_data['c']), # Full precision
                         'volume': int(candle.get('volume', 0)),
-                        'complete': candle.get('complete', False)
+                        'complete': is_complete,
+                        'is_current': not is_complete  # Mark incomplete candles
                     })
                 except Exception as e:
                     logger.error(f"Error processing candle: {str(e)}")
@@ -200,7 +208,7 @@ def fetch_candles(last_time=None):
             df = pd.DataFrame(data).drop_duplicates(subset=['time'], keep='last')
             if last_time:
                 df = df[df['time'] > last_time].sort_values('time')
-            logger.info(f"Successfully fetched {len(df)} candles")
+            logger.info(f"Successfully fetched {len(df)} candles (including current)")
             return df
             
         except V20Error as e:
@@ -288,7 +296,7 @@ class FeatureEngineer:
             tp = entry + 4 * risk
             logger.info(f"BUY signal detected: c2 low={current['c2_low']} < c1 low={current['c1_low']}, "
                         f"c2 close={current['c2_close']} > c1 low={current['c1_low']}, "
-                        f"current open={entry} > c2 mid={current['c2_mid']:.2f}")
+                        f"current open={entry} > c2 mid={current['c2_mid']:.5f}")
         elif sell_mask.iloc[-1]:
             signal_type = 'SELL'
             entry = current['open']
@@ -297,7 +305,7 @@ class FeatureEngineer:
             tp = entry - 4 * risk
             logger.info(f"SELL signal detected: c2 high={current['c2_high']} > c1 high={current['c1_high']}, "
                         f"c2 close={current['c2_close']} < c1 high={current['c1_high']}, "
-                        f"current open={entry} < c2 mid={current['c2_mid']:.2f}")
+                        f"current open={entry} < c2 mid={current['c2_mid']:.5f}")
         else:
             logger.info("No signal detected based on current candle pattern")
             return None, None
@@ -536,6 +544,52 @@ class FeatureEngineer:
         return features
 
 # ========================
+# REAL-TIME DETECTOR
+# ========================
+class RealTimeDetector:
+    def __init__(self, detector):
+        self.detector = detector
+        self.last_check_time = None
+        self.running = True
+        self.thread = threading.Thread(target=self.run, daemon=True)
+        self.thread.start()
+        logger.info("Real-time detector started")
+
+    def run(self):
+        """Continuously check for signals in real-time"""
+        while self.running:
+            try:
+                current_time = datetime.now(NY_TZ)
+                
+                # Only check if we have fresh data
+                if self.detector.data.empty:
+                    time.sleep(REALTIME_POLL_INTERVAL)
+                    continue
+                    
+                # Get latest candle
+                latest_candle = self.detector.data.iloc[-1]
+                
+                # Calculate candle age in minutes
+                candle_age = (current_time - latest_candle['time']).total_seconds() / 60.0
+                
+                # Only check if candle is new enough and incomplete
+                if latest_candle['is_current'] and candle_age >= MIN_CANDLE_AGE_FOR_SIGNAL:
+                    # Process signals with 0 minutes closed (real-time)
+                    self.detector.process_signals(0, pd.DataFrame([latest_candle]))
+                
+                time.sleep(REALTIME_POLL_INTERVAL)
+                
+            except Exception as e:
+                logger.error(f"Real-time detector error: {str(e)}")
+                logger.error(traceback.format_exc())
+                time.sleep(REALTIME_POLL_INTERVAL)
+
+    def stop(self):
+        self.running = False
+        self.thread.join(timeout=5)
+        logger.info("Real-time detector stopped")
+
+# ========================
 # TRADING DETECTOR
 # ========================
 class TradingDetector:
@@ -545,6 +599,7 @@ class TradingDetector:
         self.feature_engineer = FeatureEngineer()
         self.scheduler = CandleScheduler(timeframe=15)
         self.last_signal_candle = None
+        self.realtime_detector = None
         
         logger.info("Loading initial 201 candles")
         self.data = self.fetch_initial_candles()
@@ -557,6 +612,9 @@ class TradingDetector:
         self.scheduler.register_callback(self.process_signals)
         logger.info("Starting scheduler thread")
         self.scheduler.start()
+        
+        # Start real-time detector
+        self.realtime_detector = RealTimeDetector(self)
         logger.info("TradingDetector initialized")
 
     def fetch_initial_candles(self):
@@ -639,7 +697,7 @@ class TradingDetector:
             final_pred = 1 if avg_prob >= 0.55 else 0
             outcome = "Worth Taking" if final_pred == 1 else "Likely Loss"
             
-            logger.info(f"Ensemble prediction: Avg prob={avg_prob:.4f}, Outcome={outcome}")
+            logger.info(f"Ensemble prediction: Avg prob={avg_prob:.6f}, Outcome={outcome}")
             return avg_prob, outcome, probabilities
         
         except Exception as e:
@@ -766,19 +824,19 @@ class TradingDetector:
                         if entry > sl:
                             if latest_candle['high'] >= sl:
                                 trade['outcome'] = 'Hit SL (Loss)'
-                                logger.info(f"SELL trade {trade_id} outcome: Hit SL at {latest_candle['high']}")
+                                logger.info(f"SELL trade {trade_id} outcome: Hit SL at {latest_candle['high']:.5f}")
                             elif latest_candle['low'] <= tp:
                                 trade['outcome'] = 'Hit TP (Win)'
-                                logger.info(f"SELL trade {trade_id} outcome: Hit TP at {latest_candle['low']}")
+                                logger.info(f"SELL trade {trade_id} outcome: Hit TP at {latest_candle['low']:.5f}")
                         
                         # BUY trade: entry < sl
                         else:
                             if latest_candle['low'] <= sl:
                                 trade['outcome'] = 'Hit SL (Loss)'
-                                logger.info(f"BUY trade {trade_id} outcome: Hit SL at {latest_candle['low']}")
+                                logger.info(f"BUY trade {trade_id} outcome: Hit SL at {latest_candle['low']:.5f}")
                             elif latest_candle['high'] >= tp:
                                 trade['outcome'] = 'Hit TP (Win)'
-                                logger.info(f"BUY trade {trade_id} outcome: Hit TP at {latest_candle['high']}")
+                                logger.info(f"BUY trade {trade_id} outcome: Hit TP at {latest_candle['high']:.5f}")
                     
                     # If outcome determined, send notification
                     if trade.get('outcome'):
@@ -798,14 +856,6 @@ class TradingDetector:
                     # Remove closed trades from active tracking
                     del active_trades[trade_id]
                     logger.info(f"Removed closed trade: {trade_id}")
-
-        if latest_candles.empty and candle_age > 1:
-            next_candle_time = self._get_next_candle_time(current_time)
-            sleep_seconds = (next_candle_time - current_time).total_seconds()
-            logger.info(f"Waiting for next candle, sleeping {sleep_seconds:.1f} seconds")
-            time.sleep(max(1, sleep_seconds))
-        else:
-            time.sleep(60)  # Check again in 1 minute if new data
 
 # ========================
 # CANDLE SCHEDULER
@@ -907,11 +957,11 @@ def run_bot():
                 detector.update_data(df)
             else:
                 logger.warning("No new candles fetched in this cycle")
-            time.sleep(60)  # Check every minute
+            time.sleep(REALTIME_POLL_INTERVAL)  # Check more frequently
         except Exception as e:
             logger.error(f"Main loop error: {e}")
             logger.error(traceback.format_exc())
-            time.sleep(60)
+            time.sleep(REALTIME_POLL_INTERVAL)
 
 if __name__ == "__main__":
     logger.info("Launching main application")
