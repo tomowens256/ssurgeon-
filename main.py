@@ -57,6 +57,7 @@ SIGNALS = []
 REALTIME_DATA_QUEUE = queue.Queue()
 SIGNAL_FOUND_THIS_CANDLE = False
 NEXT_CANDLE_TIME = None
+SCAN_COUNT_THIS_CANDLE = 0
 
 # Initialize logging
 logging.basicConfig(
@@ -666,44 +667,60 @@ class FeatureEngineer:
 class RealTimeDetector:
     def __init__(self, detector):
         self.detector = detector
-        self.last_check_time = None
+        self.current_candle_time = None
         self.running = True
         self.thread = threading.Thread(target=self.run, daemon=True)
         self.thread.start()
         logger.info("Real-time detector started")
 
     def run(self):
-        """Continuously check for signals in real-time"""
+        """Optimized scanning with sleep management"""
+        global SCAN_COUNT_THIS_CANDLE, SIGNAL_FOUND_THIS_CANDLE, NEXT_CANDLE_TIME
+        
         while self.running:
             try:
                 current_time = datetime.now(NY_TZ)
                 
-                # Only check if we have fresh data
+                # Skip if no data
                 if self.detector.data.empty:
                     time.sleep(REALTIME_POLL_INTERVAL)
                     continue
                     
-                # Check if we should sleep until next candle
+                # Get latest candle safely
+                with GLOBAL_LOCK:
+                    if self.detector.data.empty:
+                        continue
+                    latest_candle = self.detector.data.iloc[-1].copy()
+                
+                # Reset state for new candle
+                if self.current_candle_time != latest_candle['time']:
+                    self.current_candle_time = latest_candle['time']
+                    SCAN_COUNT_THIS_CANDLE = 0
+                    SIGNAL_FOUND_THIS_CANDLE = False
+                    logger.info(f"New candle detected at {self.current_candle_time}, resetting scan count")
+                
+                # Sleep until next candle if signal found
                 if SIGNAL_FOUND_THIS_CANDLE and NEXT_CANDLE_TIME:
                     sleep_seconds = (NEXT_CANDLE_TIME - current_time).total_seconds()
                     if sleep_seconds > 0:
-                        logger.info(f"Signal found this candle, sleeping {sleep_seconds:.1f}s until next candle")
+                        logger.info(f"Signal found, sleeping {sleep_seconds:.1f}s until next candle")
                         time.sleep(sleep_seconds)
-                        # Reset flag after sleeping
-                        global SIGNAL_FOUND_THIS_CANDLE
-                        SIGNAL_FOUND_THIS_CANDLE = False
-                        continue
+                    continue
                 
-                # Get latest candle (candle 3 - current/incomplete)
-                latest_candle = self.detector.data.iloc[-1]
+                # Sleep if no signal after 2 scans
+                if SCAN_COUNT_THIS_CANDLE >= 2 and not SIGNAL_FOUND_THIS_CANDLE and NEXT_CANDLE_TIME:
+                    sleep_seconds = (NEXT_CANDLE_TIME - current_time).total_seconds()
+                    if sleep_seconds > 0:
+                        logger.info(f"No signal after 2 scans, sleeping {sleep_seconds:.1f}s until next candle")
+                        time.sleep(sleep_seconds)
+                    continue
                 
-                # Calculate candle age in minutes
+                # Only scan if candle is ready and we have scans remaining
                 candle_age = (current_time - latest_candle['time']).total_seconds() / 60.0
-                
-                # Only check if candle is new enough and incomplete
-                if latest_candle['is_current'] and candle_age >= MIN_CANDLE_AGE_FOR_SIGNAL:
-                    # Process signals with 0 minutes closed (real-time)
+                if latest_candle['is_current'] and candle_age >= MIN_CANDLE_AGE_FOR_SIGNAL and SCAN_COUNT_THIS_CANDLE < 2:
+                    logger.info(f"Scanning candle (scan {SCAN_COUNT_THIS_CANDLE+1}/2)")
                     self.detector.process_signals(0, pd.DataFrame([latest_candle]))
+                    SCAN_COUNT_THIS_CANDLE += 1
                 
                 time.sleep(REALTIME_POLL_INTERVAL)
                 
@@ -839,7 +856,7 @@ class TradingDetector:
 
     def process_signals(self, minutes_closed, latest_candles):
         logger.info(f"Processing signals, minutes closed: {minutes_closed}, candles: {len(latest_candles)}")
-        global SIGNAL_FOUND_THIS_CANDLE, NEXT_CANDLE_TIME
+        global SIGNAL_FOUND_THIS_CANDLE, NEXT_CANDLE_TIME, SCAN_COUNT_THIS_CANDLE
         
         if not latest_candles.empty:
             logger.info(f"Updating data with {len(latest_candles)} new candles")
@@ -940,48 +957,6 @@ class TradingDetector:
                             logger.error("No scaler or models loaded")
             else:
                 logger.debug("Signal skipped due to similar candle conditions")
-
-        # DISABLED OUTCOME CHECKING PER REQUEST
-        # if len(self.data) > 0 and minutes_closed == 15:  # Only check when candle completes
-        #     latest_candle = self.data.iloc[-1]
-        #     for trade_id, trade in list(active_trades.items()):
-        #         if trade.get('outcome') is None:
-        #             entry, sl, tp = trade['entry'], trade['sl'], trade['tp']
-        #             logger.info(f"Checking outcome for trade {trade_id}: entry={entry}, sl={sl}, tp={tp}")
-        #             
-        #             # SELL trade: entry > sl
-        #             if entry > sl:
-        #                 if latest_candle['high'] >= sl:
-        #                     trade['outcome'] = 'Hit SL (Loss)'
-        #                     logger.info(f"SELL trade {trade_id} outcome: Hit SL at {latest_candle['high']:.5f}")
-        #                 elif latest_candle['low'] <= tp:
-        #                     trade['outcome'] = 'Hit TP (Win)'
-        #                     logger.info(f"SELL trade {trade_id} outcome: Hit TP at {latest_candle['low']:.5f}")
-        #             # BUY trade: entry < sl
-        #             else:
-        #                 if latest_candle['low'] <= sl:
-        #                     trade['outcome'] = 'Hit SL (Loss)'
-        #                     logger.info(f"BUY trade {trade_id} outcome: Hit SL at {latest_candle['low']:.5f}")
-        #                 elif latest_candle['high'] >= tp:
-        #                     trade['outcome'] = 'Hit TP (Win)'
-        #                     logger.info(f"BUY trade {trade_id} outcome: Hit TP at {latest_candle['high']:.5f}")
-        #             
-        #             # If outcome determined, send notification and remove trade
-        #             if trade.get('outcome'):
-        #                 outcome_msg = (
-        #                     f"📈 *Trade Outcome*\n"
-        #                     f"Signal Time: {trade['signal_time'].strftime('%Y-%m-%d %H:%M')} NY\n"
-        #                     f"Entry: {entry:.5f}\n"
-        #                     f"SL: {sl:.5f}\n"
-        #                     f"TP: {tp:.5f}\n"
-        #                     f"Prediction: {trade['prediction']:.6f}\n"
-        #                     f"Outcome: {trade['outcome']}\n"
-        #                     f"Detected at: {current_time.strftime('%Y-%m-%d %H:%M')} NY"
-        #                 )
-        #                 if not send_telegram(outcome_msg):
-        #                     logger.error(f"Failed to send outcome for trade {trade_id}")
-        #                 # Remove the trade from active_trades
-        #                 del active_trades[trade_id]
 
 # ========================
 # CANDLE SCHEDULER
