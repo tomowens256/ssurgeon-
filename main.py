@@ -55,6 +55,8 @@ CRT_SIGNAL_COUNT = 0
 LAST_SIGNAL_TIME = 0
 SIGNALS = []
 REALTIME_DATA_QUEUE = queue.Queue()
+SIGNAL_FOUND_THIS_CANDLE = False
+NEXT_CANDLE_TIME = None
 
 # Initialize logging
 logging.basicConfig(
@@ -681,6 +683,17 @@ class RealTimeDetector:
                     time.sleep(REALTIME_POLL_INTERVAL)
                     continue
                     
+                # Check if we should sleep until next candle
+                if SIGNAL_FOUND_THIS_CANDLE and NEXT_CANDLE_TIME:
+                    sleep_seconds = (NEXT_CANDLE_TIME - current_time).total_seconds()
+                    if sleep_seconds > 0:
+                        logger.info(f"Signal found this candle, sleeping {sleep_seconds:.1f}s until next candle")
+                        time.sleep(sleep_seconds)
+                        # Reset flag after sleeping
+                        global SIGNAL_FOUND_THIS_CANDLE
+                        SIGNAL_FOUND_THIS_CANDLE = False
+                        continue
+                
                 # Get latest candle (candle 3 - current/incomplete)
                 latest_candle = self.detector.data.iloc[-1]
                 
@@ -826,6 +839,8 @@ class TradingDetector:
 
     def process_signals(self, minutes_closed, latest_candles):
         logger.info(f"Processing signals, minutes closed: {minutes_closed}, candles: {len(latest_candles)}")
+        global SIGNAL_FOUND_THIS_CANDLE, NEXT_CANDLE_TIME
+        
         if not latest_candles.empty:
             logger.info(f"Updating data with {len(latest_candles)} new candles")
             self.update_data(latest_candles)
@@ -841,6 +856,10 @@ class TradingDetector:
         current_time = datetime.now(NY_TZ)
         candle_age = self.calculate_candle_age(current_time, latest_candle_time)
         logger.info(f"Candle age: {candle_age:.2f} minutes")
+        
+        # Calculate next candle time
+        NEXT_CANDLE_TIME = self._get_next_candle_time(latest_candle_time)
+        logger.info(f"Next candle time: {NEXT_CANDLE_TIME}")
 
         # CRT SIGNAL DETECTION (using candle 3 as current)
         signal_type, signal_data = self.feature_engineer.calculate_crt_signal(self.data)
@@ -862,6 +881,7 @@ class TradingDetector:
                         break
                 
                 if is_new_trade:
+                    SIGNAL_FOUND_THIS_CANDLE = True
                     logger.info(f"New signal validated: {signal_type}")
                     alert_time = signal_data['time'].astimezone(NY_TZ)
                     setup_msg = (
@@ -921,47 +941,47 @@ class TradingDetector:
             else:
                 logger.debug("Signal skipped due to similar candle conditions")
 
-        # TRADE OUTCOME CHECKING (only on completed candles)
-        if len(self.data) > 0 and minutes_closed == 15:  # Only check when candle completes
-            latest_candle = self.data.iloc[-1]
-            for trade_id, trade in list(active_trades.items()):
-                if trade.get('outcome') is None:
-                    entry, sl, tp = trade['entry'], trade['sl'], trade['tp']
-                    logger.info(f"Checking outcome for trade {trade_id}: entry={entry}, sl={sl}, tp={tp}")
-                    
-                    # SELL trade: entry > sl
-                    if entry > sl:
-                        if latest_candle['high'] >= sl:
-                            trade['outcome'] = 'Hit SL (Loss)'
-                            logger.info(f"SELL trade {trade_id} outcome: Hit SL at {latest_candle['high']:.5f}")
-                        elif latest_candle['low'] <= tp:
-                            trade['outcome'] = 'Hit TP (Win)'
-                            logger.info(f"SELL trade {trade_id} outcome: Hit TP at {latest_candle['low']:.5f}")
-                    # BUY trade: entry < sl
-                    else:
-                        if latest_candle['low'] <= sl:
-                            trade['outcome'] = 'Hit SL (Loss)'
-                            logger.info(f"BUY trade {trade_id} outcome: Hit SL at {latest_candle['low']:.5f}")
-                        elif latest_candle['high'] >= tp:
-                            trade['outcome'] = 'Hit TP (Win)'
-                            logger.info(f"BUY trade {trade_id} outcome: Hit TP at {latest_candle['high']:.5f}")
-                    
-                    # If outcome determined, send notification and remove trade
-                    if trade.get('outcome'):
-                        outcome_msg = (
-                            f"📈 *Trade Outcome*\n"
-                            f"Signal Time: {trade['signal_time'].strftime('%Y-%m-%d %H:%M')} NY\n"
-                            f"Entry: {entry:.5f}\n"
-                            f"SL: {sl:.5f}\n"
-                            f"TP: {tp:.5f}\n"
-                            f"Prediction: {trade['prediction']:.6f}\n"
-                            f"Outcome: {trade['outcome']}\n"
-                            f"Detected at: {current_time.strftime('%Y-%m-%d %H:%M')} NY"
-                        )
-                        if not send_telegram(outcome_msg):
-                            logger.error(f"Failed to send outcome for trade {trade_id}")
-                        # Remove the trade from active_trades
-                        del active_trades[trade_id]
+        # DISABLED OUTCOME CHECKING PER REQUEST
+        # if len(self.data) > 0 and minutes_closed == 15:  # Only check when candle completes
+        #     latest_candle = self.data.iloc[-1]
+        #     for trade_id, trade in list(active_trades.items()):
+        #         if trade.get('outcome') is None:
+        #             entry, sl, tp = trade['entry'], trade['sl'], trade['tp']
+        #             logger.info(f"Checking outcome for trade {trade_id}: entry={entry}, sl={sl}, tp={tp}")
+        #             
+        #             # SELL trade: entry > sl
+        #             if entry > sl:
+        #                 if latest_candle['high'] >= sl:
+        #                     trade['outcome'] = 'Hit SL (Loss)'
+        #                     logger.info(f"SELL trade {trade_id} outcome: Hit SL at {latest_candle['high']:.5f}")
+        #                 elif latest_candle['low'] <= tp:
+        #                     trade['outcome'] = 'Hit TP (Win)'
+        #                     logger.info(f"SELL trade {trade_id} outcome: Hit TP at {latest_candle['low']:.5f}")
+        #             # BUY trade: entry < sl
+        #             else:
+        #                 if latest_candle['low'] <= sl:
+        #                     trade['outcome'] = 'Hit SL (Loss)'
+        #                     logger.info(f"BUY trade {trade_id} outcome: Hit SL at {latest_candle['low']:.5f}")
+        #                 elif latest_candle['high'] >= tp:
+        #                     trade['outcome'] = 'Hit TP (Win)'
+        #                     logger.info(f"BUY trade {trade_id} outcome: Hit TP at {latest_candle['high']:.5f}")
+        #             
+        #             # If outcome determined, send notification and remove trade
+        #             if trade.get('outcome'):
+        #                 outcome_msg = (
+        #                     f"📈 *Trade Outcome*\n"
+        #                     f"Signal Time: {trade['signal_time'].strftime('%Y-%m-%d %H:%M')} NY\n"
+        #                     f"Entry: {entry:.5f}\n"
+        #                     f"SL: {sl:.5f}\n"
+        #                     f"TP: {tp:.5f}\n"
+        #                     f"Prediction: {trade['prediction']:.6f}\n"
+        #                     f"Outcome: {trade['outcome']}\n"
+        #                     f"Detected at: {current_time.strftime('%Y-%m-%d %H:%M')} NY"
+        #                 )
+        #                 if not send_telegram(outcome_msg):
+        #                     logger.error(f"Failed to send outcome for trade {trade_id}")
+        #                 # Remove the trade from active_trades
+        #                 del active_trades[trade_id]
 
 # ========================
 # CANDLE SCHEDULER
