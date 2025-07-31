@@ -151,17 +151,24 @@ def send_telegram(message):
     return False
 
 def fetch_candles(last_time=None):
-    """Fetch exactly 201 candles for XAU_USD M15 with full precision"""
-    logger.info(f"Fetching {CANDLE_COUNT} candles for {INSTRUMENT} with timeframe {TIMEFRAME}")
+    """Fetch candles for XAU_USD M15 with full precision"""
+    logger.info(f"Fetching candles for {INSTRUMENT} with timeframe {TIMEFRAME}")
     params = {
         "granularity": TIMEFRAME,
-        "count": CANDLE_COUNT,
-        "price": "M",  # Mid prices with full precision
-        "alignmentTimezone": "America/New_York",  # Ensure proper time alignment
-        "includeCurrent": True  # Include incomplete current candle
+        "price": "M",
+        "alignmentTimezone": "America/New_York",
+        "includeCurrent": True
     }
+    
+    # Handle initial fetch vs incremental fetch
     if last_time:
+        # For incremental updates, get all candles since last_time
         params["from"] = last_time.strftime("%Y-%m-%dT%H:%M:%SZ")
+        logger.info(f"Fetching new candles since {last_time}")
+    else:
+        # For initial fetch, get exactly CANDLE_COUNT candles
+        params["count"] = CANDLE_COUNT
+        logger.info(f"Fetching initial {CANDLE_COUNT} candles")
     
     sleep_time = 10
     max_attempts = 5
@@ -282,101 +289,111 @@ class FeatureEngineer:
         return same_period
 
     def calculate_crt_signal(self, df):
-        """Robust CRT signal calculation with detailed validation"""
+        """Robust CRT signal calculation with validation using direct indexing"""
         logger.info("CRT signal calculation with validation")
+        
+        # Ensure we have at least 3 candles
         if len(df) < 3:
             logger.warning(f"Insufficient data: {len(df)} rows, need at least 3")
             return None, None
-
+            
         # Create working copy with explicit index reset
-        df = df.tail(3).copy().reset_index(drop=True)
+        crt_df = df.tail(3).copy().reset_index(drop=True)
         
+        # Verify we have exactly 3 candles
+        if len(crt_df) < 3:
+            logger.warning(f"Only {len(crt_df)} rows after slicing, need 3")
+            return None, None
+            
         # Verify chronological order
-        if not df['time'].is_monotonic_increasing:
+        if not crt_df['time'].is_monotonic_increasing:
             logger.error("Candles not in chronological order! Re-sorting...")
-            df = df.sort_values('time').reset_index(drop=True)
+            crt_df = crt_df.sort_values('time').reset_index(drop=True)
         
-        # Create shifted columns with boundary checks
-        df['c1_low'] = df['low'].shift(2, fill_value=np.nan)
-        df['c1_high'] = df['high'].shift(2, fill_value=np.nan)
-        df['c2_low'] = df['low'].shift(1, fill_value=np.nan)
-        df['c2_high'] = df['high'].shift(1, fill_value=np.nan)
-        df['c2_close'] = df['close'].shift(1, fill_value=np.nan)
-        df['c2_open'] = df['open'].shift(1, fill_value=np.nan)
-
-        # Validate we have complete historical candles
-        if df.isnull().any().any():
-            missing = df.columns[df.isnull().any()].tolist()
-            logger.error(f"Missing values in CRT columns: {missing}")
-            return None, None
-
-        # Calculate candle metrics
-        df['c2_range'] = df['c2_high'] - df['c2_low']
-        df['c2_mid'] = df['c2_low'] + (0.5 * df['c2_range'])
-
-        # Vectorized conditions with explicit validation
-        buy_mask = (
-            (df['c2_low'] < df['c1_low']) & 
-            (df['c2_close'] > df['c1_low']) & 
-            (df['open'] > df['c2_mid'])
-        )
-
-        sell_mask = (
-            (df['c2_high'] > df['c1_high']) & 
-            (df['c2_close'] < df['c1_high']) & 
-            (df['open'] < df['c2_mid'])
-        )
-
-        # Extract signal for current candle
-        current = df.iloc[-1]
-        if buy_mask.iloc[-1]:
-            # Log detailed validation
-            logger.info(f"✅ BUY VALIDATION| "
-                        f"C2_Low:{current['c2_low']:.5f} < C1_Low:{current['c1_low']:.5f}| "
-                        f"C2_Close:{current['c2_close']:.5f} > C1_Low:{current['c1_low']:.5f}| "
-                        f"Current_Open:{current['open']:.5f} > C2_Mid:{current['c2_mid']:.5f}")
+        try:
+            # Directly reference candles
+            c0 = crt_df.iloc[0]  # Candle 1 (two candles back)
+            c1 = crt_df.iloc[1]  # Candle 2 (previous candle)
+            c2 = crt_df.iloc[2]  # Candle 3 (current candle)
             
-            signal_type = 'BUY'
-            entry = current['open']
-            sl = current['c2_low']
-            risk = abs(entry - sl)
-            tp = entry + 4 * risk
-            logger.info(f"BUY signal validated")
+            # Extract prices
+            c1_low = c0['low']
+            c1_high = c0['high']
+            c2_low = c1['low']
+            c2_high = c1['high']
+            c2_close = c1['close']
+            current_open = c2['open']
             
-        elif sell_mask.iloc[-1]:
-            # Log detailed validation
-            logger.info(f"✅ SELL VALIDATION| "
-                        f"C2_High:{current['c2_high']:.5f} > C1_High:{current['c1_high']:.5f}| "
-                        f"C2_Close:{current['c2_close']:.5f} < C1_High:{current['c1_high']:.5f}| "
-                        f"Current_Open:{current['open']:.5f} < C2_Mid:{current['c2_mid']:.5f}")
+            # Calculate candle metrics
+            c2_range = c2_high - c2_low
+            c2_mid = c2_low + (0.5 * c2_range)
+
+            # Vectorized conditions with explicit validation
+            buy_condition = (
+                (c2_low < c1_low) and 
+                (c2_close > c1_low) and 
+                (current_open > c2_mid)
+            )
+
+            sell_condition = (
+                (c2_high > c1_high) and 
+                (c2_close < c1_high) and 
+                (current_open < c2_mid)
+            )
             
-            signal_type = 'SELL'
-            entry = current['open']
-            sl = current['c2_high']
-            risk = abs(sl - entry)
-            tp = entry - 4 * risk
-            logger.info(f"SELL signal validated")
-            
-        else:
-            # Log why no signal was detected
-            logger.info("❌ No signal detected:")
-            if not (current['c2_low'] < current['c1_low']):
-                logger.info(f"  - C2_Low:{current['c2_low']:.5f} >= C1_Low:{current['c1_low']:.5f}")
-            if not (current['c2_close'] > current['c1_low']):
-                logger.info(f"  - C2_Close:{current['c2_close']:.5f} <= C1_Low:{current['c1_low']:.5f}")
-            if not (current['open'] > current['c2_mid']):
-                logger.info(f"  - Open:{current['open']:.5f} <= C2_Mid:{current['c2_mid']:.5f}")
-            if not (current['c2_high'] > current['c1_high']):
-                logger.info(f"  - C2_High:{current['c2_high']:.5f} <= C1_High:{current['c1_high']:.5f}")
-            if not (current['c2_close'] < current['c1_high']):
-                logger.info(f"  - C2_Close:{current['c2_close']:.5f} >= C1_High:{current['c1_high']:.5f}")
-            if not (current['open'] < current['c2_mid']):
-                logger.info(f"  - Open:{current['open']:.5f} >= C2_Mid:{current['c2_mid']:.5f}")
+            # Extract signal for current candle
+            if buy_condition:
+                # Log detailed validation
+                logger.info(f"✅ BUY VALIDATION| "
+                            f"C2_Low:{c2_low:.5f} < C1_Low:{c1_low:.5f}| "
+                            f"C2_Close:{c2_close:.5f} > C1_Low:{c1_low:.5f}| "
+                            f"Current_Open:{current_open:.5f} > C2_Mid:{c2_mid:.5f}")
                 
+                signal_type = 'BUY'
+                entry = current_open
+                sl = c2_low
+                risk = abs(entry - sl)
+                tp = entry + 4 * risk
+                logger.info(f"BUY signal validated")
+                
+            elif sell_condition:
+                # Log detailed validation
+                logger.info(f"✅ SELL VALIDATION| "
+                            f"C2_High:{c2_high:.5f} > C1_High:{c1_high:.5f}| "
+                            f"C2_Close:{c2_close:.5f} < C1_High:{c1_high:.5f}| "
+                            f"Current_Open:{current_open:.5f} < C2_Mid:{c2_mid:.5f}")
+                
+                signal_type = 'SELL'
+                entry = current_open
+                sl = c2_high
+                risk = abs(sl - entry)
+                tp = entry - 4 * risk
+                logger.info(f"SELL signal validated")
+                
+            else:
+                # Log why no signal was detected
+                logger.info("❌ No signal detected:")
+                if not (c2_low < c1_low):
+                    logger.info(f"  - C2_Low:{c2_low:.5f} >= C1_Low:{c1_low:.5f}")
+                if not (c2_close > c1_low):
+                    logger.info(f"  - C2_Close:{c2_close:.5f} <= C1_Low:{c1_low:.5f}")
+                if not (current_open > c2_mid):
+                    logger.info(f"  - Open:{current_open:.5f} <= C2_Mid:{c2_mid:.5f}")
+                if not (c2_high > c1_high):
+                    logger.info(f"  - C2_High:{c2_high:.5f} <= C1_High:{c1_high:.5f}")
+                if not (c2_close < c1_high):
+                    logger.info(f"  - C2_Close:{c2_close:.5f} >= C1_High:{c1_high:.5f}")
+                if not (current_open < c2_mid):
+                    logger.info(f"  - Open:{current_open:.5f} >= C2_Mid:{c2_mid:.5f}")
+                    
+                return None, None
+            
+            logger.info(f"Detected signal: {signal_type} at {c2['time']}")
+            return signal_type, {'entry': entry, 'sl': sl, 'tp': tp, 'time': c2['time']}
+            
+        except KeyError as e:
+            logger.error(f"Missing price data in candle: {str(e)}")
             return None, None
-        
-        logger.info(f"Detected signal: {signal_type} at {current['time']}")
-        return signal_type, {'entry': entry, 'sl': sl, 'tp': tp, 'time': current['time']}
 
     def calculate_technical_indicators(self, df):
         """Calculate technical indicators with volume imputation"""
