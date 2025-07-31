@@ -17,6 +17,7 @@ import oandapyV20.endpoints.instruments as instruments
 import joblib
 from tensorflow.keras.models import load_model
 import queue
+from collections import defaultdict
 
 # ========================
 # CONSTANTS & CONFIG
@@ -230,7 +231,7 @@ def fetch_candles(last_time=None):
     return pd.DataFrame()
 
 # ========================
-# FEATURE ENGINEER
+# FEATURE ENGINEER WITH VOLUME IMPUTATION
 # ========================
 class FeatureEngineer:
     def __init__(self):
@@ -251,6 +252,34 @@ class FeatureEngineer:
             'combo_flag2_dead', 'combo_flag2_fair', 'combo_flag2_fine',
             'minutes,closed_0', 'minutes,closed_15', 'minutes,closed_30', 'minutes,closed_45'
         ]
+        # Store historical volume data for imputation
+        self.historical_volumes = defaultdict(list)
+
+    def get_same_period_candles(self, df, current_time):
+        """Get candles from same time period in previous days"""
+        # Create time key (hour:minute)
+        time_key = current_time.strftime('%H:%M')
+        
+        # If we have historical data, use it
+        if time_key in self.historical_volumes and len(self.historical_volumes[time_key]) > 0:
+            logger.debug(f"Using historical volume data for time: {time_key}")
+            return self.historical_volumes[time_key]
+        
+        # Otherwise, build historical data from existing df
+        logger.info(f"Building historical volume data for time: {time_key}")
+        same_period = []
+        
+        # Only consider complete candles for historical data
+        complete_df = df[df['complete'] == True]
+        
+        for idx, row in complete_df.iterrows():
+            row_time = row['time']
+            if row_time.strftime('%H:%M') == time_key:
+                same_period.append(row['volume'])
+        
+        # Store for future use
+        self.historical_volumes[time_key] = same_period
+        return same_period
 
     def calculate_crt_signal(self, df):
         """Vectorized CRT signal calculation"""
@@ -314,9 +343,42 @@ class FeatureEngineer:
         return signal_type, {'entry': entry, 'sl': sl, 'tp': tp, 'time': current['time']}
 
     def calculate_technical_indicators(self, df):
-        logger.info("Calculating technical indicators")
+        """Calculate technical indicators with volume imputation"""
+        logger.info("Calculating technical indicators with volume imputation")
         df = df.copy().drop_duplicates(subset=['time'], keep='last')
         
+        # Apply volume imputation to incomplete candles
+        if not df.empty and not df.iloc[-1]['complete']:
+            current_candle = df.iloc[-1]
+            current_time = current_candle['time']
+            
+            # Get historical volumes for same time period
+            same_period_volumes = self.get_same_period_candles(df, current_time)
+            
+            if len(same_period_volumes) > 0:
+                # Calculate average volume for this time period
+                avg_volume = np.mean(same_period_volumes)
+                
+                # Get current volume
+                current_volume = current_candle['volume']
+                
+                # Calculate volume ratio
+                volume_ratio = current_volume / avg_volume if avg_volume > 0 else 1.0
+                
+                # Cap the ratio to avoid extreme values
+                volume_ratio = min(3.0, max(0.1, volume_ratio))
+                
+                # Estimate final volume
+                estimated_volume = avg_volume * volume_ratio
+                
+                logger.info(f"Volume imputation: Current={current_volume}, "
+                            f"Avg={avg_volume:.2f}, Ratio={volume_ratio:.2f}, "
+                            f"Estimated={estimated_volume:.2f}")
+                
+                # Apply imputation
+                df.at[df.index[-1], 'volume'] = estimated_volume
+        
+        # Continue with indicator calculations
         df['adj close'] = df['open']
         logger.debug("Adjusted close calculated")
         
@@ -661,7 +723,7 @@ class TradingDetector:
             same_time_data = df_new[df_new['time'] == last_existing_time]
             
             # Update existing candle if time matches
-            if not same_time_data.empty:
+            if not same_time_data.empty():
                 self.data = self.data[self.data['time'] < last_existing_time]
                 self.data = pd.concat([self.data, same_time_data])
             
