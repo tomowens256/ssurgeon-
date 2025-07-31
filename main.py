@@ -16,6 +16,8 @@ from oandapyV20.exceptions import V20Error
 import oandapyV20.endpoints.instruments as instruments
 import joblib
 from tensorflow.keras.models import load_model
+import queue
+from collections import defaultdict
 
 # ========================
 # CONSTANTS & CONFIG
@@ -32,6 +34,8 @@ API_KEY = os.getenv("OANDA_API_KEY")
 INSTRUMENT = "XAU_USD"
 TIMEFRAME = "M15"
 CANDLE_COUNT = 201  # Exactly 201 candles
+REALTIME_POLL_INTERVAL = 5  # Seconds between real-time checks
+MIN_CANDLE_AGE_FOR_SIGNAL = 0.5  # Minimum 30 seconds candle age to check signals
 
 # Specific models to load (your preferred ensemble)
 MODEL_FILES = [
@@ -50,6 +54,7 @@ GLOBAL_LOCK = threading.Lock()
 CRT_SIGNAL_COUNT = 0
 LAST_SIGNAL_TIME = 0
 SIGNALS = []
+REALTIME_DATA_QUEUE = queue.Queue()
 
 # Initialize logging
 logging.basicConfig(
@@ -152,7 +157,8 @@ def fetch_candles(last_time=None):
         "granularity": TIMEFRAME,
         "count": CANDLE_COUNT,
         "price": "M",  # Mid prices with full precision
-        "alignmentTimezone": "America/New_York"  # Ensure proper time alignment
+        "alignmentTimezone": "America/New_York",  # Ensure proper time alignment
+        "includeCurrent": True  # Include incomplete current candle
     }
     if last_time:
         params["from"] = last_time.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -181,6 +187,8 @@ def fetch_candles(last_time=None):
                 
                 try:
                     parsed_time = parse_oanda_time(candle['time'])
+                    is_complete = candle.get('complete', False)
+                    
                     data.append({
                         'time': parsed_time,
                         'open': float(price_data['o']),  # Full precision
@@ -188,7 +196,8 @@ def fetch_candles(last_time=None):
                         'low': float(price_data['l']),   # Full precision
                         'close': float(price_data['c']), # Full precision
                         'volume': int(candle.get('volume', 0)),
-                        'complete': candle.get('complete', False)
+                        'complete': is_complete,
+                        'is_current': not is_complete  # Mark incomplete candles
                     })
                 except Exception as e:
                     logger.error(f"Error processing candle: {str(e)}")
@@ -200,7 +209,7 @@ def fetch_candles(last_time=None):
             df = pd.DataFrame(data).drop_duplicates(subset=['time'], keep='last')
             if last_time:
                 df = df[df['time'] > last_time].sort_values('time')
-            logger.info(f"Successfully fetched {len(df)} candles")
+            logger.info(f"Successfully fetched {len(df)} candles (including current)")
             return df
             
         except V20Error as e:
@@ -222,7 +231,7 @@ def fetch_candles(last_time=None):
     return pd.DataFrame()
 
 # ========================
-# FEATURE ENGINEER
+# FEATURE ENGINEER WITH VOLUME IMPUTATION
 # ========================
 class FeatureEngineer:
     def __init__(self):
@@ -243,6 +252,34 @@ class FeatureEngineer:
             'combo_flag2_dead', 'combo_flag2_fair', 'combo_flag2_fine',
             'minutes,closed_0', 'minutes,closed_15', 'minutes,closed_30', 'minutes,closed_45'
         ]
+        # Store historical volume data for imputation
+        self.historical_volumes = defaultdict(list)
+
+    def get_same_period_candles(self, df, current_time):
+        """Get candles from same time period in previous days"""
+        # Create time key (hour:minute)
+        time_key = current_time.strftime('%H:%M')
+        
+        # If we have historical data, use it
+        if time_key in self.historical_volumes and len(self.historical_volumes[time_key]) > 0:
+            logger.debug(f"Using historical volume data for time: {time_key}")
+            return self.historical_volumes[time_key]
+        
+        # Otherwise, build historical data from existing df
+        logger.info(f"Building historical volume data for time: {time_key}")
+        same_period = []
+        
+        # Only consider complete candles for historical data
+        complete_df = df[df['complete'] == True]
+        
+        for idx, row in complete_df.iterrows():
+            row_time = row['time']
+            if row_time.strftime('%H:%M') == time_key:
+                same_period.append(row['volume'])
+        
+        # Store for future use
+        self.historical_volumes[time_key] = same_period
+        return same_period
 
     def calculate_crt_signal(self, df):
         """Vectorized CRT signal calculation"""
@@ -288,7 +325,7 @@ class FeatureEngineer:
             tp = entry + 4 * risk
             logger.info(f"BUY signal detected: c2 low={current['c2_low']} < c1 low={current['c1_low']}, "
                         f"c2 close={current['c2_close']} > c1 low={current['c1_low']}, "
-                        f"current open={entry} > c2 mid={current['c2_mid']:.2f}")
+                        f"current open={entry} > c2 mid={current['c2_mid']:.5f}")
         elif sell_mask.iloc[-1]:
             signal_type = 'SELL'
             entry = current['open']
@@ -297,7 +334,7 @@ class FeatureEngineer:
             tp = entry - 4 * risk
             logger.info(f"SELL signal detected: c2 high={current['c2_high']} > c1 high={current['c1_high']}, "
                         f"c2 close={current['c2_close']} < c1 high={current['c1_high']}, "
-                        f"current open={entry} < c2 mid={current['c2_mid']:.2f}")
+                        f"current open={entry} < c2 mid={current['c2_mid']:.5f}")
         else:
             logger.info("No signal detected based on current candle pattern")
             return None, None
@@ -306,9 +343,42 @@ class FeatureEngineer:
         return signal_type, {'entry': entry, 'sl': sl, 'tp': tp, 'time': current['time']}
 
     def calculate_technical_indicators(self, df):
-        logger.info("Calculating technical indicators")
+        """Calculate technical indicators with volume imputation"""
+        logger.info("Calculating technical indicators with volume imputation")
         df = df.copy().drop_duplicates(subset=['time'], keep='last')
         
+        # Apply volume imputation to incomplete candles
+        if not df.empty and not df.iloc[-1]['complete']:
+            current_candle = df.iloc[-1]
+            current_time = current_candle['time']
+            
+            # Get historical volumes for same time period
+            same_period_volumes = self.get_same_period_candles(df, current_time)
+            
+            if len(same_period_volumes) > 0:
+                # Calculate average volume for this time period
+                avg_volume = np.mean(same_period_volumes)
+                
+                # Get current volume
+                current_volume = current_candle['volume']
+                
+                # Calculate volume ratio
+                volume_ratio = current_volume / avg_volume if avg_volume > 0 else 1.0
+                
+                # Cap the ratio to avoid extreme values
+                volume_ratio = min(3.0, max(0.1, volume_ratio))
+                
+                # Estimate final volume
+                estimated_volume = avg_volume * volume_ratio
+                
+                logger.info(f"Volume imputation: Current={current_volume}, "
+                            f"Avg={avg_volume:.2f}, Ratio={volume_ratio:.2f}, "
+                            f"Estimated={estimated_volume:.2f}")
+                
+                # Apply imputation
+                df.at[df.index[-1], 'volume'] = estimated_volume
+        
+        # Continue with indicator calculations
         df['adj close'] = df['open']
         logger.debug("Adjusted close calculated")
         
@@ -364,11 +434,11 @@ class FeatureEngineer:
         
         if signal_type == 'SELL':
             df['sl_price'] = prev_row['high']
-            risk = abs(entry - df['sl_price'])
+            risk = abs(entry - df['sl_price'].iloc[-1])
             df['tp_price'] = entry - 4 * risk
         else:  # BUY
             df['sl_price'] = prev_row['low']
-            risk = abs(entry - df['sl_price'])
+            risk = abs(entry - df['sl_price'].iloc[-1])
             df['tp_price'] = entry + 4 * risk
         logger.debug(f"SL: {df['sl_price'].iloc[-1]}, TP: {df['tp_price'].iloc[-1]}")
         
@@ -536,6 +606,52 @@ class FeatureEngineer:
         return features
 
 # ========================
+# REAL-TIME DETECTOR
+# ========================
+class RealTimeDetector:
+    def __init__(self, detector):
+        self.detector = detector
+        self.last_check_time = None
+        self.running = True
+        self.thread = threading.Thread(target=self.run, daemon=True)
+        self.thread.start()
+        logger.info("Real-time detector started")
+
+    def run(self):
+        """Continuously check for signals in real-time"""
+        while self.running:
+            try:
+                current_time = datetime.now(NY_TZ)
+                
+                # Only check if we have fresh data
+                if self.detector.data.empty:
+                    time.sleep(REALTIME_POLL_INTERVAL)
+                    continue
+                    
+                # Get latest candle (candle 3 - current/incomplete)
+                latest_candle = self.detector.data.iloc[-1]
+                
+                # Calculate candle age in minutes
+                candle_age = (current_time - latest_candle['time']).total_seconds() / 60.0
+                
+                # Only check if candle is new enough and incomplete
+                if latest_candle['is_current'] and candle_age >= MIN_CANDLE_AGE_FOR_SIGNAL:
+                    # Process signals with 0 minutes closed (real-time)
+                    self.detector.process_signals(0, pd.DataFrame([latest_candle]))
+                
+                time.sleep(REALTIME_POLL_INTERVAL)
+                
+            except Exception as e:
+                logger.error(f"Real-time detector error: {str(e)}")
+                logger.error(traceback.format_exc())
+                time.sleep(REALTIME_POLL_INTERVAL)
+
+    def stop(self):
+        self.running = False
+        self.thread.join(timeout=5)
+        logger.info("Real-time detector stopped")
+
+# ========================
 # TRADING DETECTOR
 # ========================
 class TradingDetector:
@@ -545,6 +661,7 @@ class TradingDetector:
         self.feature_engineer = FeatureEngineer()
         self.scheduler = CandleScheduler(timeframe=15)
         self.last_signal_candle = None
+        self.realtime_detector = None
         
         logger.info("Loading initial 201 candles")
         self.data = self.fetch_initial_candles()
@@ -557,6 +674,9 @@ class TradingDetector:
         self.scheduler.register_callback(self.process_signals)
         logger.info("Starting scheduler thread")
         self.scheduler.start()
+        
+        # Start real-time detector
+        self.realtime_detector = RealTimeDetector(self)
         logger.info("TradingDetector initialized")
 
     def fetch_initial_candles(self):
@@ -594,22 +714,26 @@ class TradingDetector:
             logger.warning("Received empty dataframe in update_data")
             return
         
-        if self.data.empty:
-            self.data = df_new.dropna(subset=['time', 'open', 'high', 'low', 'close']).tail(201)
-            logger.debug("Initialized data with new dataframe")
-        else:
-            last_existing_time = self.data['time'].max()
-            new_data = df_new[df_new['time'] > last_existing_time]
-            if not new_data.empty:
-                self.data = pd.concat([self.data, new_data]).drop_duplicates(subset=['time'], keep="last")
-                self.data = self.data.sort_values('time').reset_index(drop=True).tail(201)
-                logger.debug(f"Combined data shape: {self.data.shape}, latest time: {self.data['time'].max()}")
+        with GLOBAL_LOCK:
+            if self.data.empty:
+                self.data = df_new.dropna(subset=['time', 'open', 'high', 'low', 'close']).tail(201)
+                logger.debug("Initialized data with new dataframe")
             else:
-                latest_new = df_new.iloc[-1]
-                if latest_new['time'] >= self.data['time'].max():
-                    self.data = pd.concat([self.data, df_new.tail(1)]).drop_duplicates(subset=['time'], keep="last")
-                    self.data = self.data.sort_values('time').reset_index(drop=True).tail(201)
-                    logger.debug(f"Forced update with latest candle, new shape: {self.data.shape}, latest time: {self.data['time'].max()}")
+                last_existing_time = self.data['time'].max()
+                new_data = df_new[df_new['time'] > last_existing_time]
+                same_time_data = df_new[df_new['time'] == last_existing_time]
+                
+                # Update existing candle if time matches
+                if not same_time_data.empty:
+                    self.data = self.data[self.data['time'] < last_existing_time]
+                    self.data = pd.concat([self.data, same_time_data])
+                
+                if not new_data.empty:
+                    self.data = pd.concat([self.data, new_data])
+                
+                # Ensure we keep only the last 201 candles
+                self.data = self.data.sort_values('time').reset_index(drop=True).tail(201)
+                logger.debug(f"Combined data shape: {self.data.shape}, latest time: {self.data['time'].max()}, last 3 rows: {self.data.tail(3)}")
 
     def predict_ensemble(self, features_df):
         """Predict using your preferred ensemble voting logic (T=0.55)"""
@@ -639,7 +763,7 @@ class TradingDetector:
             final_pred = 1 if avg_prob >= 0.55 else 0
             outcome = "Worth Taking" if final_pred == 1 else "Likely Loss"
             
-            logger.info(f"Ensemble prediction: Avg prob={avg_prob:.4f}, Outcome={outcome}")
+            logger.info(f"Ensemble prediction: Avg prob={avg_prob:.6f}, Outcome={outcome}")
             return avg_prob, outcome, probabilities
         
         except Exception as e:
@@ -665,6 +789,7 @@ class TradingDetector:
         candle_age = self.calculate_candle_age(current_time, latest_candle_time)
         logger.info(f"Candle age: {candle_age:.2f} minutes")
 
+        # CRT SIGNAL DETECTION (using candle 3 as current)
         signal_type, signal_data = self.feature_engineer.calculate_crt_signal(self.data)
         if signal_type and signal_data:
             current_candle = self.data.iloc[-1]
@@ -678,7 +803,7 @@ class TradingDetector:
                 # Check if this signal matches an existing trade
                 is_new_trade = True
                 for trade_id, trade in list(active_trades.items()):
-                    if trade['sl'] == signal_data['sl'] and not trade.get('outcome'):
+                    if trade['sl'] == signal_data['sl'] and trade.get('outcome') is None:
                         is_new_trade = False
                         logger.info(f"Matching SL found, skipping reprocessing for trade {trade_id}")
                         break
@@ -690,9 +815,9 @@ class TradingDetector:
                         f"🔔 *SETUP* {INSTRUMENT.replace('_','/')} {signal_type}\n"
                         f"Timeframe: {TIMEFRAME}\n"
                         f"Time: {alert_time.strftime('%Y-%m-%d %H:%M')} NY\n"
-                        f"Entry: {signal_data['entry']:.5f}\n"  # Full precision
-                        f"TP: {signal_data['tp']:.5f}\n"        # Full precision
-                        f"SL: {signal_data['sl']:.5f}\n"        # Full precision
+                        f"Entry: {signal_data['entry']:.5f}\n"
+                        f"TP: {signal_data['tp']:.5f}\n"
+                        f"SL: {signal_data['sl']:.5f}\n"
                         f"Candle Age: {candle_age:.2f} minutes"
                     )
                     if send_telegram(setup_msg):
@@ -702,7 +827,7 @@ class TradingDetector:
                             formatted_features = []
                             for feat, val in features.items():
                                 escaped_feat = feat.replace('_', '\\_')
-                                formatted_features.append(f"{escaped_feat}: {val:.6f}")  # Full precision
+                                formatted_features.append(f"{escaped_feat}: {val:.6f}")
                             feature_msg += "\n".join(formatted_features)
                             if not send_telegram(feature_msg):
                                 logger.error("Failed to send features after retries")
@@ -715,13 +840,13 @@ class TradingDetector:
                             
                             if avg_prob is not None:
                                 pred_msg = f"🤖 *ENSEMBLE PREDICTION* {INSTRUMENT.replace('_','/')} {signal_type}\n"
-                                pred_msg += f"Average Probability: {avg_prob:.6f}\n"  # Full precision
+                                pred_msg += f"Average Probability: {avg_prob:.6f}\n"
                                 pred_msg += f"Final Decision: {outcome}\n\n"
                                 pred_msg += "*Individual Model Probabilities:*\n"
                                 
                                 # List all model probabilities
                                 for i, prob in enumerate(all_probs):
-                                    pred_msg += f"Model {i+1}: {prob:.6f}\n"  # Full precision
+                                    pred_msg += f"Model {i+1}: {prob:.6f}\n"
                                 
                                 if not send_telegram(pred_msg):
                                     logger.error("Failed to send model predictions")
@@ -735,8 +860,7 @@ class TradingDetector:
                                     'time': current_time,
                                     'signal_time': signal_data['time'],  # Store signal candle time
                                     'prediction': avg_prob,
-                                    'outcome': None,
-                                    'checked': False  # Flag to prevent immediate checking
+                                    'outcome': None
                                 }
                                 logger.info(f"New trade stored: {trade_id} with prediction {avg_prob:.6f}")
                         else:
@@ -744,68 +868,47 @@ class TradingDetector:
             else:
                 logger.debug("Signal skipped due to similar candle conditions")
 
-        # MODIFIED OUTCOME CHECKING SECTION
-        # Check outcomes for all active trades
-        if len(self.data) > 0:
+        # TRADE OUTCOME CHECKING (only on completed candles)
+        if len(self.data) > 0 and minutes_closed == 15:  # Only check when candle completes
             latest_candle = self.data.iloc[-1]
             for trade_id, trade in list(active_trades.items()):
-                if trade.get('outcome') is None and not trade.get('checked', False):
-                    # Skip checking on the same candle as the signal
-                    if latest_candle['time'] == trade['signal_time']:
-                        logger.debug(f"Skipping outcome check for {trade_id} - still on signal candle")
-                        continue
-                    
-                    # Mark as checked so we only evaluate once per candle
-                    trade['checked'] = True
-                    
+                if trade.get('outcome') is None:
                     entry, sl, tp = trade['entry'], trade['sl'], trade['tp']
                     logger.info(f"Checking outcome for trade {trade_id}: entry={entry}, sl={sl}, tp={tp}")
                     
-                    if trade['prediction'] >= 0.55:  # Only check if predicted as worth taking
-                        # SELL trade: entry > sl
-                        if entry > sl:
-                            if latest_candle['high'] >= sl:
-                                trade['outcome'] = 'Hit SL (Loss)'
-                                logger.info(f"SELL trade {trade_id} outcome: Hit SL at {latest_candle['high']}")
-                            elif latest_candle['low'] <= tp:
-                                trade['outcome'] = 'Hit TP (Win)'
-                                logger.info(f"SELL trade {trade_id} outcome: Hit TP at {latest_candle['low']}")
-                        
-                        # BUY trade: entry < sl
-                        else:
-                            if latest_candle['low'] <= sl:
-                                trade['outcome'] = 'Hit SL (Loss)'
-                                logger.info(f"BUY trade {trade_id} outcome: Hit SL at {latest_candle['low']}")
-                            elif latest_candle['high'] >= tp:
-                                trade['outcome'] = 'Hit TP (Win)'
-                                logger.info(f"BUY trade {trade_id} outcome: Hit TP at {latest_candle['high']}")
+                    # SELL trade: entry > sl
+                    if entry > sl:
+                        if latest_candle['high'] >= sl:
+                            trade['outcome'] = 'Hit SL (Loss)'
+                            logger.info(f"SELL trade {trade_id} outcome: Hit SL at {latest_candle['high']:.5f}")
+                        elif latest_candle['low'] <= tp:
+                            trade['outcome'] = 'Hit TP (Win)'
+                            logger.info(f"SELL trade {trade_id} outcome: Hit TP at {latest_candle['low']:.5f}")
+                    # BUY trade: entry < sl
+                    else:
+                        if latest_candle['low'] <= sl:
+                            trade['outcome'] = 'Hit SL (Loss)'
+                            logger.info(f"BUY trade {trade_id} outcome: Hit SL at {latest_candle['low']:.5f}")
+                        elif latest_candle['high'] >= tp:
+                            trade['outcome'] = 'Hit TP (Win)'
+                            logger.info(f"BUY trade {trade_id} outcome: Hit TP at {latest_candle['high']:.5f}")
                     
-                    # If outcome determined, send notification
+                    # If outcome determined, send notification and remove trade
                     if trade.get('outcome'):
                         outcome_msg = (
                             f"📈 *Trade Outcome*\n"
                             f"Signal Time: {trade['signal_time'].strftime('%Y-%m-%d %H:%M')} NY\n"
-                            f"Entry: {entry:.5f}\n"  # Full precision
-                            f"SL: {sl:.5f}\n"        # Full precision
-                            f"TP: {tp:.5f}\n"        # Full precision
-                            f"Prediction: {trade['prediction']:.6f}\n"  # Full precision
+                            f"Entry: {entry:.5f}\n"
+                            f"SL: {sl:.5f}\n"
+                            f"TP: {tp:.5f}\n"
+                            f"Prediction: {trade['prediction']:.6f}\n"
                             f"Outcome: {trade['outcome']}\n"
                             f"Detected at: {current_time.strftime('%Y-%m-%d %H:%M')} NY"
                         )
                         if not send_telegram(outcome_msg):
                             logger.error(f"Failed to send outcome for trade {trade_id}")
-                elif trade.get('outcome') and trade.get('checked'):
-                    # Remove closed trades from active tracking
-                    del active_trades[trade_id]
-                    logger.info(f"Removed closed trade: {trade_id}")
-
-        if latest_candles.empty and candle_age > 1:
-            next_candle_time = self._get_next_candle_time(current_time)
-            sleep_seconds = (next_candle_time - current_time).total_seconds()
-            logger.info(f"Waiting for next candle, sleeping {sleep_seconds:.1f} seconds")
-            time.sleep(max(1, sleep_seconds))
-        else:
-            time.sleep(60)  # Check again in 1 minute if new data
+                        # Remove the trade from active_trades
+                        del active_trades[trade_id]
 
 # ========================
 # CANDLE SCHEDULER
@@ -907,11 +1010,11 @@ def run_bot():
                 detector.update_data(df)
             else:
                 logger.warning("No new candles fetched in this cycle")
-            time.sleep(60)  # Check every minute
+            time.sleep(REALTIME_POLL_INTERVAL)  # Check more frequently
         except Exception as e:
             logger.error(f"Main loop error: {e}")
             logger.error(traceback.format_exc())
-            time.sleep(60)
+            time.sleep(REALTIME_POLL_INTERVAL)
 
 if __name__ == "__main__":
     logger.info("Launching main application")
