@@ -14,6 +14,7 @@ import pandas_ta as ta
 import requests
 import re
 import traceback
+import sys
 from datetime import datetime, timedelta
 from oandapyV20 import API
 from oandapyV20.exceptions import V20Error
@@ -215,6 +216,30 @@ def fetch_candles(timeframe, last_time=None, count=201, api_key=None):
     logger.error(f"Failed to fetch candles after {max_attempts} attempts")
     return pd.DataFrame()
 
+def validate_candle_data(df):
+    """Validate candle data quality"""
+    if df.empty:
+        logger.error("Empty DataFrame received")
+        return False
+    
+    # Check for NaN values
+    if df[['open', 'high', 'low', 'close']].isna().any().any():
+        logger.error("NaN values detected in price data")
+        return False
+    
+    # Check for zero or negative prices
+    if (df[['open', 'high', 'low', 'close']] <= 0).any().any():
+        logger.error("Invalid price values detected")
+        return False
+    
+    # Check timestamp monotonicity
+    if not df['time'].is_monotonic_increasing:
+        logger.warning("Timestamps not monotonically increasing - sorting")
+        df = df.sort_values('time').reset_index(drop=True)
+    
+    logger.debug("Candle data validation passed")
+    return True
+
 # ========================
 # SIMPLIFIED FEATURE ENGINEER
 # ========================
@@ -228,6 +253,7 @@ class SimpleFeatureEngineer:
         """Calculate CRT signal at OPEN of current candle (c0) with minimal latency"""
         try:
             if len(df) < 3:
+                logger.warning("Insufficient data for CRT signal (need at least 3 candles)")
                 return None, None
 
             # Use the last COMPLETED candle as c2 (index -2)
@@ -248,6 +274,7 @@ class SimpleFeatureEngineer:
                 sl = c2['low']
                 risk = abs(entry - sl)
                 tp = entry + 4 * risk
+                logger.info(f"BUY CRT signal detected: entry={entry:.5f}, sl={sl:.5f}, tp={tp:.5f}")
                 return signal_type, {'entry': entry, 'sl': sl, 'tp': tp, 'time': df.iloc[-1]['time']}
 
             elif (c2['high'] > c1['high'] and 
@@ -258,11 +285,13 @@ class SimpleFeatureEngineer:
                 sl = c2['high']
                 risk = abs(sl - entry)
                 tp = entry - 4 * risk
+                logger.info(f"SELL CRT signal detected: entry={entry:.5f}, sl={sl:.5f}, tp={tp:.5f}")
                 return signal_type, {'entry': entry, 'sl': sl, 'tp': tp, 'time': df.iloc[-1]['time']}
 
             return None, None
         except Exception as e:
             logger.error(f"Error in calculate_crt_signal: {str(e)}")
+            logger.error(traceback.format_exc())
             return None, None
 
     def calculate_trend_direction(self, df):
@@ -279,40 +308,52 @@ class SimpleFeatureEngineer:
             
             # Determine trend direction
             if (current['ma_20'] > current['ma_30'] > current['ma_40'] > current['ma_60']):
-                return 'uptrend'
+                trend = 'uptrend'
             elif (current['ma_20'] < current['ma_30'] < current['ma_40'] < current['ma_60']):
-                return 'downtrend'
+                trend = 'downtrend'
             else:
-                return 'sideways'
+                trend = 'sideways'
+            
+            logger.debug(f"Trend calculated: {trend}")
+            return trend
                 
         except Exception as e:
             logger.error(f"Error calculating trend direction: {str(e)}")
             return 'sideways'
 
     def calculate_rsi_bucket(self, df):
-        """Calculate RSI and return the appropriate bucket"""
+        """Calculate RSI and return the appropriate bucket - EXACT format matching historical analysis"""
         try:
             rsi = ta.rsi(df['close'], length=14).iloc[-1]
             
             if pd.isna(rsi):
+                logger.warning("RSI calculation returned NaN")
                 return 'nan'
             
+            # CRITICAL: Exact bin format matching historical analysis
             for i in range(len(self.rsi_bins)-1):
                 if self.rsi_bins[i] <= rsi < self.rsi_bins[i+1]:
-                    return f"({self.rsi_bins[i]}, {self.rsi_bins[i+1]}]"
+                    # ✅ EXACT format: "(30,40]" - no spaces, exact brackets
+                    bucket = f"({self.rsi_bins[i]},{self.rsi_bins[i+1]}]"
+                    logger.debug(f"RSI {rsi:.2f} -> bucket {bucket}")
+                    return bucket
             
+            logger.warning(f"RSI {rsi:.2f} outside expected bins")
             return 'nan'
         except Exception as e:
             logger.error(f"Error calculating RSI bucket: {str(e)}")
             return 'nan'
 
     def generate_bucket_key(self, df, signal_type):
-        """Generate bucket key for signal validation"""
+        """Generate bucket key for signal validation - EXACT format matching historical analysis"""
         try:
             trend = self.calculate_trend_direction(df)
             rsi_bucket = self.calculate_rsi_bucket(df)
             
+            # ✅ CRITICAL: Exact format matching your historical analysis
+            # Format: "BUY_uptrend_(70,80]" 
             bucket_key = f"{signal_type}_{trend}_{rsi_bucket}"
+            
             logger.debug(f"Generated bucket key: {bucket_key}")
             
             return bucket_key
@@ -320,6 +361,24 @@ class SimpleFeatureEngineer:
         except Exception as e:
             logger.error(f"Error generating bucket key: {str(e)}")
             return None
+
+    def debug_bucket_generation(self, df, signal_type):
+        """Temporary debug function to see bucket components"""
+        trend = self.calculate_trend_direction(df)
+        rsi_bucket = self.calculate_rsi_bucket(df)
+        current_rsi = ta.rsi(df['close'], length=14).iloc[-1]
+        
+        logger.info("=== BUCKET GENERATION DEBUG ===")
+        logger.info(f"Signal type: {signal_type}")
+        logger.info(f"Current RSI: {current_rsi:.2f}")
+        logger.info(f"Trend: {trend}")
+        logger.info(f"RSI bucket: {rsi_bucket}")
+        
+        # Test the exact combination
+        test_bucket = f"{signal_type}_{trend}_{rsi_bucket}"
+        logger.info(f"Generated bucket: {test_bucket}")
+        
+        return test_bucket
 
 # ========================
 # SIMPLIFIED TRADING BOT
@@ -335,6 +394,15 @@ class SimpleTradingBot:
         
         self.feature_engineer = SimpleFeatureEngineer(timeframe)
         self.data = pd.DataFrame()
+        
+        # Performance monitoring
+        self.performance_stats = {
+            'candle_fetches': 0,
+            'signals_generated': 0,
+            'signals_acted_upon': 0,
+            'errors': 0,
+            'last_signal_time': None
+        }
         
         logger.info(f"Initialized {timeframe} bot with {len(trade_buckets)} trade buckets")
 
@@ -382,15 +450,20 @@ class SimpleTradingBot:
             f"Time: {signal_data['time'].strftime('%Y-%m-%d %H:%M:%S')}"
         )
         
-        send_telegram(message, self.credentials['telegram_token'], self.credentials['telegram_chat_id'])
-        logger.info(f"Trade signal sent for bucket: {bucket_key}")
+        success = send_telegram(message, self.credentials['telegram_token'], self.credentials['telegram_chat_id'])
+        if success:
+            self.performance_stats['signals_acted_upon'] += 1
+            self.performance_stats['last_signal_time'] = datetime.now(NY_TZ)
+            logger.info(f"Trade signal sent for bucket: {bucket_key}")
+        else:
+            logger.error("Failed to send Telegram signal")
 
     def test_credentials(self):
         """Test both Telegram and Oanda credentials"""
         logger.info("Testing credentials...")
         
         # Test Telegram
-        test_msg = f"🔧 {self.timeframe} bot credentials test"
+        test_msg = f"🔧 {self.timeframe} bot credentials test at {datetime.now(NY_TZ).strftime('%Y-%m-%d %H:%M:%S')}"
         telegram_ok = send_telegram(test_msg, self.credentials['telegram_token'], self.credentials['telegram_chat_id'])
         
         # Test Oanda
@@ -398,11 +471,70 @@ class SimpleTradingBot:
         try:
             test_data = fetch_candles("M5", count=1, api_key=self.credentials['oanda_api_key'])
             oanda_ok = not test_data.empty
+            if oanda_ok:
+                logger.info(f"Oanda test successful - received {len(test_data)} candles")
+            else:
+                logger.error("Oanda test failed - no data received")
         except Exception as e:
             logger.error(f"Oanda test failed: {str(e)}")
             
         logger.info(f"Credentials test result: {'PASS' if telegram_ok and oanda_ok else 'FAIL'}")
         return telegram_ok and oanda_ok
+
+    def test_bucket_matching(self):
+        """Test that our bucket generation matches expected format"""
+        logger.info("=== BUCKET MATCHING TEST ===")
+        test_cases = [
+            ("BUY", "uptrend", "(70,80]"),
+            ("SELL", "downtrend", "(30,40]"),
+            ("BUY", "sideways", "(60,70]"),
+            ("SELL", "uptrend", "(40,50]"),
+        ]
+        
+        for signal, trend, rsi_bin in test_cases:
+            test_key = f"{signal}_{trend}_{rsi_bin}"
+            exists = test_key in self.trade_buckets
+            status = "✅ EXISTS" if exists else "❌ MISSING"
+            logger.info(f"Testing: {test_key} -> {status}")
+
+    def robust_fetch_candles(self, max_retries=5, initial_delay=1):
+        """Enhanced fetch with exponential backoff"""
+        for attempt in range(max_retries):
+            try:
+                df = fetch_candles(self.timeframe, count=201, api_key=self.credentials['oanda_api_key'])
+                
+                if not df.empty and validate_candle_data(df):
+                    self.performance_stats['candle_fetches'] += 1
+                    return df
+                else:
+                    delay = initial_delay * (2 ** attempt)
+                    logger.warning(f"Empty data, retry {attempt+1}/{max_retries} in {delay}s")
+                    time.sleep(delay)
+                    
+            except Exception as e:
+                delay = initial_delay * (2 ** attempt)
+                logger.error(f"Fetch attempt {attempt+1} failed: {str(e)}, retrying in {delay}s")
+                time.sleep(delay)
+        
+        logger.error(f"All {max_retries} fetch attempts failed")
+        return pd.DataFrame()
+
+    def log_performance_stats(self):
+        """Regular performance logging"""
+        stats = self.performance_stats
+        if stats['candle_fetches'] > 0:
+            signal_rate = (stats['signals_generated'] / stats['candle_fetches']) * 100
+            action_rate = (stats['signals_acted_upon'] / max(1, stats['signals_generated'])) * 100
+            
+            logger.info(f"Performance: {stats['candle_fetches']} fetches, "
+                       f"{stats['signals_generated']} signals ({signal_rate:.1f}%), "
+                       f"{stats['signals_acted_upon']} acted ({action_rate:.1f}%), "
+                       f"{stats['errors']} errors")
+            
+            # Reset stats periodically
+            if stats['candle_fetches'] > 1000:
+                self.performance_stats = {k: 0 for k in stats.keys()}
+                self.performance_stats['last_signal_time'] = stats['last_signal_time']
 
     def run(self):
         """Main bot execution loop"""
@@ -417,6 +549,9 @@ class SimpleTradingBot:
         if not creds_valid:
             logger.error("Credentials test failed. Exiting bot.")
             return
+            
+        # Test bucket matching
+        self.test_bucket_matching()
             
         send_telegram(start_msg, self.credentials['telegram_token'], self.credentials['telegram_chat_id'])
         
@@ -448,14 +583,11 @@ class SimpleTradingBot:
                 
                 # Fetch candles for analysis
                 logger.debug("Fetching candles for analysis")
-                new_data = fetch_candles(
-                    self.timeframe,
-                    count=201,
-                    api_key=self.credentials['oanda_api_key']
-                )
+                new_data = self.robust_fetch_candles()
                 
                 if new_data.empty:
-                    logger.error("Failed to fetch candle data")
+                    logger.error("Failed to fetch candle data after retries")
+                    self.performance_stats['errors'] += 1
                     continue
                     
                 self.data = new_data
@@ -468,20 +600,29 @@ class SimpleTradingBot:
                     logger.debug("No CRT pattern detected")
                     continue
                     
+                self.performance_stats['signals_generated'] += 1
                 logger.info(f"CRT pattern detected: {signal_type} at {signal_data['time']}")
                 
-                # Generate bucket key and check if it matches our trade buckets
-                bucket_key = self.feature_engineer.generate_bucket_key(self.data, signal_type)
+                # ✅ FIXED: Use debug bucket generation temporarily to see exactly what's happening
+                bucket_key = self.feature_engineer.debug_bucket_generation(self.data, signal_type)
                 
                 if bucket_key and bucket_key in self.trade_buckets:
-                    logger.info(f"Bucket match found: {bucket_key} - Sending trade signal")
+                    logger.info(f"✅ BUCKET MATCH FOUND: {bucket_key} - Sending trade signal")
                     self.send_trade_signal(signal_type, signal_data, bucket_key)
                 else:
-                    logger.debug(f"Bucket {bucket_key} not in trade list - ignoring signal")
+                    logger.warning(f"❌ Bucket {bucket_key} not in trade list - ignoring signal")
+                    # Log available buckets for debugging
+                    matching_buckets = [b for b in self.trade_buckets if signal_type in b]
+                    logger.info(f"Available {signal_type} buckets: {matching_buckets}")
+                
+                # Log performance every 10 candles
+                if self.performance_stats['candle_fetches'] % 10 == 0:
+                    self.log_performance_stats()
                     
             except Exception as e:
                 error_msg = f"❌ {self.timeframe} bot error: {str(e)}"
                 logger.error(error_msg, exc_info=True)
+                self.performance_stats['errors'] += 1
                 send_telegram(error_msg[:1000], self.credentials['telegram_token'], self.credentials['telegram_chat_id'])
                 time.sleep(60)
 
@@ -516,7 +657,7 @@ if __name__ == "__main__":
     
     if not all(credentials.values()):
         logger.error("Missing one or more credentials in environment variables")
-        if credentials['telegram_token'] and credentials['telegram_chat_id']:
+        if credentials.get('telegram_token') and credentials.get('telegram_chat_id'):
             send_telegram("❌ Bot failed to start: Missing credentials", 
                          credentials['telegram_token'], credentials['telegram_chat_id'])
         sys.exit(1)
@@ -546,10 +687,19 @@ if __name__ == "__main__":
         
         # Keep main thread alive with status updates
         logger.info("Main thread entering monitoring loop")
+        last_status_time = time.time()
         while True:
-            logger.info(f"Bot status: M5 {'alive' if t1.is_alive() else 'dead'}, "
-                       f"M15 {'alive' if t2.is_alive() else 'dead'}")
-            time.sleep(60)
+            current_time = time.time()
+            if current_time - last_status_time > 300:  # Every 5 minutes
+                logger.info(f"Bot status: M5 {'alive' if t1.is_alive() else 'dead'}, "
+                           f"M15 {'alive' if t2.is_alive() else 'dead'}")
+                last_status_time = current_time
+                
+                # Log performance stats
+                bot_5m.log_performance_stats()
+                bot_15m.log_performance_stats()
+                
+            time.sleep(30)
             
     except Exception as e:
         logger.error(f"Main execution failed: {str(e)}", exc_info=True)
