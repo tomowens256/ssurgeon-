@@ -1,76 +1,89 @@
-# ========================
-# SIMPLIFIED TRADING BOT FOR BUCKET-BASED SIGNALS
-# REMOVED ALL MODEL, SCALING, AND UNNECESSARY CODE
-# ========================
+#!/usr/bin/env python3
+"""
+MULTI-PAIR SMT TRADING SYSTEM
+Advanced algorithmic trading system that detects SMT patterns across multiple correlated pairs
+"""
 
-import os
-import time
-import threading
+import asyncio
 import logging
-import pytz
-import numpy as np
-import pandas as pd
-import pandas_ta as ta
-import requests
-import re
-import traceback
+import os
 import sys
+import time
+import re
+import requests
+import pandas as pd
+import numpy as np
+import pytz
 from datetime import datetime, timedelta
+from typing import Dict, List, Tuple, Optional
 from oandapyV20 import API
 from oandapyV20.exceptions import V20Error
-import oandapyV20.endpoints.instruments as instruments
-from google.colab import drive
-from IPython.display import clear_output
+from oandapyV20.endpoints import instruments
 
-# ========================
-# CONSTANTS & CONFIG
-# ========================
-NY_TZ = pytz.timezone("America/New_York")
-DEBUG_MODE = True
+# ================================
+# CONFIGURATION
+# ================================
 
-# Initialize logging
-log_format = '%(asctime)s [%(levelname)s] [%(threadName)s] %(message)s'
+# Trading pairs configuration
+TRADING_PAIRS = {
+    'precious_metals': {
+        'pair1': 'XAU_USD',
+        'pair2': 'XAG_USD',
+        'timeframe_mapping': {
+            'monthly': 'H4',
+            'weekly': 'H1', 
+            'daily': 'M15',
+            '90min': 'M5'
+        }
+    },
+    'us_indices': {
+        'pair1': 'US30_USD',  # Dow Jones
+        'pair2': 'US500_USD', # S&P 500
+        'timeframe_mapping': {
+            'monthly': 'H4',
+            'weekly': 'H1',
+            'daily': 'M15', 
+            '90min': 'M5'
+        }
+    },
+    'european_indices': {
+        'pair1': 'DE30_EUR',  # DAX
+        'pair2': 'EU50_EUR',  # Euro Stoxx 50
+        'timeframe_mapping': {
+            'monthly': 'H4',
+            'weekly': 'H1',
+            'daily': 'M15',
+            '90min': 'M5'
+        }
+    }
+}
+
+# System Configuration
+NY_TZ = pytz.timezone('America/New_York')  # UTC-4
+BASE_INTERVAL = 300  # 5 minutes
+MIN_INTERVAL = 30    # 30 seconds
+MAX_RETRIES = 3
+
+# ================================
+# LOGGING SETUP
+# ================================
+
 logging.basicConfig(
-    level=logging.DEBUG if DEBUG_MODE else logging.INFO,
-    format=log_format,
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler('trading_bot_simple.log')
+        logging.FileHandler('trading_system.log'),
+        logging.StreamHandler()
     ]
 )
 logger = logging.getLogger(__name__)
 
-# Pre-defined bucket combinations for trading signals
-M5_TRADE_BUCKETS = {
-    "SELL_downtrend_(30,40]",
-    "SELL_uptrend_(40,50]", 
-    "BUY_downtrend_(50,60]",
-    "SELL_sideways_(30,40]",
-    "BUY_sideways_(60,70]",
-    "BUY_uptrend_(70,80]",
-    "SELL_downtrend_(20,30]",
-    "BUY_downtrend_(60,70]",
-    "BUY_sideways_(70,80]",
-    "SELL_uptrend_(30,40]",
-    "BUY_uptrend_(80,100]",
-    "SELL_sideways_(20,30]"
-}
-
-M15_TRADE_BUCKETS = {
-    "SELL_downtrend_(30,40]",
-    "BUY_uptrend_(60,70]",
-    "BUY_downtrend_(50,60]",
-    "SELL_uptrend_(40,50]",
-    "BUY_sideways_(60,70]",
-    "SELL_sideways_(30,40]",
-    "BUY_uptrend_(70,80]"
-}
-
-# ========================
+# ================================
 # UTILITY FUNCTIONS
-# ========================
+# ================================
+
 def parse_oanda_time(time_str):
-    """Parse Oanda's timestamp with variable fractional seconds"""
+    """Parse Oanda's timestamp with variable fractional seconds and convert to UTC-4"""
     try:
         if '.' in time_str and len(time_str.split('.')[1]) > 7:
             time_str = re.sub(r'\.(\d{6})\d+', r'.\1', time_str)
@@ -79,10 +92,8 @@ def parse_oanda_time(time_str):
         logger.error(f"Error parsing time {time_str}: {str(e)}")
         return datetime.now(NY_TZ)
 
-def send_telegram(message, token, chat_id):
-    """Send formatted message to Telegram with detailed error handling and retries"""
-    logger.debug(f"Attempting to send Telegram message: {message[:50]}...")
-    
+def send_telegram(message, token=None, chat_id=None):
+    """Send formatted message to Telegram"""
     if not token or not chat_id:
         logger.error("Telegram credentials missing")
         return False
@@ -96,11 +107,10 @@ def send_telegram(message, token, chat_id):
         message = message.replace(char, '\\' + char)
     
     url = f"https://api.telegram.org/bot{token}/sendMessage"
-    max_retries = 3
     
-    for attempt in range(max_retries):
+    for attempt in range(MAX_RETRIES):
         try:
-            logger.debug(f"Telegram attempt {attempt+1}/{max_retries}")
+            logger.debug(f"Telegram attempt {attempt+1}/{MAX_RETRIES}")
             response = requests.post(url, json={
                 'chat_id': chat_id,
                 'text': message,
@@ -119,12 +129,13 @@ def send_telegram(message, token, chat_id):
         except Exception as e:
             logger.error(f"Telegram connection failed: {str(e)}")
             time.sleep(2 ** attempt)
-    logger.error(f"Failed to send Telegram message after {max_retries} attempts")
+    
+    logger.error(f"Failed to send Telegram message after {MAX_RETRIES} attempts")
     return False
 
-def fetch_candles(timeframe, last_time=None, count=201, api_key=None):
-    """Fetch candles for XAU_USD with full precision and robust error handling"""
-    logger.debug(f"Fetching {count} candles for {timeframe}, last_time: {last_time}")
+def fetch_candles(instrument, timeframe, count=300, api_key=None):
+    """Fetch candles from OANDA API"""
+    logger.debug(f"Fetching {count} candles for {instrument} {timeframe}")
     
     if not api_key:
         logger.error("Oanda API key missing")
@@ -143,23 +154,18 @@ def fetch_candles(timeframe, last_time=None, count=201, api_key=None):
         "alignmentTimezone": "America/New_York",
         "includeCurrent": True
     }
-    if last_time:
-        params["from"] = last_time.strftime("%Y-%m-%dT%H:%M:%SZ")
     
-    sleep_time = 10
-    max_attempts = 5
-    
-    for attempt in range(max_attempts):
+    for attempt in range(MAX_RETRIES):
         try:
-            logger.debug(f"Fetch attempt {attempt+1}/{max_attempts}")
-            request = instruments.InstrumentsCandles(instrument="XAU_USD", params=params)
+            logger.debug(f"Fetch attempt {attempt+1}/{MAX_RETRIES} for {instrument}")
+            request = instruments.InstrumentsCandles(instrument=instrument, params=params)
             response = api.request(request)
             candles = response.get('candles', [])
             
-            logger.debug(f"Received {len(candles)} candles")
+            logger.debug(f"Received {len(candles)} candles for {instrument}")
             
             if not candles:
-                logger.warning(f"No candles received on attempt {attempt+1}")
+                logger.warning(f"No candles received for {instrument} on attempt {attempt+1}")
                 continue
             
             data = []
@@ -183,527 +189,538 @@ def fetch_candles(timeframe, last_time=None, count=201, api_key=None):
                         'is_current': not is_complete
                     })
                 except Exception as e:
-                    logger.error(f"Error parsing candle: {str(e)}")
+                    logger.error(f"Error parsing candle for {instrument}: {str(e)}")
                     continue
             
             if not data:
-                logger.warning(f"Empty data after parsing on attempt {attempt+1}")
+                logger.warning(f"Empty data after parsing for {instrument} on attempt {attempt+1}")
                 continue
                 
             df = pd.DataFrame(data).drop_duplicates(subset=['time'], keep='last')
-            df = df.reset_index(drop=True)
-            if last_time:
-                df = df[df['time'] > last_time].sort_values('time')
-                
-            logger.debug(f"Returning {len(df)} candles")
+            df = df.sort_values('time').reset_index(drop=True)
+            
+            logger.debug(f"Returning {len(df)} candles for {instrument}")
             return df
             
         except V20Error as e:
             if "rate" in str(e).lower() or getattr(e, 'code', 0) in [429, 502]:
-                wait_time = sleep_time * (2 ** attempt)
-                logger.warning(f"Rate limit hit, waiting {wait_time}s: {str(e)}")
+                wait_time = 10 * (2 ** attempt)
+                logger.warning(f"Rate limit hit for {instrument}, waiting {wait_time}s: {str(e)}")
                 time.sleep(wait_time)
             else:
                 error_details = f"Status: {getattr(e, 'code', 'N/A')} | Message: {getattr(e, 'msg', str(e))}"
-                logger.error(f"❌ Oanda API error: {error_details}")
+                logger.error(f"Oanda API error for {instrument}: {error_details}")
                 break
-                
         except Exception as e:
-            logger.error(f"❌ General error fetching candles: {str(e)}")
-            logger.error(traceback.format_exc())
-            time.sleep(sleep_time)
+            logger.error(f"General error fetching candles for {instrument}: {str(e)}")
+            time.sleep(10)
     
-    logger.error(f"Failed to fetch candles after {max_attempts} attempts")
+    logger.error(f"Failed to fetch candles for {instrument} after {MAX_RETRIES} attempts")
     return pd.DataFrame()
 
-def validate_candle_data(df):
-    """Validate candle data quality"""
-    if df.empty:
-        logger.error("Empty DataFrame received")
-        return False
+# ================================
+# CYCLE MANAGER
+# ================================
+
+class UTC4CycleManager:
+    def __init__(self):
+        self.ny_tz = pytz.timezone('America/New_York')
+        
+    def get_current_ny_time(self):
+        return datetime.now(self.ny_tz)
     
-    # Check for NaN values
-    if df[['open', 'high', 'low', 'close']].isna().any().any():
-        logger.error("NaN values detected in price data")
-        return False
-    
-    # Check for zero or negative prices
-    if (df[['open', 'high', 'low', 'close']] <= 0).any().any():
-        logger.error("Invalid price values detected")
-        return False
-    
-    # Check timestamp monotonicity
-    if not df['time'].is_monotonic_increasing:
-        logger.warning("Timestamps not monotonically increasing - sorting")
-        df = df.sort_values('time').reset_index(drop=True)
-    
-    logger.debug("Candle data validation passed")
-    return True
-
-# ========================
-# SIMPLIFIED FEATURE ENGINEER
-# ========================
-class SimpleFeatureEngineer:
-    def __init__(self, timeframe):
-        self.timeframe = timeframe
-        self.rsi_bins = [0, 20, 30, 40, 50, 60, 70, 80, 100]
-        logger.debug(f"Initialized SimpleFeatureEngineer for {timeframe}")
-
-    def calculate_crt_signal(self, df):
-        """Calculate CRT signal at OPEN of current candle (c0) with minimal latency"""
-        try:
-            if len(df) < 3:
-                logger.warning("Insufficient data for CRT signal (need at least 3 candles)")
-                return None, None
-
-            # Use the last COMPLETED candle as c2 (index -2)
-            c1 = df.iloc[-3]
-            c2 = df.iloc[-2]
-            current_open = df.iloc[-1]['open']
-
-            # Calculate c2 metrics
-            c2_range = c2['high'] - c2['low']
-            c2_mid = c2['low'] + (0.5 * c2_range)
-
-            # CRT conditions - using ONLY completed candles and current open
-            if (c2['low'] < c1['low'] and 
-                c2['close'] > c1['low'] and 
-                current_open > c2_mid):
-                signal_type = 'BUY'
-                entry = current_open
-                sl = c2['low']
-                risk = abs(entry - sl)
-                tp = entry + 4 * risk
-                logger.info(f"BUY CRT signal detected: entry={entry:.5f}, sl={sl:.5f}, tp={tp:.5f}")
-                return signal_type, {'entry': entry, 'sl': sl, 'tp': tp, 'time': df.iloc[-1]['time']}
-
-            elif (c2['high'] > c1['high'] and 
-                  c2['close'] < c1['high'] and 
-                  current_open < c2_mid):
-                signal_type = 'SELL'
-                entry = current_open
-                sl = c2['high']
-                risk = abs(sl - entry)
-                tp = entry - 4 * risk
-                logger.info(f"SELL CRT signal detected: entry={entry:.5f}, sl={sl:.5f}, tp={tp:.5f}")
-                return signal_type, {'entry': entry, 'sl': sl, 'tp': tp, 'time': df.iloc[-1]['time']}
-
-            return None, None
-        except Exception as e:
-            logger.error(f"Error in calculate_crt_signal: {str(e)}")
-            logger.error(traceback.format_exc())
-            return None, None
-
-    def calculate_trend_direction(self, df):
-        """Calculate trend direction using moving averages"""
-        try:
-            # Calculate moving averages
-            df['ma_20'] = df['close'].rolling(window=20).mean()
-            df['ma_30'] = df['close'].rolling(window=30).mean()
-            df['ma_40'] = df['close'].rolling(window=40).mean()
-            df['ma_60'] = df['close'].rolling(window=60).mean()
-            
-            # Get current values
-            current = df.iloc[-1]
-            
-            # Determine trend direction
-            if (current['ma_20'] > current['ma_30'] > current['ma_40'] > current['ma_60']):
-                trend = 'uptrend'
-            elif (current['ma_20'] < current['ma_30'] < current['ma_40'] < current['ma_60']):
-                trend = 'downtrend'
-            else:
-                trend = 'sideways'
-            
-            logger.debug(f"Trend calculated: {trend}")
-            return trend
-                
-        except Exception as e:
-            logger.error(f"Error calculating trend direction: {str(e)}")
-            return 'sideways'
-
-    def calculate_rsi_bucket(self, df):
-        """Calculate RSI and return the appropriate bucket - EXACT format matching historical analysis"""
-        try:
-            rsi = ta.rsi(df['close'], length=14).iloc[-1]
-            
-            if pd.isna(rsi):
-                logger.warning("RSI calculation returned NaN")
-                return 'nan'
-            
-            # CRITICAL: Exact bin format matching historical analysis
-            for i in range(len(self.rsi_bins)-1):
-                if self.rsi_bins[i] <= rsi < self.rsi_bins[i+1]:
-                    # ✅ EXACT format: "(30,40]" - no spaces, exact brackets
-                    bucket = f"({self.rsi_bins[i]},{self.rsi_bins[i+1]}]"
-                    logger.debug(f"RSI {rsi:.2f} -> bucket {bucket}")
-                    return bucket
-            
-            logger.warning(f"RSI {rsi:.2f} outside expected bins")
-            return 'nan'
-        except Exception as e:
-            logger.error(f"Error calculating RSI bucket: {str(e)}")
-            return 'nan'
-
-    def generate_bucket_key(self, df, signal_type):
-        """Generate bucket key for signal validation - EXACT format matching historical analysis"""
-        try:
-            trend = self.calculate_trend_direction(df)
-            rsi_bucket = self.calculate_rsi_bucket(df)
-            
-            # ✅ CRITICAL: Exact format matching your historical analysis
-            # Format: "BUY_uptrend_(70,80]" 
-            bucket_key = f"{signal_type}_{trend}_{rsi_bucket}"
-            
-            logger.debug(f"Generated bucket key: {bucket_key}")
-            
-            return bucket_key
-            
-        except Exception as e:
-            logger.error(f"Error generating bucket key: {str(e)}")
-            return None
-
-    def debug_bucket_generation(self, df, signal_type):
-        """Temporary debug function to see bucket components"""
-        trend = self.calculate_trend_direction(df)
-        rsi_bucket = self.calculate_rsi_bucket(df)
-        current_rsi = ta.rsi(df['close'], length=14).iloc[-1]
-        
-        logger.info("=== BUCKET GENERATION DEBUG ===")
-        logger.info(f"Signal type: {signal_type}")
-        logger.info(f"Current RSI: {current_rsi:.2f}")
-        logger.info(f"Trend: {trend}")
-        logger.info(f"RSI bucket: {rsi_bucket}")
-        
-        # Test the exact combination
-        test_bucket = f"{signal_type}_{trend}_{rsi_bucket}"
-        logger.info(f"Generated bucket: {test_bucket}")
-        
-        return test_bucket
-
-# ========================
-# SIMPLIFIED TRADING BOT
-# ========================
-class SimpleTradingBot:
-    def __init__(self, timeframe, credentials, trade_buckets):
-        self.timeframe = timeframe
-        self.credentials = credentials
-        self.trade_buckets = trade_buckets
-        self.logger = logging.getLogger(f"{timeframe}_bot")
-        self.start_time = time.time()
-        self.max_duration = 11.5 * 3600
-        
-        self.feature_engineer = SimpleFeatureEngineer(timeframe)
-        self.data = pd.DataFrame()
-        
-        # Performance monitoring
-        self.performance_stats = {
-            'candle_fetches': 0,
-            'signals_generated': 0,
-            'signals_acted_upon': 0,
-            'errors': 0,
-            'last_signal_time': None
-        }
-        
-        logger.info(f"Initialized {timeframe} bot with {len(trade_buckets)} trade buckets")
-
-    def calculate_next_candle_time(self):
-        now = datetime.now(NY_TZ)
-        
-        if self.timeframe == "M5":
-            minutes_past = now.minute % 5
-            next_minute = now.minute - minutes_past + 5
-            if next_minute >= 60:
-                next_time = now.replace(hour=now.hour+1, minute=0, second=0, microsecond=0)
-            else:
-                next_time = now.replace(minute=next_minute, second=0, microsecond=0)
-        else:  # M15
-            minutes_past = now.minute % 15
-            next_minute = now.minute - minutes_past + 15
-            if next_minute >= 60:
-                next_time = now.replace(hour=now.hour+1, minute=0, second=0, microsecond=0)
-            else:
-                next_time = now.replace(minute=next_minute, second=0, microsecond=0)
-        
-        # Add network latency compensation
-        next_time += timedelta(seconds=0.3)
-        
-        # If we're at the exact candle start, move to next candle
-        if now >= next_time:
-            next_time += timedelta(minutes=5 if self.timeframe == "M5" else 15)
-        
-        logger.debug(f"Current time: {now}, Next candle: {next_time}")
-        return next_time
-
-    def send_trade_signal(self, signal_type, signal_data, bucket_key):
-        """Send formatted trade signal to Telegram"""
-        latency_ms = (datetime.now(NY_TZ) - signal_data['time']).total_seconds() * 1000
-        
-        message = (
-            f"🚨 XAU/USD Trade Signal ({self.timeframe})\n"
-            f"Type: {signal_type}\n"
-            f"Entry: {signal_data['entry']:.5f}\n"
-            f"SL: {signal_data['sl']:.5f}\n"
-            f"TP: {signal_data['tp']:.5f}\n"
-            f"Bucket: {bucket_key}\n"
-            f"Risk/Reward: 1:4\n"
-            f"Latency: {latency_ms:.1f}ms\n"
-            f"Time: {signal_data['time'].strftime('%Y-%m-%d %H:%M:%S')}"
-        )
-        
-        success = send_telegram(message, self.credentials['telegram_token'], self.credentials['telegram_chat_id'])
-        if success:
-            self.performance_stats['signals_acted_upon'] += 1
-            self.performance_stats['last_signal_time'] = datetime.now(NY_TZ)
-            logger.info(f"Trade signal sent for bucket: {bucket_key}")
+    def detect_current_quarters(self, timestamp=None):
+        if timestamp is None:
+            timestamp = self.get_current_ny_time()
         else:
-            logger.error("Failed to send Telegram signal")
-
-    def test_credentials(self):
-        """Test both Telegram and Oanda credentials"""
-        logger.info("Testing credentials...")
-        
-        # Test Telegram
-        test_msg = f"🔧 {self.timeframe} bot credentials test at {datetime.now(NY_TZ).strftime('%Y-%m-%d %H:%M:%S')}"
-        telegram_ok = send_telegram(test_msg, self.credentials['telegram_token'], self.credentials['telegram_chat_id'])
-        
-        # Test Oanda
-        oanda_ok = False
-        try:
-            test_data = fetch_candles("M5", count=1, api_key=self.credentials['oanda_api_key'])
-            oanda_ok = not test_data.empty
-            if oanda_ok:
-                logger.info(f"Oanda test successful - received {len(test_data)} candles")
+            if timestamp.tzinfo is None:
+                timestamp = self.ny_tz.localize(timestamp)
             else:
-                logger.error("Oanda test failed - no data received")
-        except Exception as e:
-            logger.error(f"Oanda test failed: {str(e)}")
-            
-        logger.info(f"Credentials test result: {'PASS' if telegram_ok and oanda_ok else 'FAIL'}")
-        return telegram_ok and oanda_ok
-
-    def test_bucket_matching(self):
-        """Test that our bucket generation matches expected format"""
-        logger.info("=== BUCKET MATCHING TEST ===")
-        test_cases = [
-            ("BUY", "uptrend", "(70,80]"),
-            ("SELL", "downtrend", "(30,40]"),
-            ("BUY", "sideways", "(60,70]"),
-            ("SELL", "uptrend", "(40,50]"),
-        ]
-        
-        for signal, trend, rsi_bin in test_cases:
-            test_key = f"{signal}_{trend}_{rsi_bin}"
-            exists = test_key in self.trade_buckets
-            status = "✅ EXISTS" if exists else "❌ MISSING"
-            logger.info(f"Testing: {test_key} -> {status}")
-
-    def robust_fetch_candles(self, max_retries=5, initial_delay=1):
-        """Enhanced fetch with exponential backoff"""
-        for attempt in range(max_retries):
-            try:
-                df = fetch_candles(self.timeframe, count=201, api_key=self.credentials['oanda_api_key'])
+                timestamp = timestamp.astimezone(self.ny_tz)
                 
-                if not df.empty and validate_candle_data(df):
-                    self.performance_stats['candle_fetches'] += 1
-                    return df
-                else:
-                    delay = initial_delay * (2 ** attempt)
-                    logger.warning(f"Empty data, retry {attempt+1}/{max_retries} in {delay}s")
-                    time.sleep(delay)
-                    
-            except Exception as e:
-                delay = initial_delay * (2 ** attempt)
-                logger.error(f"Fetch attempt {attempt+1} failed: {str(e)}, retrying in {delay}s")
-                time.sleep(delay)
+        return {
+            'monthly': self._get_monthly_quarter(timestamp),
+            'weekly': self._get_weekly_quarter(timestamp),
+            'daily': self._get_daily_quarter(timestamp),
+            '90min': self._get_90min_quarter(timestamp)
+        }
+    
+    def _get_monthly_quarter(self, timestamp):
+        day = timestamp.day
+        if 1 <= day <= 7: return 'q1'
+        elif 8 <= day <= 14: return 'q2'
+        elif 15 <= day <= 21: return 'q3'
+        elif 22 <= day <= 28: return 'q4'
+        else: return 'q_less'
+    
+    def _get_weekly_quarter(self, timestamp):
+        weekday = timestamp.weekday()
+        if weekday == 0: return 'q1'      # Monday
+        elif weekday == 1: return 'q2'    # Tuesday
+        elif weekday == 2: return 'q3'    # Wednesday
+        elif weekday == 3: return 'q4'    # Thursday
+        else: return 'q_less'             # Friday
+    
+    def _get_daily_quarter(self, timestamp):
+        hour = timestamp.hour
+        if 0 <= hour < 6: return 'q2'
+        elif 6 <= hour < 12: return 'q3'
+        elif 12 <= hour < 18: return 'q4'
+        else: return 'q1'
+    
+    def _get_90min_quarter(self, timestamp):
+        daily_quarter = self._get_daily_quarter(timestamp)
+        minute_of_day = timestamp.hour * 60 + timestamp.minute
         
-        logger.error(f"All {max_retries} fetch attempts failed")
-        return pd.DataFrame()
+        daily_quarter_start = {
+            'q1': 18 * 60,  # 18:00
+            'q2': 0,        # 00:00  
+            'q3': 6 * 60,   # 06:00
+            'q4': 12 * 60   # 12:00
+        }[daily_quarter]
+        
+        segment = (minute_of_day - daily_quarter_start) // 90
+        return f'q{segment + 1}' if segment < 4 else 'q_less'
 
-    def log_performance_stats(self):
-        """Regular performance logging"""
-        stats = self.performance_stats
-        if stats['candle_fetches'] > 0:
-            signal_rate = (stats['signals_generated'] / stats['candle_fetches']) * 100
-            action_rate = (stats['signals_acted_upon'] / max(1, stats['signals_generated'])) * 100
-            
-            logger.info(f"Performance: {stats['candle_fetches']} fetches, "
-                       f"{stats['signals_generated']} signals ({signal_rate:.1f}%), "
-                       f"{stats['signals_acted_upon']} acted ({action_rate:.1f}%), "
-                       f"{stats['errors']} errors")
-            
-            # Reset stats periodically
-            if stats['candle_fetches'] > 1000:
-                self.performance_stats = {k: 0 for k in stats.keys()}
-                self.performance_stats['last_signal_time'] = stats['last_signal_time']
+# ================================
+# PATTERN DETECTORS
+# ================================
 
-    def run(self):
-        """Main bot execution loop"""
-        thread_name = threading.current_thread().name
-        logger.info(f"Starting bot thread: {thread_name}")
+class EnhancedFVGDetector:
+    @staticmethod
+    def detect_all_fvgs(df):
+        """Detect ALL Fair Value Gaps in the entire DataFrame"""
+        fvgs = []
         
-        session_start = time.time()
-        start_msg = f"🚀 {self.timeframe} bot started at {datetime.now(NY_TZ).strftime('%Y-%m-%d %H:%M:%S')}"
+        if len(df) < 3:
+            return fvgs
+            
+        for i in range(len(df) - 2):
+            c1, c2, c3 = df.iloc[i], df.iloc[i+1], df.iloc[i+2]
+            
+            # Bullish FVG: c2 is up candle AND c1 high < c3 low
+            if (c2['close'] > c2['open'] and 
+                c1['high'] < c3['low']):
+                fvgs.append({
+                    'type': 'bullish',
+                    'gap_low': c1['high'],
+                    'gap_high': c3['low'],
+                    'timestamp': c2['time'],
+                    'candle_index': i+1
+                })
+            
+            # Bearish FVG: c2 is down candle AND c1 low > c3 high  
+            elif (c2['close'] < c2['open'] and 
+                  c1['low'] > c3['high']):
+                fvgs.append({
+                    'type': 'bearish', 
+                    'gap_high': c1['low'],
+                    'gap_low': c3['high'],
+                    'timestamp': c2['time'],
+                    'candle_index': i+1
+                })
         
-        # Test credentials before starting
-        creds_valid = self.test_credentials()
-        if not creds_valid:
-            logger.error("Credentials test failed. Exiting bot.")
+        return fvgs
+    
+    @staticmethod
+    def check_fvg_fill(current_candle, fvg):
+        if fvg['type'] == 'bullish':
+            return (current_candle['low'] <= fvg['gap_high'] and 
+                    current_candle['high'] >= fvg['gap_low'])
+        else:  # bearish
+            return (current_candle['low'] <= fvg['gap_high'] and 
+                    current_candle['high'] >= fvg['gap_low'])
+
+class SMTDetector:
+    def __init__(self):
+        self.smt_history = []
+    
+    def detect_smt(self, asset1_data, asset2_data, cycle_type, current_quarter, prev_quarter):
+        """Detect SMT between two consecutive quarters"""
+        try:
+            # Get quarter data (simplified - you'd implement proper quarter tracking)
+            q1_a1 = self._get_quarter_stats(asset1_data, prev_quarter)
+            q2_a1 = self._get_quarter_stats(asset1_data, current_quarter)
+            q1_a2 = self._get_quarter_stats(asset2_data, prev_quarter)
+            q2_a2 = self._get_quarter_stats(asset2_data, current_quarter)
+            
+            if not all([q1_a1, q2_a1, q1_a2, q2_a2]):
+                return None
+            
+            # Bearish SMT detection
+            bearish = self._check_bearish_smt(q1_a1, q2_a1, q1_a2, q2_a2)
+            bullish = self._check_bullish_smt(q1_a1, q2_a1, q1_a2, q2_a2)
+            
+            if bearish:
+                direction = 'bearish'
+                smt_type = 'regular'
+            elif bullish:
+                direction = 'bullish'
+                smt_type = 'regular'
+            else:
+                return None
+            
+            smt_data = {
+                'direction': direction,
+                'type': smt_type,
+                'cycle': cycle_type,
+                'quarters': f"{prev_quarter}→{current_quarter}",
+                'timestamp': datetime.now(NY_TZ)
+            }
+            
+            self.smt_history.append(smt_data)
+            return smt_data
+            
+        except Exception as e:
+            logger.error(f"Error in SMT detection: {str(e)}")
+            return None
+    
+    def _get_quarter_stats(self, df, quarter):
+        """Simplified quarter stats - implement proper quarter tracking"""
+        if df.empty:
+            return None
+        return {
+            'high': df['high'].max(),
+            'low': df['low'].min(),
+            'close': df['close'].iloc[-1]
+        }
+    
+    def _check_bearish_smt(self, q1_a1, q2_a1, q1_a2, q2_a2):
+        condition1 = (q2_a1['high'] > q1_a1['high'] and 
+                     q2_a2['high'] <= q1_a2['high'])
+        condition2 = (q2_a1['close'] > q1_a1['high'] and 
+                     q2_a2['close'] <= q1_a2['high'])
+        return condition1 or condition2
+    
+    def _check_bullish_smt(self, q1_a1, q2_a1, q1_a2, q2_a2):
+        condition1 = (q2_a1['low'] < q1_a1['low'] and 
+                     q2_a2['low'] >= q1_a2['low'])
+        condition2 = (q2_a1['close'] < q1_a1['low'] and 
+                     q2_a2['close'] >= q1_a2['low'])
+        return condition1 or condition2
+
+class PSPDetector:
+    @staticmethod
+    def detect_psp(asset1_candle, asset2_candle, timeframe):
+        if not asset1_candle or not asset2_candle:
+            return False
+        asset1_color = 'green' if asset1_candle['close'] > asset1_candle['open'] else 'red'
+        asset2_color = 'green' if asset2_candle['close'] > asset2_candle['open'] else 'red'
+        return asset1_color != asset2_color
+
+# ================================
+# SIGNAL BUILDER
+# ================================
+
+class AdvancedSignalBuilder:
+    def __init__(self):
+        self.accumulated_smts = []
+        self.psp_detected = False
+        self.signal_strength = 0
+        self.required_conditions = {
+            'smt_weekly': False,
+            'smt_daily': False, 
+            'smt_monthly': False,
+            'smt_90min': False,
+            'psp': False
+        }
+    
+    def add_smt(self, smt_data):
+        self.accumulated_smts.append(smt_data)
+        
+        # Update required conditions
+        for smt in self.accumulated_smts:
+            self.required_conditions[f"smt_{smt['cycle']}"] = True
+        
+        self._calculate_strength()
+    
+    def add_psp(self, psp_data):
+        self.psp_detected = True
+        self.required_conditions['psp'] = True
+        self._calculate_strength()
+    
+    def _calculate_strength(self):
+        strength = 0
+        cycle_weights = {'monthly': 3, 'weekly': 2, 'daily': 1, '90min': 1}
+        for smt in self.accumulated_smts:
+            strength += cycle_weights.get(smt['cycle'], 1)
+        if self.psp_detected:
+            strength += 2
+        self.signal_strength = strength
+    
+    def is_signal_ready(self):
+        unique_cycles = len(set(smt['cycle'] for smt in self.accumulated_smts))
+        return (unique_cycles >= 2 and 
+                self.psp_detected and 
+                self.signal_strength >= 5)
+    
+    def get_signal_details(self):
+        return {
+            'direction': self.accumulated_smts[0]['direction'] if self.accumulated_smts else None,
+            'strength': self.signal_strength,
+            'smts': self.accumulated_smts.copy(),
+            'psp': self.psp_detected,
+            'timestamp': datetime.now(NY_TZ)
+        }
+    
+    def reset(self):
+        self.accumulated_smts = []
+        self.psp_detected = False
+        self.signal_strength = 0
+        for key in self.required_conditions:
+            self.required_conditions[key] = False
+
+# ================================
+# TRADING SYSTEM
+# ================================
+
+class PairTradingSystem:
+    def __init__(self, pair_group, pair_config):
+        self.pair_group = pair_group
+        self.pair_config = pair_config
+        self.pair1 = pair_config['pair1']
+        self.pair2 = pair_config['pair2']
+        
+        # Initialize components
+        self.cycle_manager = UTC4CycleManager()
+        self.fvg_detector = EnhancedFVGDetector()
+        self.smt_detector = SMTDetector()
+        self.psp_detector = PSPDetector()
+        self.signal_builder = AdvancedSignalBuilder()
+        
+        # Data storage
+        self.market_data = {self.pair1: {}, self.pair2: {}}
+        
+        logger.info(f"Initialized trading system for {self.pair1}/{self.pair2}")
+    
+    async def run_analysis(self, api_key):
+        """Run single analysis cycle for this pair group"""
+        try:
+            # Fetch market data
+            await self._fetch_market_data(api_key)
+            
+            # Update current quarters
+            current_quarters = self.cycle_manager.detect_current_quarters()
+            
+            # Process each cycle
+            for cycle_type, quarter_name in current_quarters.items():
+                await self._analyze_cycle(cycle_type, quarter_name)
+            
+            # Check if signal is complete
+            if self.signal_builder.is_signal_ready():
+                final_signal = self.signal_builder.get_signal_details()
+                final_signal['pair_group'] = self.pair_group
+                logger.info(f"Signal generated for {self.pair_group}: {final_signal}")
+                
+                # Reset for next signal
+                self.signal_builder.reset()
+                return final_signal
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error in analysis for {self.pair_group}: {str(e)}")
+            return None
+    
+    async def _fetch_market_data(self, api_key):
+        """Fetch market data for both pairs"""
+        timeframes = self.pair_config['timeframe_mapping']
+        
+        for pair in [self.pair1, self.pair2]:
+            for cycle, tf in timeframes.items():
+                try:
+                    # Run in thread to avoid blocking
+                    df = await asyncio.get_event_loop().run_in_executor(
+                        None, fetch_candles, pair, tf, 300, api_key
+                    )
+                    if not df.empty:
+                        self.market_data[pair][cycle] = df
+                    else:
+                        logger.warning(f"No data for {pair} {tf}")
+                except Exception as e:
+                    logger.error(f"Error fetching {pair} {tf}: {str(e)}")
+    
+    async def _analyze_cycle(self, cycle_type, quarter_name):
+        """Analyze specific cycle for patterns"""
+        timeframe = self.pair_config['timeframe_mapping'][cycle_type]
+        
+        # Get data for current cycle
+        pair1_data = self.market_data[self.pair1].get(cycle_type)
+        pair2_data = self.market_data[self.pair2].get(cycle_type)
+        
+        if pair1_data is None or pair2_data is None or pair1_data.empty or pair2_data.empty:
             return
+        
+        try:
+            # Simplified SMT detection (you'd implement proper quarter tracking)
+            if len(pair1_data) > 10 and len(pair2_data) > 10:
+                # Use last 2 "quarters" as demonstration
+                smt_signal = self.smt_detector.detect_smt(
+                    pair1_data, pair2_data, cycle_type, 'q2', 'q1'
+                )
+                if smt_signal:
+                    self.signal_builder.add_smt(smt_signal)
             
-        # Test bucket matching
-        self.test_bucket_matching()
-            
-        send_telegram(start_msg, self.credentials['telegram_token'], self.credentials['telegram_chat_id'])
+            # PSP detection on current candle
+            if not pair1_data.empty and not pair2_data.empty:
+                current_candle1 = pair1_data.iloc[-1] if not pair1_data.empty else None
+                current_candle2 = pair2_data.iloc[-1] if not pair2_data.empty else None
+                
+                if current_candle1 is not None and current_candle2 is not None:
+                    psp_detected = self.psp_detector.detect_psp(
+                        current_candle1, current_candle2, timeframe
+                    )
+                    if psp_detected:
+                        self.signal_builder.add_psp({'timeframe': timeframe})
+                        
+        except Exception as e:
+            logger.error(f"Error analyzing {cycle_type} for {self.pair_group}: {str(e)}")
+
+# ================================
+# MAIN MANAGER
+# ================================
+
+class MultiPairTradingManager:
+    def __init__(self, api_key, telegram_token, chat_id):
+        self.api_key = api_key
+        self.telegram_token = telegram_token
+        self.chat_id = chat_id
+        self.trading_systems = {}
+        
+        # Initialize trading systems for all pairs
+        for pair_group, pair_config in TRADING_PAIRS.items():
+            self.trading_systems[pair_group] = PairTradingSystem(pair_group, pair_config)
+        
+        logger.info(f"Initialized multi-pair manager with {len(self.trading_systems)} pair groups")
+    
+    async def run_all_systems(self):
+        """Run all trading systems in parallel"""
+        logger.info("Starting multi-pair trading analysis...")
         
         while True:
             try:
-                # Check session time remaining
-                elapsed = time.time() - session_start
-                if elapsed > self.max_duration:
-                    logger.warning("Session timeout reached, exiting")
-                    end_msg = f"🔴 {self.timeframe} bot session ended after 12 hours"
-                    send_telegram(end_msg, self.credentials['telegram_token'], self.credentials['telegram_chat_id'])
-                    return
+                tasks = []
                 
-                # Calculate precise wakeup time
-                now = datetime.now(NY_TZ)
-                next_candle = self.calculate_next_candle_time()
-                sleep_seconds = max(0, (next_candle - now).total_seconds() - 0.1)
+                # Create tasks for all pair groups
+                for pair_group, system in self.trading_systems.items():
+                    task = asyncio.create_task(
+                        system.run_analysis(self.api_key),
+                        name=f"analysis_{pair_group}"
+                    )
+                    tasks.append(task)
                 
-                if sleep_seconds > 0:
-                    logger.debug(f"Sleeping for {sleep_seconds:.2f} seconds until next candle")
-                    time.sleep(sleep_seconds)
+                # Wait for all analyses to complete
+                results = await asyncio.gather(*tasks, return_exceptions=True)
                 
-                # Busy-wait for precise candle open
-                while datetime.now(NY_TZ) < next_candle:
-                    time.sleep(0.001)
+                # Process results
+                signals = []
+                for result in results:
+                    if isinstance(result, Exception):
+                        logger.error(f"Analysis task failed: {str(result)}")
+                    elif result is not None:
+                        signals.append(result)
                 
-                logger.debug("Candle open detected - waiting 5s for candle availability")
-                time.sleep(5)
+                # Send signals to Telegram
+                if signals:
+                    await self._process_signals(signals)
                 
-                # Fetch candles for analysis
-                logger.debug("Fetching candles for analysis")
-                new_data = self.robust_fetch_candles()
+                # Calculate adaptive sleep interval
+                sleep_time = self._calculate_sleep_interval()
+                logger.debug(f"Sleeping for {sleep_time} seconds")
+                await asyncio.sleep(sleep_time)
                 
-                if new_data.empty:
-                    logger.error("Failed to fetch candle data after retries")
-                    self.performance_stats['errors'] += 1
-                    continue
-                    
-                self.data = new_data
-                logger.debug(f"Total records: {len(self.data)}")
+            except Exception as e:
+                logger.error(f"Error in main loop: {str(e)}")
+                await asyncio.sleep(60)
+    
+    async def _process_signals(self, signals):
+        """Process and send signals to Telegram"""
+        for signal in signals:
+            try:
+                message = self._format_signal_message(signal)
+                success = send_telegram(message, self.telegram_token, self.chat_id)
                 
-                # Detect CRT pattern
-                signal_type, signal_data = self.feature_engineer.calculate_crt_signal(self.data)
-                
-                if not signal_type:
-                    logger.debug("No CRT pattern detected")
-                    continue
-                    
-                self.performance_stats['signals_generated'] += 1
-                logger.info(f"CRT pattern detected: {signal_type} at {signal_data['time']}")
-                
-                # ✅ FIXED: Use debug bucket generation temporarily to see exactly what's happening
-                bucket_key = self.feature_engineer.debug_bucket_generation(self.data, signal_type)
-                
-                if bucket_key and bucket_key in self.trade_buckets:
-                    logger.info(f"✅ BUCKET MATCH FOUND: {bucket_key} - Sending trade signal")
-                    self.send_trade_signal(signal_type, signal_data, bucket_key)
+                if success:
+                    logger.info(f"Signal sent to Telegram for {signal['pair_group']}")
                 else:
-                    logger.warning(f"❌ Bucket {bucket_key} not in trade list - ignoring signal")
-                    # Log available buckets for debugging
-                    matching_buckets = [b for b in self.trade_buckets if signal_type in b]
-                    logger.info(f"Available {signal_type} buckets: {matching_buckets}")
-                
-                # Log performance every 10 candles
-                if self.performance_stats['candle_fetches'] % 10 == 0:
-                    self.log_performance_stats()
+                    logger.error(f"Failed to send signal for {signal['pair_group']}")
                     
             except Exception as e:
-                error_msg = f"❌ {self.timeframe} bot error: {str(e)}"
-                logger.error(error_msg, exc_info=True)
-                self.performance_stats['errors'] += 1
-                send_telegram(error_msg[:1000], self.credentials['telegram_token'], self.credentials['telegram_chat_id'])
-                time.sleep(60)
+                logger.error(f"Error processing signal: {str(e)}")
+    
+    def _format_signal_message(self, signal):
+        """Format signal for Telegram"""
+        pair_group = signal.get('pair_group', 'Unknown')
+        direction = signal.get('direction', 'UNKNOWN').upper()
+        strength = signal.get('strength', 0)
+        
+        message = f"🚨 *TRADING SIGNAL* 🚨\n\n"
+        message += f"*Pair Group:* {pair_group.replace('_', ' ').title()}\n"
+        message += f"*Direction:* {direction}\n"
+        message += f"*Strength:* {strength}/10\n"
+        message += f"*Time:* {datetime.now(NY_TZ).strftime('%Y-%m-%d %H:%M:%S %Z')}\n\n"
+        
+        # Add SMT details
+        if 'smts' in signal:
+            message += "*SMT Patterns:*\n"
+            for smt in signal['smts']:
+                message += f"• {smt['cycle']} {smt['type']} ({smt['quarters']})\n"
+        
+        # Add PSP confirmation
+        if 'psp' in signal:
+            message += f"\n*PSP Confirmation:* {'✅' if signal['psp'] else '❌'}\n"
+        
+        message += f"\n#TradingSignal #{pair_group}"
+        
+        return message
+    
+    def _calculate_sleep_interval(self):
+        """Calculate adaptive sleep interval based on signal activity"""
+        base_interval = BASE_INTERVAL
+        min_interval = MIN_INTERVAL
+        
+        # Check if any system has active signal building
+        active_builders = 0
+        for system in self.trading_systems.values():
+            if system.signal_builder.signal_strength > 0:
+                active_builders += 1
+        
+        if active_builders > 0:
+            return max(min_interval, base_interval // (active_builders + 1))
+        
+        return base_interval
 
-# ========================
+# ================================
 # MAIN EXECUTION
-# ========================
-if __name__ == "__main__":
-    print("===== SIMPLIFIED BUCKET-BASED TRADING BOT STARTING =====")
-    print(f"Start time: {datetime.now(NY_TZ)}")
+# ================================
+
+async def main():
+    """Main entry point"""
+    logger.info("Starting Multi-Pair SMT Trading System")
     
-    # Configure logging
-    debug_handler = logging.StreamHandler()
-    debug_handler.setLevel(logging.DEBUG)
-    debug_handler.setFormatter(logging.Formatter(log_format))
-    logging.getLogger().addHandler(debug_handler)
+    # Get credentials from environment
+    api_key = os.getenv('OANDA_API_KEY')
+    telegram_token = os.getenv('TELEGRAM_BOT_TOKEN')
+    telegram_chat_id = os.getenv('TELEGRAM_CHAT_ID')
     
-    logger.info("Starting simplified bucket-based trading bot")
-    
-    # Load credentials from environment variables
-    credentials = {
-        'telegram_token': os.getenv("TELEGRAM_BOT_TOKEN"),
-        'telegram_chat_id': os.getenv("TELEGRAM_CHAT_ID"),
-        'oanda_account_id': os.getenv("OANDA_ACCOUNT_ID"),
-        'oanda_api_key': os.getenv("OANDA_API_KEY")
-    }
-    
-    # Log credentials status
-    logger.info("Checking credentials...")
-    credentials_status = {k: "SET" if v else "MISSING" for k, v in credentials.items()}
-    for k, status in credentials_status.items():
-        logger.info(f"{k}: {status}")
-    
-    if not all(credentials.values()):
-        logger.error("Missing one or more credentials in environment variables")
-        if credentials.get('telegram_token') and credentials.get('telegram_chat_id'):
-            send_telegram("❌ Bot failed to start: Missing credentials", 
-                         credentials['telegram_token'], credentials['telegram_chat_id'])
-        sys.exit(1)
-    
-    logger.info("All credentials present")
+    if not all([api_key, telegram_token, telegram_chat_id]):
+        logger.error("Missing required environment variables:")
+        logger.error("OANDA_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID")
+        return
     
     try:
-        # Start bots with their respective trade buckets
-        logger.info("Creating M5 bot with 12 trade buckets")
-        bot_5m = SimpleTradingBot("M5", credentials, M5_TRADE_BUCKETS)
+        # Initialize manager
+        manager = MultiPairTradingManager(api_key, telegram_token, telegram_chat_id)
         
-        logger.info("Creating M15 bot with 7 trade buckets")
-        bot_15m = SimpleTradingBot("M15", credentials, M15_TRADE_BUCKETS)
+        # Run all systems
+        await manager.run_all_systems()
         
-        # Run in separate threads
-        logger.info("Starting bot threads")
-        t1 = threading.Thread(target=bot_5m.run, name="M5_Bot")
-        t2 = threading.Thread(target=bot_15m.run, name="M15_Bot")
-        
-        t1.daemon = True
-        t2.daemon = True
-        
-        t1.start()
-        logger.info("M5 bot thread started")
-        t2.start()
-        logger.info("M15 bot thread started")
-        
-        # Keep main thread alive with status updates
-        logger.info("Main thread entering monitoring loop")
-        last_status_time = time.time()
-        while True:
-            current_time = time.time()
-            if current_time - last_status_time > 300:  # Every 5 minutes
-                logger.info(f"Bot status: M5 {'alive' if t1.is_alive() else 'dead'}, "
-                           f"M15 {'alive' if t2.is_alive() else 'dead'}")
-                last_status_time = current_time
-                
-                # Log performance stats
-                bot_5m.log_performance_stats()
-                bot_15m.log_performance_stats()
-                
-            time.sleep(30)
-            
+    except KeyboardInterrupt:
+        logger.info("System stopped by user")
     except Exception as e:
-        logger.error(f"Main execution failed: {str(e)}", exc_info=True)
-        if credentials.get('telegram_token') and credentials.get('telegram_chat_id'):
-            send_telegram(f"❌ Bot crashed: {str(e)[:500]}", 
-                         credentials['telegram_token'], credentials['telegram_chat_id'])
+        logger.error(f"Fatal error: {str(e)}")
         sys.exit(1)
+
+if __name__ == "__main__":
+    # Run the system
+    asyncio.run(main())
