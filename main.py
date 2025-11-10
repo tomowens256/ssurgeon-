@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-MULTI-PAIR SMT TRADING SYSTEM - DEBUGGED VERSION
+MULTI-PAIR SMT TRADING SYSTEM - HIERARCHICAL VERSION
 """
 
 import asyncio
@@ -23,7 +23,7 @@ from oandapyV20.endpoints import instruments
 # CONFIGURATION
 # ================================
 
-# Trading pairs configuration - USING VALID OANDA INSTRUMENTS
+# Trading pairs configuration
 TRADING_PAIRS = {
     'precious_metals': {
         'pair1': 'XAU_USD',
@@ -36,8 +36,8 @@ TRADING_PAIRS = {
         }
     },
     'us_indices': {
-        'pair1': 'US30_USD',  # Dow Jones
-        'pair2': 'US500_USD', # S&P 500 (FIXED from SPX500_USD)
+        'pair1': 'US30_USD',
+        'pair2': 'US500_USD',
         'timeframe_mapping': {
             'monthly': 'H4',
             'weekly': 'H1',
@@ -46,8 +46,8 @@ TRADING_PAIRS = {
         }
     },
     'european_indices': {
-        'pair1': 'DE30_EUR',  # DAX (FIXED from GER40_EUR)
-        'pair2': 'EU50_EUR',  # Euro Stoxx 50
+        'pair1': 'DE30_EUR',
+        'pair2': 'EU50_EUR',
         'timeframe_mapping': {
             'monthly': 'H4',
             'weekly': 'H1',
@@ -78,7 +78,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ================================
-# UTILITY FUNCTIONS - FIXED
+# UTILITY FUNCTIONS
 # ================================
 
 def parse_oanda_time(time_str):
@@ -132,7 +132,7 @@ def send_telegram(message, token=None, chat_id=None):
     return False
 
 def fetch_candles(instrument, timeframe, count=300, api_key=None):
-    """Fetch candles from OANDA API - FIXED INSTRUMENT NAMES"""
+    """Fetch candles from OANDA API"""
     logger.debug(f"Fetching {count} candles for {instrument} {timeframe}")
     
     if not api_key:
@@ -280,89 +280,64 @@ class UTC4CycleManager:
         return f'q{segment + 1}' if segment < 4 else 'q_less'
 
 # ================================
-# PATTERN DETECTORS - FIXED
+# PATTERN DETECTORS - IMPROVED
 # ================================
 
-class EnhancedFVGDetector:
-    @staticmethod
-    def detect_all_fvgs(df):
-        """Detect ALL Fair Value Gaps in the entire DataFrame - FIXED"""
-        fvgs = []
-        
-        if len(df) < 3:
-            return fvgs
-            
-        for i in range(len(df) - 2):
-            c1, c2, c3 = df.iloc[i], df.iloc[i+1], df.iloc[i+2]
-            
-            # Extract scalar values to avoid Series comparison
-            c1_high = float(c1['high'])
-            c1_low = float(c1['low'])
-            c2_close = float(c2['close'])
-            c2_open = float(c2['open'])
-            c3_high = float(c3['high'])
-            c3_low = float(c3['low'])
-            
-            # Bullish FVG: c2 is up candle AND c1 high < c3 low
-            if (c2_close > c2_open and c1_high < c3_low):
-                fvgs.append({
-                    'type': 'bullish',
-                    'gap_low': c1_high,
-                    'gap_high': c3_low,
-                    'timestamp': c2['time'],
-                    'candle_index': i+1
-                })
-            
-            # Bearish FVG: c2 is down candle AND c1 low > c3 high  
-            elif (c2_close < c2_open and c1_low > c3_high):
-                fvgs.append({
-                    'type': 'bearish', 
-                    'gap_high': c1_low,
-                    'gap_low': c3_high,
-                    'timestamp': c2['time'],
-                    'candle_index': i+1
-                })
-        
-        return fvgs
+class QuarterData:
+    """Track quarter data properly"""
+    def __init__(self, cycle_type, quarter_name, start_time, end_time):
+        self.cycle_type = cycle_type
+        self.quarter_name = quarter_name
+        self.start_time = start_time
+        self.end_time = end_time
+        self.assets_data = {}
+        self.quarter_ohlc = {}
+    
+    def add_candle(self, asset, candle):
+        if asset not in self.assets_data:
+            self.assets_data[asset] = []
+        self.assets_data[asset].append(candle)
+        self._update_quarter_ohlc(asset)
+    
+    def _update_quarter_ohlc(self, asset):
+        candles = self.assets_data[asset]
+        if not candles:
+            return
+        df = pd.DataFrame(candles)
+        self.quarter_ohlc[asset] = {
+            'open': float(df['open'].iloc[0]),
+            'high': float(df['high'].max()),
+            'low': float(df['low'].min()),
+            'close': float(df['close'].iloc[-1]),
+            'candle_count': len(candles)
+        }
+    
+    def get_quarter_ohlc(self, asset):
+        return self.quarter_ohlc.get(asset)
 
 class SMTDetector:
     def __init__(self):
         self.smt_history = []
     
-    def detect_smt(self, asset1_data, asset2_data, cycle_type):
-        """Simplified SMT detection for debugging - FIXED SERIES COMPARISON"""
+    def detect_smt_between_quarters(self, asset1_q1, asset1_q2, asset2_q1, asset2_q2, cycle_type, quarters):
+        """Detect SMT between two consecutive quarters"""
         try:
-            if asset1_data.empty or asset2_data.empty:
+            if not all([asset1_q1, asset1_q2, asset2_q1, asset2_q2]):
                 return None
-            
-            # Use last few candles for demonstration
-            if len(asset1_data) < 10 or len(asset2_data) < 10:
-                return None
-            
-            # Get recent highs and lows as SCALAR values
-            asset1_recent_high = float(asset1_data['high'].tail(5).max())
-            asset1_prev_high = float(asset1_data['high'].head(5).max())
-            asset2_recent_high = float(asset2_data['high'].tail(5).max())
-            asset2_prev_high = float(asset2_data['high'].head(5).max())
-            
-            asset1_recent_low = float(asset1_data['low'].tail(5).min())
-            asset1_prev_low = float(asset1_data['low'].head(5).min())
-            asset2_recent_low = float(asset2_data['low'].tail(5).min())
-            asset2_prev_low = float(asset2_data['low'].head(5).min())
             
             # Bearish SMT: Asset1 makes HH, Asset2 doesn't
-            bearish_condition1 = (asset1_recent_high > asset1_prev_high and 
-                                 asset2_recent_high <= asset2_prev_high)
+            bearish_condition1 = (asset1_q2['high'] > asset1_q1['high'] and 
+                                 asset2_q2['high'] <= asset2_q1['high'])
             
-            bearish_condition2 = (asset1_recent_low > asset1_prev_low and 
-                                 asset2_recent_low <= asset2_prev_low)
+            bearish_condition2 = (asset1_q2['close'] > asset1_q1['high'] and 
+                                 asset2_q2['close'] <= asset2_q1['high'])
             
             # Bullish SMT: Asset1 makes LL, Asset2 doesn't
-            bullish_condition1 = (asset1_recent_low < asset1_prev_low and 
-                                 asset2_recent_low >= asset2_prev_low)
+            bullish_condition1 = (asset1_q2['low'] < asset1_q1['low'] and 
+                                 asset2_q2['low'] >= asset2_q1['low'])
             
-            bullish_condition2 = (asset1_recent_high < asset1_prev_high and 
-                                 asset2_recent_high >= asset2_prev_high)
+            bullish_condition2 = (asset1_q2['close'] < asset1_q1['low'] and 
+                                 asset2_q2['close'] >= asset2_q1['low'])
             
             if bearish_condition1 or bearish_condition2:
                 direction = 'bearish'
@@ -375,50 +350,53 @@ class SMTDetector:
                 'direction': direction,
                 'type': 'regular',
                 'cycle': cycle_type,
-                'quarters': "q1→q2",  # Simplified for now
+                'quarters': quarters,
                 'timestamp': datetime.now(NY_TZ),
-                'strength': 1
+                'asset1_data': {'q1': asset1_q1, 'q2': asset1_q2},
+                'asset2_data': {'q1': asset2_q1, 'q2': asset2_q2}
             }
             
             self.smt_history.append(smt_data)
-            logger.info(f"SMT detected: {direction} {cycle_type}")
+            logger.info(f"SMT detected: {direction} {cycle_type} {quarters}")
             return smt_data
             
         except Exception as e:
-            logger.error(f"Error in SMT detection for {cycle_type}: {str(e)}")
+            logger.error(f"Error in SMT detection: {str(e)}")
             return None
 
 class PSPDetector:
     @staticmethod
-    def detect_psp(asset1_data, asset2_data, timeframe):
-        """PSP detection - FIXED SERIES COMPARISON"""
+    def detect_psp_in_history(asset1_data, asset2_data, timeframe, lookback=5):
+        """Detect PSP in recent history (lookback candles)"""
         try:
             if asset1_data.empty or asset2_data.empty:
                 return None
             
-            # Get the most recent complete candle
-            recent_asset1 = asset1_data[asset1_data['complete'] == True].tail(1)
-            recent_asset2 = asset2_data[asset2_data['complete'] == True].tail(1)
+            # Get recent complete candles
+            recent_asset1 = asset1_data[asset1_data['complete'] == True].tail(lookback)
+            recent_asset2 = asset2_data[asset2_data['complete'] == True].tail(lookback)
             
             if recent_asset1.empty or recent_asset2.empty:
                 return None
             
-            # Extract scalar values
-            asset1_candle = recent_asset1.iloc[0]
-            asset2_candle = recent_asset2.iloc[0]
-            
-            asset1_color = 'green' if float(asset1_candle['close']) > float(asset1_candle['open']) else 'red'
-            asset2_color = 'green' if float(asset2_candle['close']) > float(asset2_candle['open']) else 'red'
-            
-            if asset1_color != asset2_color:
-                psp_data = {
-                    'timeframe': timeframe,
-                    'asset1_color': asset1_color,
-                    'asset2_color': asset2_color,
-                    'timestamp': datetime.now(NY_TZ)
-                }
-                logger.info(f"PSP detected on {timeframe}: {asset1_color}/{asset2_color}")
-                return psp_data
+            # Check for PSP in any of the recent candles
+            for i in range(min(len(recent_asset1), len(recent_asset2))):
+                asset1_candle = recent_asset1.iloc[i]
+                asset2_candle = recent_asset2.iloc[i]
+                
+                asset1_color = 'green' if float(asset1_candle['close']) > float(asset1_candle['open']) else 'red'
+                asset2_color = 'green' if float(asset2_candle['close']) > float(asset2_candle['open']) else 'red'
+                
+                if asset1_color != asset2_color:
+                    psp_data = {
+                        'timeframe': timeframe,
+                        'asset1_color': asset1_color,
+                        'asset2_color': asset2_color,
+                        'timestamp': asset1_candle['time'],
+                        'candle_index': i
+                    }
+                    logger.info(f"PSP detected on {timeframe}: {asset1_color}/{asset2_color}")
+                    return psp_data
             
             return None
         except Exception as e:
@@ -426,77 +404,99 @@ class PSPDetector:
             return None
 
 # ================================
-# SIGNAL BUILDER - FIXED
+# SIGNAL BUILDER - HIERARCHICAL
 # ================================
 
-class AdvancedSignalBuilder:
-    def __init__(self):
-        self.accumulated_smts = []
-        self.psp_detected = False
-        self.psp_data = None
+class HierarchicalSignalBuilder:
+    def __init__(self, pair_group):
+        self.pair_group = pair_group
+        self.primary_smt = None  # HTF SMT
+        self.confirmation_smt = None  # LTF SMT  
+        self.psp_signal = None
         self.signal_strength = 0
+        self.current_state = "IDLE"  # IDLE -> HTF_SCAN -> LTF_SCAN -> PSP_WAIT -> READY
         
-    def add_smt(self, smt_data):
-        if smt_data and smt_data not in self.accumulated_smts:
-            self.accumulated_smts.append(smt_data)
-            self._calculate_strength()
-            logger.info(f"Added SMT: {smt_data['direction']} {smt_data['cycle']}")
+    def set_primary_smt(self, smt_data):
+        """Set the primary (HTF) SMT"""
+        if smt_data and not self.primary_smt:
+            self.primary_smt = smt_data
+            self.current_state = "HTF_FOUND"
+            self.signal_strength += 3
+            logger.info(f"{self.pair_group}: Primary SMT set - {smt_data['direction']} {smt_data['cycle']} {smt_data['quarters']}")
+            return True
+        return False
     
-    def add_psp(self, psp_data):
-        if psp_data:
-            self.psp_detected = True
-            self.psp_data = psp_data
-            self._calculate_strength()
-            logger.info("Added PSP confirmation")
-    
-    def _calculate_strength(self):
-        strength = 0
-        cycle_weights = {'monthly': 3, 'weekly': 2, 'daily': 1, '90min': 1}
-        
-        for smt in self.accumulated_smts:
-            strength += cycle_weights.get(smt['cycle'], 1)
-            strength += smt.get('strength', 0)
-        
-        if self.psp_detected:
-            strength += 2
+    def set_confirmation_smt(self, smt_data):
+        """Set the confirmation (LTF) SMT"""
+        if (smt_data and self.primary_smt and 
+            smt_data['direction'] == self.primary_smt['direction'] and
+            smt_data['cycle'] != self.primary_smt['cycle']):
             
-        self.signal_strength = min(strength, 10)  # Cap at 10
+            self.confirmation_smt = smt_data
+            self.current_state = "LTF_FOUND"
+            self.signal_strength += 2
+            logger.info(f"{self.pair_group}: Confirmation SMT set - {smt_data['direction']} {smt_data['cycle']} {smt_data['quarters']}")
+            return True
+        return False
+    
+    def set_psp(self, psp_data):
+        """Set PSP confirmation"""
+        if psp_data and self.confirmation_smt:
+            self.psp_signal = psp_data
+            self.current_state = "PSP_FOUND"
+            self.signal_strength += 1
+            logger.info(f"{self.pair_group}: PSP confirmed - {psp_data['timeframe']}")
+            return True
+        return False
     
     def is_signal_ready(self):
-        if len(self.accumulated_smts) < 2:
-            return False
-            
-        unique_cycles = len(set(smt['cycle'] for smt in self.accumulated_smts))
-        same_direction = len(set(smt['direction'] for smt in self.accumulated_smts)) == 1
-        
-        return (unique_cycles >= 2 and 
-                same_direction and
-                self.psp_detected and 
-                self.signal_strength >= 3)  # Lowered threshold for testing
+        """Check if we have complete signal"""
+        return (self.primary_smt is not None and 
+                self.confirmation_smt is not None and 
+                self.psp_signal is not None and
+                self.signal_strength >= 5)
     
     def get_signal_details(self):
-        direction = self.accumulated_smts[0]['direction'] if self.accumulated_smts else 'unknown'
-        
+        """Get complete signal details"""
+        if not self.is_signal_ready():
+            return None
+            
         return {
-            'direction': direction,
+            'pair_group': self.pair_group,
+            'direction': self.primary_smt['direction'],
             'strength': self.signal_strength,
-            'smts': self.accumulated_smts.copy(),
-            'psp': self.psp_data,
+            'primary_smt': self.primary_smt,
+            'confirmation_smt': self.confirmation_smt,
+            'psp': self.psp_signal,
             'timestamp': datetime.now(NY_TZ)
         }
     
+    def get_next_required_action(self):
+        """Get what we need to look for next"""
+        if self.current_state == "IDLE":
+            return "SCAN_HTF_SMT"
+        elif self.current_state == "HTF_FOUND":
+            return "SCAN_LTF_SMT"
+        elif self.current_state == "LTF_FOUND":
+            return "SCAN_PSP"
+        elif self.current_state == "PSP_FOUND":
+            return "SIGNAL_READY"
+        return "IDLE"
+    
     def reset(self):
-        self.accumulated_smts = []
-        self.psp_detected = False
-        self.psp_data = None
+        """Reset for new signal"""
+        self.primary_smt = None
+        self.confirmation_smt = None
+        self.psp_signal = None
         self.signal_strength = 0
-        logger.info("Signal builder reset")
+        self.current_state = "IDLE"
+        logger.info(f"{self.pair_group}: Signal builder reset")
 
 # ================================
-# TRADING SYSTEM - FIXED
+# TRADING SYSTEM - HIERARCHICAL
 # ================================
 
-class PairTradingSystem:
+class HierarchicalTradingSystem:
     def __init__(self, pair_group, pair_config):
         self.pair_group = pair_group
         self.pair_config = pair_config
@@ -505,38 +505,40 @@ class PairTradingSystem:
         
         # Initialize components
         self.cycle_manager = UTC4CycleManager()
-        self.fvg_detector = EnhancedFVGDetector()
         self.smt_detector = SMTDetector()
         self.psp_detector = PSPDetector()
-        self.signal_builder = AdvancedSignalBuilder()
+        self.signal_builder = HierarchicalSignalBuilder(pair_group)
         
         # Data storage
         self.market_data = {self.pair1: {}, self.pair2: {}}
+        self.quarter_history = {}
         
-        logger.info(f"Initialized trading system for {self.pair1}/{self.pair2}")
+        # Define hierarchy (higher to lower)
+        self.cycle_hierarchy = ['monthly', 'weekly', 'daily', '90min']
+        
+        logger.info(f"Initialized hierarchical trading system for {self.pair1}/{self.pair2}")
     
     async def run_analysis(self, api_key):
-        """Run single analysis cycle for this pair group - FIXED ERROR HANDLING"""
+        """Run hierarchical analysis"""
         try:
             # Fetch market data
             await self._fetch_market_data(api_key)
             
-            # Update current quarters
-            current_quarters = self.cycle_manager.detect_current_quarters()
+            # Get current state and determine what to do next
+            next_action = self.signal_builder.get_next_required_action()
             
-            # Process each cycle
-            for cycle_type in current_quarters.keys():
-                await self._analyze_cycle(cycle_type)
-            
-            # Check if signal is complete
-            if self.signal_builder.is_signal_ready():
-                final_signal = self.signal_builder.get_signal_details()
-                final_signal['pair_group'] = self.pair_group
-                logger.info(f"🚨 SIGNAL GENERATED for {self.pair_group}: {final_signal['direction']} strength {final_signal['strength']}")
-                
-                # Reset for next signal
-                self.signal_builder.reset()
-                return final_signal
+            if next_action == "SCAN_HTF_SMT":
+                await self._scan_htf_smt()
+            elif next_action == "SCAN_LTF_SMT":
+                await self._scan_ltf_smt()
+            elif next_action == "SCAN_PSP":
+                await self._scan_psp()
+            elif next_action == "SIGNAL_READY":
+                signal = self.signal_builder.get_signal_details()
+                if signal:
+                    logger.info(f"🚨 SIGNAL GENERATED for {self.pair_group}")
+                    self.signal_builder.reset()
+                    return signal
             
             return None
             
@@ -545,15 +547,14 @@ class PairTradingSystem:
             return None
     
     async def _fetch_market_data(self, api_key):
-        """Fetch market data for both pairs - FIXED"""
+        """Fetch market data for both pairs"""
         timeframes = self.pair_config['timeframe_mapping']
         
         for pair in [self.pair1, self.pair2]:
             for cycle, tf in timeframes.items():
                 try:
-                    # Use synchronous fetch in thread
                     df = await asyncio.get_event_loop().run_in_executor(
-                        None, fetch_candles, pair, tf, 100, api_key  # Reduced count for testing
+                        None, fetch_candles, pair, tf, 200, api_key
                     )
                     if not df.empty:
                         self.market_data[pair][cycle] = df
@@ -563,34 +564,131 @@ class PairTradingSystem:
                 except Exception as e:
                     logger.error(f"Error fetching {pair} {tf}: {str(e)}")
     
-    async def _analyze_cycle(self, cycle_type):
-        """Analyze specific cycle for patterns - FIXED ERROR HANDLING"""
-        timeframe = self.pair_config['timeframe_mapping'][cycle_type]
+    async def _scan_htf_smt(self):
+        """Scan for primary SMT in higher timeframes"""
+        logger.info(f"{self.pair_group}: Scanning for HTF SMT...")
         
-        # Get data for current cycle
+        # Try from highest to lowest timeframe for primary SMT
+        for i, cycle_type in enumerate(self.cycle_hierarchy[:-1]):
+            smt_found = await self._check_smt_in_cycle(cycle_type)
+            if smt_found:
+                logger.info(f"{self.pair_group}: Found HTF SMT in {cycle_type}")
+                return True
+        
+        logger.info(f"{self.pair_group}: No HTF SMT found")
+        return False
+    
+    async def _scan_ltf_smt(self):
+        """Scan for confirmation SMT in lower timeframes"""
+        if not self.signal_builder.primary_smt:
+            return False
+            
+        primary_cycle = self.signal_builder.primary_smt['cycle']
+        primary_direction = self.signal_builder.primary_smt['direction']
+        
+        # Find lower timeframes than the primary
+        primary_index = self.cycle_hierarchy.index(primary_cycle)
+        lower_cycles = self.cycle_hierarchy[primary_index + 1:]
+        
+        logger.info(f"{self.pair_group}: Scanning for LTF SMT in {lower_cycles}...")
+        
+        for cycle_type in lower_cycles:
+            smt_found = await self._check_smt_in_cycle(cycle_type, required_direction=primary_direction)
+            if smt_found:
+                logger.info(f"{self.pair_group}: Found LTF SMT in {cycle_type}")
+                return True
+        
+        logger.info(f"{self.pair_group}: No LTF SMT found yet")
+        return False
+    
+    async def _scan_psp(self):
+        """Scan for PSP confirmation"""
+        if not self.signal_builder.confirmation_smt:
+            return False
+            
+        # Use the confirmation SMT's timeframe for PSP scanning
+        confirmation_cycle = self.signal_builder.confirmation_smt['cycle']
+        timeframe = self.pair_config['timeframe_mapping'][confirmation_cycle]
+        
+        logger.info(f"{self.pair_group}: Scanning for PSP on {timeframe}...")
+        
+        pair1_data = self.market_data[self.pair1].get(confirmation_cycle)
+        pair2_data = self.market_data[self.pair2].get(confirmation_cycle)
+        
+        if pair1_data is None or pair2_data is None:
+            return False
+        
+        psp_signal = self.psp_detector.detect_psp_in_history(pair1_data, pair2_data, timeframe, lookback=5)
+        if psp_signal:
+            return self.signal_builder.set_psp(psp_signal)
+        
+        logger.info(f"{self.pair_group}: No PSP found yet")
+        return False
+    
+    async def _check_smt_in_cycle(self, cycle_type, required_direction=None):
+        """Check for SMT in a specific cycle (simplified for now)"""
         pair1_data = self.market_data[self.pair1].get(cycle_type)
         pair2_data = self.market_data[self.pair2].get(cycle_type)
         
-        if pair1_data is None or pair2_data is None:
-            logger.debug(f"No data for {cycle_type} in {self.pair_group}")
-            return
+        if pair1_data is None or pair2_data is None or pair1_data.empty or pair2_data.empty:
+            return False
         
         try:
-            # SMT detection
-            smt_signal = self.smt_detector.detect_smt(pair1_data, pair2_data, cycle_type)
-            if smt_signal:
-                self.signal_builder.add_smt(smt_signal)
+            # Simplified SMT detection using recent data
+            if len(pair1_data) < 10 or len(pair2_data) < 10:
+                return False
             
-            # PSP detection
-            psp_signal = self.psp_detector.detect_psp(pair1_data, pair2_data, timeframe)
-            if psp_signal:
-                self.signal_builder.add_psp(psp_signal)
-                        
+            # Get recent highs and lows
+            asset1_recent_high = float(pair1_data['high'].tail(5).max())
+            asset1_prev_high = float(pair1_data['high'].head(5).max())
+            asset2_recent_high = float(pair2_data['high'].tail(5).max())
+            asset2_prev_high = float(pair2_data['high'].head(5).max())
+            
+            asset1_recent_low = float(pair1_data['low'].tail(5).min())
+            asset1_prev_low = float(pair1_data['low'].head(5).min())
+            asset2_recent_low = float(pair2_data['low'].tail(5).min())
+            asset2_prev_low = float(pair2_data['low'].head(5).min())
+            
+            # Check directions
+            bearish = (asset1_recent_high > asset1_prev_high and asset2_recent_high <= asset2_prev_high)
+            bullish = (asset1_recent_low < asset1_prev_low and asset2_recent_low >= asset2_prev_low)
+            
+            if required_direction:
+                if required_direction == 'bearish' and bearish:
+                    direction = 'bearish'
+                elif required_direction == 'bullish' and bullish:
+                    direction = 'bullish'
+                else:
+                    return False
+            else:
+                if bearish:
+                    direction = 'bearish'
+                elif bullish:
+                    direction = 'bullish'
+                else:
+                    return False
+            
+            # Create SMT data
+            smt_data = {
+                'direction': direction,
+                'type': 'regular',
+                'cycle': cycle_type,
+                'quarters': "q1→q2",  # Simplified quarters for now
+                'timestamp': datetime.now(NY_TZ)
+            }
+            
+            # Add to signal builder based on current state
+            if self.signal_builder.current_state == "IDLE":
+                return self.signal_builder.set_primary_smt(smt_data)
+            else:
+                return self.signal_builder.set_confirmation_smt(smt_data)
+                
         except Exception as e:
-            logger.error(f"Error analyzing {cycle_type} for {self.pair_group}: {str(e)}")
+            logger.error(f"Error checking SMT in {cycle_type} for {self.pair_group}: {str(e)}")
+            return False
 
 # ================================
-# MAIN MANAGER - FIXED
+# MAIN MANAGER - UPDATED
 # ================================
 
 class MultiPairTradingManager:
@@ -602,13 +700,13 @@ class MultiPairTradingManager:
         
         # Initialize trading systems for all pairs
         for pair_group, pair_config in TRADING_PAIRS.items():
-            self.trading_systems[pair_group] = PairTradingSystem(pair_group, pair_config)
+            self.trading_systems[pair_group] = HierarchicalTradingSystem(pair_group, pair_config)
         
         logger.info(f"Initialized multi-pair manager with {len(self.trading_systems)} pair groups")
     
     async def run_all_systems(self):
-        """Run all trading systems in parallel - FIXED"""
-        logger.info("Starting multi-pair trading analysis...")
+        """Run all trading systems in parallel"""
+        logger.info("Starting hierarchical multi-pair trading analysis...")
         
         while True:
             try:
@@ -638,10 +736,8 @@ class MultiPairTradingManager:
                 # Send signals to Telegram
                 if signals:
                     await self._process_signals(signals)
-                else:
-                    logger.info("No signals found this cycle")
                 
-                # Calculate adaptive sleep interval
+                # Calculate adaptive sleep interval based on system states
                 sleep_time = self._calculate_sleep_interval()
                 logger.info(f"Sleeping for {sleep_time} seconds")
                 await asyncio.sleep(sleep_time)
@@ -666,7 +762,7 @@ class MultiPairTradingManager:
                 logger.error(f"Error processing signal: {str(e)}")
     
     def _format_signal_message(self, signal):
-        """Format signal for Telegram"""
+        """Format signal for Telegram with proper hierarchy details"""
         pair_group = signal.get('pair_group', 'Unknown')
         direction = signal.get('direction', 'UNKNOWN').upper()
         strength = signal.get('strength', 0)
@@ -674,35 +770,44 @@ class MultiPairTradingManager:
         message = f"🚨 *TRADING SIGNAL* 🚨\n\n"
         message += f"*Pair Group:* {pair_group.replace('_', ' ').title()}\n"
         message += f"*Direction:* {direction}\n"
-        message += f"*Strength:* {strength}/10\n"
-        message += f"*Time:* {datetime.now(NY_TZ).strftime('%Y-%m-%d %H:%M:%S %Z')}\n\n"
+        message += f"*Strength:* {strength}/6\n\n"
         
-        # Add SMT details
-        if 'smts' in signal:
-            message += "*SMT Patterns:*\n"
-            for smt in signal['smts']:
-                message += f"• {smt['cycle']} {smt['type']} ({smt['quarters']})\n"
+        # Primary SMT
+        if 'primary_smt' in signal:
+            psmt = signal['primary_smt']
+            message += f"*Primary SMT:* {psmt['direction']} {pair_group} {psmt['cycle']} cycle {psmt['quarters']}\n"
         
-        # Add PSP confirmation
-        if signal.get('psp'):
-            message += f"\n*PSP Confirmation:* ✅\n"
+        # Confirmation SMT
+        if 'confirmation_smt' in signal:
+            csmt = signal['confirmation_smt']
+            message += f"*Confirmation SMT:* {csmt['direction']} {csmt['cycle']} cycle {csmt['quarters']}\n"
         
+        # PSP
+        if 'psp' in signal:
+            psp = signal['psp']
+            message += f"*PSP Confirmation:* {psp['timeframe']} {pair_group}\n"
+        
+        message += f"\n*Time:* {datetime.now(NY_TZ).strftime('%Y-%m-%d %H:%M:%S %Z')}\n"
         message += f"\n#TradingSignal #{pair_group}"
         
         return message
     
     def _calculate_sleep_interval(self):
-        """Calculate adaptive sleep interval based on signal activity"""
+        """Calculate adaptive sleep interval based on system states"""
         base_interval = BASE_INTERVAL
+        min_interval = MIN_INTERVAL
         
-        # Check if any system has active signal building
+        # Check active signal builders
         active_builders = 0
         for system in self.trading_systems.values():
-            if system.signal_builder.signal_strength > 0:
+            if system.signal_builder.current_state != "IDLE":
                 active_builders += 1
+                # If we're close to signal, reduce interval more
+                if system.signal_builder.current_state == "PSP_FOUND":
+                    active_builders += 2  # Extra weight for PSP waiting
         
         if active_builders > 0:
-            return max(MIN_INTERVAL, base_interval // (active_builders + 1))
+            return max(min_interval, base_interval // (active_builders + 1))
         
         return base_interval
 
@@ -712,7 +817,7 @@ class MultiPairTradingManager:
 
 async def main():
     """Main entry point"""
-    logger.info("Starting Multi-Pair SMT Trading System - DEBUGGED VERSION")
+    logger.info("Starting Hierarchical Multi-Pair SMT Trading System")
     
     # Get credentials from environment
     api_key = os.getenv('OANDA_API_KEY')
