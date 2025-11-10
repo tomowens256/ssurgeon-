@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-PRECISE MULTI-PAIR SMT TRADING SYSTEM
-Advanced system with exact candle timing, current-candle CRT/PSP, and robust confirmation tracking
+PRECISE MULTI-PAIR SMT TRADING SYSTEM - FIXED VERSION
 """
 
 import asyncio
@@ -24,7 +23,7 @@ from oandapyV20.endpoints import instruments
 # CONFIGURATION
 # ================================
 
-# Trading pairs configuration
+# Trading pairs configuration - FIXED INSTRUMENT NAMES
 TRADING_PAIRS = {
     'precious_metals': {
         'pair1': 'XAU_USD',
@@ -38,7 +37,7 @@ TRADING_PAIRS = {
     },
     'us_indices': {
         'pair1': 'NAS100_USD',
-        'pair2': 'US500_USD',
+        'pair2': 'SPX500_USD',  # FIXED: Changed from US500_USD to SPX500_USD
         'timeframe_mapping': {
             'monthly': 'H4',
             'weekly': 'H1',
@@ -75,9 +74,9 @@ CRT_SMT_MAPPING = {
 # System Configuration
 NY_TZ = pytz.timezone('America/New_York')
 BASE_INTERVAL = 300
-MIN_INTERVAL = 10  # Reduced for precise timing
+MIN_INTERVAL = 10
 MAX_RETRIES = 3
-CANDLE_BUFFER_SECONDS = 5  # Wait 5 seconds after candle open for data availability
+CANDLE_BUFFER_SECONDS = 5
 
 # ================================
 # LOGGING SETUP
@@ -148,7 +147,7 @@ def send_telegram(message, token=None, chat_id=None):
     return False
 
 def fetch_candles(instrument, timeframe, count=50, api_key=None):
-    """Fetch candles from OANDA API - Reduced count for speed"""
+    """Fetch candles from OANDA API"""
     logger.debug(f"Fetching {count} candles for {instrument} {timeframe}")
     
     if not api_key:
@@ -240,7 +239,6 @@ class CandleTimingManager:
     
     def __init__(self):
         self.ny_tz = pytz.timezone('America/New_York')
-        self.next_candle_times = {}
         
     def calculate_next_candle_time(self, timeframe, current_time=None):
         """Calculate when the next candle will open for a given timeframe"""
@@ -269,8 +267,9 @@ class CandleTimingManager:
         return tf_map.get(timeframe)
     
     def should_wait_for_candle(self, timeframe, data_df):
-        """Check if we should wait for new candle data"""
-        if data_df.empty:
+        """Check if we should wait for new candle data - FIXED DATAFRAME CHECK"""
+        # FIX: Proper DataFrame emptiness check
+        if data_df is None or not isinstance(data_df, pd.DataFrame) or data_df.empty:
             return False
             
         # Get the most recent complete candle time
@@ -314,7 +313,7 @@ class CandleTimingManager:
         return max(MIN_INTERVAL, sleep_seconds)
 
 # ================================
-# PATTERN DETECTORS - PRECISE TIMING
+# PATTERN DETECTORS - IMPROVED
 # ================================
 
 class PreciseCRTDetector:
@@ -323,7 +322,8 @@ class PreciseCRTDetector:
     @staticmethod
     def calculate_crt_current_candle(df):
         """Calculate CRT only on the current (incomplete) candle"""
-        if df.empty or len(df) < 3:
+        # FIX: Proper DataFrame check
+        if df is None or not isinstance(df, pd.DataFrame) or df.empty or len(df) < 3:
             return None
         
         # Get only the current (incomplete) candle
@@ -342,24 +342,28 @@ class PreciseCRTDetector:
         c2 = complete_candles.iloc[1]  # candle 2 (one candle back)
         c3 = current_candle            # candle 3 (current)
         
-        # CRT calculations
-        c2_range = float(c2['high']) - float(c2['low'])
-        c2_mid = float(c2['low']) + 0.5 * c2_range
-        
-        # Buy CRT: c2 low < c1 low AND c2 close > c1 low AND c3 open > c2 mid
-        buy_crt = (float(c2['low']) < float(c1['low']) and 
-                  float(c2['close']) > float(c1['low']) and 
-                  float(c3['open']) > c2_mid)
-        
-        # Sell CRT: c2 high > c1 high AND c2 close < c1 high AND c3 open < c2 mid
-        sell_crt = (float(c2['high']) > float(c1['high']) and 
-                   float(c2['close']) < float(c1['high']) and 
-                   float(c3['open']) < c2_mid)
-        
-        if buy_crt:
-            return {'direction': 'bullish', 'timestamp': c3['time']}
-        elif sell_crt:
-            return {'direction': 'bearish', 'timestamp': c3['time']}
+        try:
+            # CRT calculations with proper type conversion
+            c2_range = float(c2['high']) - float(c2['low'])
+            c2_mid = float(c2['low']) + 0.5 * c2_range
+            
+            # Buy CRT: c2 low < c1 low AND c2 close > c1 low AND c3 open > c2 mid
+            buy_crt = (float(c2['low']) < float(c1['low']) and 
+                      float(c2['close']) > float(c1['low']) and 
+                      float(c3['open']) > c2_mid)
+            
+            # Sell CRT: c2 high > c1 high AND c2 close < c1 high AND c3 open < c2 mid
+            sell_crt = (float(c2['high']) > float(c1['high']) and 
+                       float(c2['close']) < float(c1['high']) and 
+                       float(c3['open']) < c2_mid)
+            
+            if buy_crt:
+                return {'direction': 'bullish', 'timestamp': c3['time']}
+            elif sell_crt:
+                return {'direction': 'bearish', 'timestamp': c3['time']}
+        except (ValueError, TypeError) as e:
+            logger.error(f"Error in CRT calculation: {e}")
+            return None
         
         return None
 
@@ -368,8 +372,10 @@ class PrecisePSPDetector:
     
     @staticmethod
     def detect_psp_current_candle(asset1_data, asset2_data, timeframe):
-        """Detect PSP only on the current candle"""
-        if asset1_data.empty or asset2_data.empty:
+        """Detect PSP only on the current candle - FIXED DATAFRAME CHECKS"""
+        # FIX: Proper DataFrame checks
+        if (asset1_data is None or not isinstance(asset1_data, pd.DataFrame) or asset1_data.empty or
+            asset2_data is None or not isinstance(asset2_data, pd.DataFrame) or asset2_data.empty):
             return None
         
         # Get current candles for both assets
@@ -386,16 +392,20 @@ class PrecisePSPDetector:
         if asset1_candle['time'] != asset2_candle['time']:
             return None
         
-        asset1_color = 'green' if float(asset1_candle['close']) > float(asset1_candle['open']) else 'red'
-        asset2_color = 'green' if float(asset2_candle['close']) > float(asset2_candle['open']) else 'red'
-        
-        if asset1_color != asset2_color:
-            return {
-                'timeframe': timeframe,
-                'asset1_color': asset1_color,
-                'asset2_color': asset2_color,
-                'timestamp': asset1_candle['time']
-            }
+        try:
+            asset1_color = 'green' if float(asset1_candle['close']) > float(asset1_candle['open']) else 'red'
+            asset2_color = 'green' if float(asset2_candle['close']) > float(asset2_candle['open']) else 'red'
+            
+            if asset1_color != asset2_color:
+                return {
+                    'timeframe': timeframe,
+                    'asset1_color': asset1_color,
+                    'asset2_color': asset2_color,
+                    'timestamp': asset1_candle['time']
+                }
+        except (ValueError, TypeError) as e:
+            logger.error(f"Error in PSP calculation: {e}")
+            return None
         
         return None
 
@@ -403,29 +413,31 @@ class SMTDetector:
     def __init__(self):
         self.smt_history = []
     
-    def detect_smt_current_quarter(self, asset1_data, asset2_data, cycle_type, current_quarter, prev_quarter):
-        """Detect SMT between current and previous quarter"""
+    def detect_smt_between_quarters(self, asset1_data, asset2_data, cycle_type, current_quarter, prev_quarter):
+        """Detect SMT between current and previous quarter - FIXED DATAFRAME CHECKS"""
+        # FIX: Proper DataFrame checks
+        if (asset1_data is None or not isinstance(asset1_data, pd.DataFrame) or asset1_data.empty or
+            asset2_data is None or not isinstance(asset2_data, pd.DataFrame) or asset2_data.empty):
+            return None
+        
         try:
-            # For current quarter detection, we use recent candles
-            if asset1_data.empty or asset2_data.empty:
-                return None
-            
-            # Use last 5 candles as current quarter, previous 5 as previous quarter
+            # Use last 5-10 candles for quarter simulation (2-3 quarters)
             if len(asset1_data) < 10 or len(asset2_data) < 10:
                 return None
             
-            # Current quarter (most recent 5 candles)
-            asset1_current = asset1_data.tail(5)
-            asset2_current = asset2_data.tail(5)
+            # Current quarter (most recent 3-5 candles)
+            quarter_size = min(5, len(asset1_data) // 2)
+            asset1_current = asset1_data.tail(quarter_size)
+            asset2_current = asset2_data.tail(quarter_size)
             
-            # Previous quarter (previous 5 candles)
-            asset1_prev = asset1_data.iloc[-10:-5]
-            asset2_prev = asset2_data.iloc[-10:-5]
+            # Previous quarter (previous 3-5 candles)  
+            asset1_prev = asset1_data.iloc[-(quarter_size*2):-quarter_size]
+            asset2_prev = asset2_data.iloc[-(quarter_size*2):-quarter_size]
             
             if asset1_current.empty or asset2_current.empty or asset1_prev.empty or asset2_prev.empty:
                 return None
             
-            # Calculate quarter highs/lows
+            # Calculate quarter highs/lows with proper type conversion
             a1_curr_high = float(asset1_current['high'].max())
             a1_prev_high = float(asset1_prev['high'].max())
             a2_curr_high = float(asset2_current['high'].max())
@@ -436,35 +448,42 @@ class SMTDetector:
             a2_curr_low = float(asset2_current['low'].min())
             a2_prev_low = float(asset2_prev['low'].min())
             
-            # Bearish SMT
+            # Bearish SMT: Asset1 makes HH, Asset2 doesn't
             bearish = (a1_curr_high > a1_prev_high and a2_curr_high <= a2_prev_high)
             
-            # Bullish SMT  
+            # Bullish SMT: Asset1 makes LL, Asset2 doesn't  
             bullish = (a1_curr_low < a1_prev_low and a2_curr_low >= a2_prev_low)
             
             if bearish:
                 direction = 'bearish'
+                smt_type = 'SMT Bearish'
             elif bullish:
-                direction = 'bullish'
+                direction = 'bullish' 
+                smt_type = 'SMT Bullish'
             else:
                 return None
             
-            return {
+            smt_data = {
                 'direction': direction,
+                'type': smt_type,
                 'cycle': cycle_type,
                 'quarters': f"{prev_quarter}→{current_quarter}",
                 'timestamp': datetime.now(NY_TZ)
             }
             
+            self.smt_history.append(smt_data)
+            logger.info(f"{smt_type} detected: {cycle_type} cycle {prev_quarter}→{current_quarter}")
+            return smt_data
+            
         except Exception as e:
-            logger.error(f"Error in SMT detection: {str(e)}")
+            logger.error(f"Error in SMT detection for {cycle_type}: {str(e)}")
             return None
 
 # ================================
-# PRECISE SIGNAL BUILDER
+# IMPROVED SIGNAL BUILDER WITH PROGRESS TRACKING
 # ================================
 
-class PreciseSignalBuilder:
+class ProgressSignalBuilder:
     def __init__(self, pair_group):
         self.pair_group = pair_group
         self.active_crt = None
@@ -474,9 +493,8 @@ class PreciseSignalBuilder:
         self.signal_strength = 0
         self.criteria = []
         self.creation_time = datetime.now(NY_TZ)
-        
-        # Track which CRT timeframe we're working with
         self.crt_timeframe = None
+        self.status = "IDLE"
         
     def set_crt_signal(self, crt_data, timeframe):
         """Set CRT signal from specific timeframe"""
@@ -485,7 +503,8 @@ class PreciseSignalBuilder:
             self.crt_timeframe = timeframe
             self.signal_strength += 3
             self.criteria.append(f"CRT {timeframe}: {crt_data['direction']}")
-            logger.info(f"{self.pair_group}: CRT set on {timeframe} - {crt_data['direction']}")
+            self.status = f"CRT_{crt_data['direction'].upper()}_WAITING_LTF_SMT"
+            logger.info(f"🔷 {self.pair_group}: {timeframe} {crt_data['direction']} CRT detected → Waiting for LTF SMT confirmation")
             return True
         return False
     
@@ -498,7 +517,8 @@ class PreciseSignalBuilder:
                 self.active_psp = psp_data
                 self.signal_strength += 2
                 self.criteria.append(f"PSP {psp_data['timeframe']}: {psp_data['asset1_color']}/{psp_data['asset2_color']}")
-                logger.info(f"{self.pair_group}: PSP confirmed on same candle")
+                self.status = f"CRT_PSP_{self.active_crt['direction'].upper()}_WAITING_LTF_SMT"
+                logger.info(f"🔷 {self.pair_group}: PSP confirmed on same candle → Waiting for LTF SMT")
                 return True
         return False
     
@@ -508,7 +528,8 @@ class PreciseSignalBuilder:
             self.htf_smt = smt_data
             self.signal_strength += 2
             self.criteria.append(f"HTF SMT {smt_data['cycle']}: {smt_data['direction']} {smt_data['quarters']}")
-            logger.info(f"{self.pair_group}: HTF SMT set")
+            self.status = f"HTF_SMT_{smt_data['direction'].upper()}_WAITING_LTF_SMT"
+            logger.info(f"🔷 {self.pair_group}: HTF {smt_data['cycle']} {smt_data['direction']} SMT detected → Waiting for LTF SMT")
             return True
         return False
     
@@ -522,8 +543,19 @@ class PreciseSignalBuilder:
                 self.ltf_smt = smt_data
                 self.signal_strength += 2
                 self.criteria.append(f"LTF SMT {smt_data['cycle']}: {smt_data['direction']} {smt_data['quarters']}")
-                logger.info(f"{self.pair_group}: LTF SMT confirmed")
+                
+                if self.active_crt and self.active_psp:
+                    self.status = f"CRT_PSP_LTFSMT_{smt_data['direction'].upper()}_READY"
+                    logger.info(f"🎯 {self.pair_group}: LTF SMT CONFIRMED! CRT+PSP+LTF_SMT signal complete!")
+                elif self.active_crt:
+                    self.status = f"CRT_LTFSMT_{smt_data['direction'].upper()}_READY" 
+                    logger.info(f"🎯 {self.pair_group}: LTF SMT CONFIRMED! CRT+LTF_SMT signal complete!")
+                else:
+                    self.status = f"HTFSMT_LTFSMT_{smt_data['direction'].upper()}_READY"
+                    logger.info(f"🎯 {self.pair_group}: LTF SMT CONFIRMED! HTF_SMT+LTF_SMT signal complete!")
                 return True
+            else:
+                logger.warning(f"⚠️ {self.pair_group}: LTF SMT direction mismatch. Expected {required_direction}, got {smt_data['direction']}")
         return False
     
     def is_signal_ready(self):
@@ -551,6 +583,10 @@ class PreciseSignalBuilder:
                 idx = cycle_hierarchy.index(self.htf_smt['cycle'])
                 return cycle_hierarchy[idx+1:] if idx < len(cycle_hierarchy)-1 else []
         return ['daily', '90min']  # Default
+    
+    def get_progress_status(self):
+        """Get current progress status for logging"""
+        return self.status
     
     def get_signal_details(self):
         """Get complete signal details"""
@@ -588,8 +624,11 @@ class PreciseSignalBuilder:
     
     def is_expired(self):
         """Check if signal builder has expired (too old)"""
-        expiry_time = timedelta(minutes=30)  # 30 minute expiry
-        return datetime.now(NY_TZ) - self.creation_time > expiry_time
+        expiry_time = timedelta(minutes=30)
+        expired = datetime.now(NY_TZ) - self.creation_time > expiry_time
+        if expired:
+            logger.info(f"⏰ {self.pair_group}: Signal builder expired (30min timeout)")
+        return expired
     
     def reset(self):
         """Reset builder"""
@@ -601,13 +640,14 @@ class PreciseSignalBuilder:
         self.criteria = []
         self.crt_timeframe = None
         self.creation_time = datetime.now(NY_TZ)
-        logger.info(f"{self.pair_group}: Signal builder reset")
+        self.status = "IDLE"
+        logger.info(f"🔄 {self.pair_group}: Signal builder reset")
 
 # ================================
-# PRECISE TRADING SYSTEM
+# IMPROVED TRADING SYSTEM
 # ================================
 
-class PreciseTradingSystem:
+class ImprovedTradingSystem:
     def __init__(self, pair_group, pair_config):
         self.pair_group = pair_group
         self.pair_config = pair_config
@@ -619,21 +659,20 @@ class PreciseTradingSystem:
         self.crt_detector = PreciseCRTDetector()
         self.psp_detector = PrecisePSPDetector()
         self.smt_detector = SMTDetector()
-        self.signal_builder = PreciseSignalBuilder(pair_group)
+        self.signal_builder = ProgressSignalBuilder(pair_group)
         
         # Data storage
         self.market_data = {self.pair1: {}, self.pair2: {}}
         
-        # Track current quarters
-        self.current_quarters = {}
-        
-        logger.info(f"Initialized precise trading system for {self.pair1}/{self.pair2}")
+        logger.info(f"🚀 Initialized improved trading system for {self.pair1}/{self.pair2}")
     
-    async def run_precise_analysis(self, api_key):
-        """Run precise analysis with timing awareness"""
+    async def run_improved_analysis(self, api_key):
+        """Run improved analysis with progress tracking"""
         try:
-            # Update current quarters
-            await self._update_current_quarters()
+            # Log current status
+            current_status = self.signal_builder.get_progress_status()
+            if current_status != "IDLE":
+                logger.info(f"📊 {self.pair_group}: Current status - {current_status}")
             
             # Fetch market data for required timeframes
             await self._fetch_required_data(api_key)
@@ -662,31 +701,19 @@ class PreciseTradingSystem:
             if self.signal_builder.is_signal_ready():
                 signal = self.signal_builder.get_signal_details()
                 if signal:
-                    logger.info(f"🚨 PRECISE SIGNAL for {self.pair_group}: {signal['path']}")
+                    logger.info(f"🎯 {self.pair_group}: PRECISE SIGNAL COMPLETE via {signal['path']}")
                     self.signal_builder.reset()
                     return signal
             
             # Check if expired
             if self.signal_builder.is_expired():
-                logger.info(f"{self.pair_group}: Signal builder expired, resetting")
                 self.signal_builder.reset()
             
             return None
             
         except Exception as e:
-            logger.error(f"Error in precise analysis for {self.pair_group}: {str(e)}")
+            logger.error(f"❌ Error in improved analysis for {self.pair_group}: {str(e)}")
             return None
-    
-    async def _update_current_quarters(self):
-        """Update current quarter information"""
-        # Simplified quarter tracking - you can enhance this with actual quarter calculation
-        current_time = datetime.now(NY_TZ)
-        self.current_quarters = {
-            'monthly': 'q1',  # Simplified
-            'weekly': 'q1',
-            'daily': 'q1', 
-            '90min': 'q1'
-        }
     
     async def _fetch_required_data(self, api_key):
         """Fetch only required market data based on current signal state"""
@@ -704,20 +731,24 @@ class PreciseTradingSystem:
         # Fetch data for required timeframes
         for pair in [self.pair1, self.pair2]:
             for tf in required_timeframes:
-                if tf not in self.market_data[pair] or self._is_data_stale(tf):
+                # FIX: Proper data staleness check
+                if tf not in self.market_data[pair] or self._is_data_stale(self.market_data[pair].get(tf), tf):
                     try:
                         df = await asyncio.get_event_loop().run_in_executor(
                             None, fetch_candles, pair, tf, 50, api_key
                         )
-                        if not df.empty:
+                        if df is not None and not df.empty:
                             self.market_data[pair][tf] = df
-                            logger.debug(f"Fetched {len(df)} {tf} candles for {pair}")
+                            logger.debug(f"📥 Fetched {len(df)} {tf} candles for {pair}")
+                        else:
+                            logger.warning(f"⚠️ No data received for {pair} {tf}")
                     except Exception as e:
-                        logger.error(f"Error fetching {pair} {tf}: {str(e)}")
+                        logger.error(f"❌ Error fetching {pair} {tf}: {str(e)}")
     
-    def _is_data_stale(self, timeframe):
-        """Check if data is stale and needs refresh"""
-        if not self.market_data[self.pair1].get(timeframe) or not self.market_data[self.pair2].get(timeframe):
+    def _is_data_stale(self, df, timeframe):
+        """Check if data is stale and needs refresh - FIXED DATAFRAME CHECK"""
+        # FIX: Proper DataFrame check
+        if df is None or not isinstance(df, pd.DataFrame) or df.empty:
             return True
         
         # Check if we should refresh based on timeframe
@@ -728,13 +759,15 @@ class PreciseTradingSystem:
         return False
     
     async def _should_wait_for_data(self):
-        """Check if we should wait for new candle data"""
+        """Check if we should wait for new candle data - FIXED DATAFRAME CHECKS"""
         important_timeframes = list(self.pair_config['timeframe_mapping'].values()) + CRT_TIMEFRAMES
         
         for tf in important_timeframes:
             pair1_data = self.market_data[self.pair1].get(tf)
-            if pair1_data is not None and self.timing_manager.should_wait_for_candle(tf, pair1_data):
-                return True
+            # FIX: Proper DataFrame check
+            if pair1_data is not None and isinstance(pair1_data, pd.DataFrame) and not pair1_data.empty:
+                if self.timing_manager.should_wait_for_candle(tf, pair1_data):
+                    return True
                 
         return False
     
@@ -744,7 +777,9 @@ class PreciseTradingSystem:
             pair1_data = self.market_data[self.pair1].get(timeframe)
             pair2_data = self.market_data[self.pair2].get(timeframe)
             
-            if pair1_data is None or pair2_data is None:
+            # FIX: Proper DataFrame checks
+            if (pair1_data is None or not isinstance(pair1_data, pd.DataFrame) or pair1_data.empty or
+                pair2_data is None or not isinstance(pair2_data, pd.DataFrame) or pair2_data.empty):
                 continue
             
             # Check CRT for both assets
@@ -755,7 +790,6 @@ class PreciseTradingSystem:
             crt_signal = crt_asset1 if crt_asset1 else crt_asset2
             
             if crt_signal and self.signal_builder.set_crt_signal(crt_signal, timeframe):
-                logger.info(f"{self.pair_group}: CRT found on {timeframe}")
                 break
     
     async def _scan_psp_same_candle(self):
@@ -767,7 +801,9 @@ class PreciseTradingSystem:
         pair1_data = self.market_data[self.pair1].get(timeframe)
         pair2_data = self.market_data[self.pair2].get(timeframe)
         
-        if pair1_data is None or pair2_data is None:
+        # FIX: Proper DataFrame checks
+        if (pair1_data is None or not isinstance(pair1_data, pd.DataFrame) or pair1_data.empty or
+            pair2_data is None or not isinstance(pair2_data, pd.DataFrame) or pair2_data.empty):
             return
         
         psp_signal = self.psp_detector.detect_psp_current_candle(pair1_data, pair2_data, timeframe)
@@ -783,15 +819,16 @@ class PreciseTradingSystem:
             pair1_data = self.market_data[self.pair1].get(timeframe)
             pair2_data = self.market_data[self.pair2].get(timeframe)
             
-            if pair1_data is None or pair2_data is None:
+            # FIX: Proper DataFrame checks
+            if (pair1_data is None or not isinstance(pair1_data, pd.DataFrame) or pair1_data.empty or
+                pair2_data is None or not isinstance(pair2_data, pd.DataFrame) or pair2_data.empty):
                 continue
             
-            smt_signal = self.smt_detector.detect_smt_current_quarter(
-                pair1_data, pair2_data, cycle, 'q2', 'q1'  # Simplified quarters
+            smt_signal = self.smt_detector.detect_smt_between_quarters(
+                pair1_data, pair2_data, cycle, 'q2', 'q1'  # Using past 2-3 quarters
             )
             
             if smt_signal and self.signal_builder.set_htf_smt(smt_signal):
-                logger.info(f"{self.pair_group}: HTF SMT found in {cycle}")
                 break
     
     async def _scan_ltf_confirmation(self):
@@ -803,22 +840,26 @@ class PreciseTradingSystem:
             pair1_data = self.market_data[self.pair1].get(timeframe)
             pair2_data = self.market_data[self.pair2].get(timeframe)
             
-            if pair1_data is None or pair2_data is None:
+            # FIX: Proper DataFrame checks
+            if (pair1_data is None or not isinstance(pair1_data, pd.DataFrame) or pair1_data.empty or
+                pair2_data is None or not isinstance(pair2_data, pd.DataFrame) or pair2_data.empty):
                 continue
             
-            smt_signal = self.smt_detector.detect_smt_current_quarter(
-                pair1_data, pair2_data, cycle, 'q2', 'q1'  # Simplified quarters
+            smt_signal = self.smt_detector.detect_smt_between_quarters(
+                pair1_data, pair2_data, cycle, 'q2', 'q1'  # Using past 2-3 quarters
             )
             
             if smt_signal and self.signal_builder.set_ltf_smt(smt_signal):
-                logger.info(f"{self.pair_group}: LTF SMT confirmation found in {cycle}")
+                logger.info(f"🔷 {self.pair_group}: Scanning {cycle} for LTF SMT confirmation...")
                 break
+            else:
+                logger.info(f"🔍 {self.pair_group}: No LTF SMT found in {cycle} yet...")
 
 # ================================
-# PRECISE MAIN MANAGER
+# IMPROVED MAIN MANAGER
 # ================================
 
-class PreciseTradingManager:
+class ImprovedTradingManager:
     def __init__(self, api_key, telegram_token, chat_id):
         self.api_key = api_key
         self.telegram_token = telegram_token
@@ -828,13 +869,13 @@ class PreciseTradingManager:
         
         # Initialize trading systems for all pairs
         for pair_group, pair_config in TRADING_PAIRS.items():
-            self.trading_systems[pair_group] = PreciseTradingSystem(pair_group, pair_config)
+            self.trading_systems[pair_group] = ImprovedTradingSystem(pair_group, pair_config)
         
-        logger.info(f"Initialized precise trading manager with {len(self.trading_systems)} pair groups")
+        logger.info(f"🚀 Initialized improved trading manager with {len(self.trading_systems)} pair groups")
     
-    async def run_precise_systems(self):
-        """Run all trading systems with precise timing"""
-        logger.info("Starting Precise Multi-Pair Trading System...")
+    async def run_improved_systems(self):
+        """Run all trading systems with improved logging"""
+        logger.info("🎯 Starting Improved Multi-Pair Trading System...")
         
         while True:
             try:
@@ -850,7 +891,7 @@ class PreciseTradingManager:
                 tasks = []
                 for pair_group, system in self.trading_systems.items():
                     task = asyncio.create_task(
-                        system.run_precise_analysis(self.api_key),
+                        system.run_improved_analysis(self.api_key),
                         name=f"analysis_{pair_group}"
                     )
                     tasks.append(task)
@@ -863,39 +904,39 @@ class PreciseTradingManager:
                 for i, result in enumerate(results):
                     pair_group = list(self.trading_systems.keys())[i]
                     if isinstance(result, Exception):
-                        logger.error(f"Analysis task failed for {pair_group}: {str(result)}")
+                        logger.error(f"❌ Analysis task failed for {pair_group}: {str(result)}")
                     elif result is not None:
                         signals.append(result)
-                        logger.info(f"Precise signal found for {pair_group}")
+                        logger.info(f"🎯 PRECISE SIGNAL FOUND for {pair_group}")
                 
                 # Send signals to Telegram
                 if signals:
                     await self._process_signals(signals)
                 
-                logger.info(f"Precise cycle complete. Sleeping for {sleep_time:.1f} seconds")
+                logger.info(f"⏰ Cycle complete. Sleeping for {sleep_time:.1f} seconds")
                 await asyncio.sleep(sleep_time)
                 
             except Exception as e:
-                logger.error(f"Error in precise main loop: {str(e)}")
+                logger.error(f"❌ Error in improved main loop: {str(e)}")
                 await asyncio.sleep(60)
     
     async def _process_signals(self, signals):
         """Process and send signals to Telegram"""
         for signal in signals:
             try:
-                message = self._format_precise_signal_message(signal)
+                message = self._format_improved_signal_message(signal)
                 success = send_telegram(message, self.telegram_token, self.chat_id)
                 
                 if success:
-                    logger.info(f"Precise signal sent to Telegram for {signal['pair_group']}")
+                    logger.info(f"📤 Signal sent to Telegram for {signal['pair_group']}")
                 else:
-                    logger.error(f"Failed to send precise signal for {signal['pair_group']}")
+                    logger.error(f"❌ Failed to send signal for {signal['pair_group']}")
                     
             except Exception as e:
-                logger.error(f"Error processing precise signal: {str(e)}")
+                logger.error(f"❌ Error processing signal: {str(e)}")
     
-    def _format_precise_signal_message(self, signal):
-        """Format precise signal for Telegram"""
+    def _format_improved_signal_message(self, signal):
+        """Format improved signal for Telegram"""
         pair_group = signal.get('pair_group', 'Unknown')
         direction = signal.get('direction', 'UNKNOWN').upper()
         strength = signal.get('strength', 0)
@@ -925,7 +966,7 @@ class PreciseTradingManager:
 
 async def main():
     """Main entry point"""
-    logger.info("Starting Precise Multi-Pair SMT Trading System")
+    logger.info("🎯 Starting Improved Multi-Pair SMT Trading System")
     
     # Get credentials from environment
     api_key = os.getenv('OANDA_API_KEY')
@@ -933,22 +974,22 @@ async def main():
     telegram_chat_id = os.getenv('TELEGRAM_CHAT_ID')
     
     if not all([api_key, telegram_token, telegram_chat_id]):
-        logger.error("Missing required environment variables:")
+        logger.error("❌ Missing required environment variables:")
         logger.error("OANDA_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID")
-        logger.info("Please set these environment variables and try again")
+        logger.info("💡 Please set these environment variables and try again")
         return
     
     try:
         # Initialize manager
-        manager = PreciseTradingManager(api_key, telegram_token, telegram_chat_id)
+        manager = ImprovedTradingManager(api_key, telegram_token, telegram_chat_id)
         
-        # Run all systems with precise timing
-        await manager.run_precise_systems()
+        # Run all systems with improved logging
+        await manager.run_improved_systems()
         
     except KeyboardInterrupt:
-        logger.info("System stopped by user")
+        logger.info("🛑 System stopped by user")
     except Exception as e:
-        logger.error(f"Fatal error: {str(e)}")
+        logger.error(f"💥 Fatal error: {str(e)}")
         import traceback
         logger.error(traceback.format_exc())
         sys.exit(1)
