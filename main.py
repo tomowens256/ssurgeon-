@@ -21,14 +21,14 @@ from oandapyV20.exceptions import V20Error
 from oandapyV20.endpoints import instruments
 
 # ================================
-# CONFIGURATION
+# CONFIGURATION - UPDATED WITH CORRECT OANDA INSTRUMENTS
 # ================================
 
-# Trading pairs configuration
+# Trading pairs configuration - UPDATED WITH CORRECT NAMES
 TRADING_PAIRS = {
     'precious_metals': {
-        'pair1': 'XAU_USD',
-        'pair2': 'XAG_USD',
+        'pair1': 'XAU_USD',  # Gold
+        'pair2': 'XAG_USD',  # Silver
         'timeframe_mapping': {
             'monthly': 'H4',
             'weekly': 'H1', 
@@ -37,8 +37,8 @@ TRADING_PAIRS = {
         }
     },
     'us_indices': {
-        'pair1': 'US30_USD',  # Dow Jones
-        'pair2': 'US500_USD', # S&P 500
+        'pair1': 'US30_USD',  # Dow Jones - CORRECT
+        'pair2': 'SPX500_USD', # S&P 500 - CORRECT NAME
         'timeframe_mapping': {
             'monthly': 'H4',
             'weekly': 'H1',
@@ -47,8 +47,8 @@ TRADING_PAIRS = {
         }
     },
     'european_indices': {
-        'pair1': 'DE30_EUR',  # DAX
-        'pair2': 'EU50_EUR',  # Euro Stoxx 50
+        'pair1': 'DE30_EUR',  # DAX - CORRECT
+        'pair2': 'EU50_EUR',  # Euro Stoxx 50 - CORRECT
         'timeframe_mapping': {
             'monthly': 'H4',
             'weekly': 'H1',
