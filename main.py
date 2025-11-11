@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 ROBUST MULTI-PAIR SMT TRADING SYSTEM
-With SMT-CRT direction matching and SMT invalidation logic - FIXED VERSION
+With FX Triad (GBPUSD, EURUSD) and NAS100_USD
+Proper sleep timing to next candle + buffer
 """
 
 import asyncio
@@ -37,7 +38,7 @@ TRADING_PAIRS = {
         }
     },
     'us_indices': {
-        'pair1': 'NAS100_USD',
+        'pair1': 'NAS100_USD',  # CHANGED: US30_USD to NAS100_USD
         'pair2': 'SPX500_USD',
         'timeframe_mapping': {
             'monthly': 'H4',
@@ -49,6 +50,16 @@ TRADING_PAIRS = {
     'european_indices': {
         'pair1': 'DE30_EUR',
         'pair2': 'EU50_EUR',
+        'timeframe_mapping': {
+            'monthly': 'H4',
+            'weekly': 'H1',
+            'daily': 'M15',
+            '90min': 'M5'
+        }
+    },
+    'fx_triad': {  # ADDED: FX Triad
+        'pair1': 'GBP_USD',
+        'pair2': 'EUR_USD',
         'timeframe_mapping': {
             'monthly': 'H4',
             'weekly': 'H1',
@@ -293,7 +304,7 @@ class RobustTimingManager:
         return datetime.fromtimestamp(next_candle_timestamp, self.ny_tz)
     
     def get_sleep_time_for_cycle(self, cycle_type):
-        """Calculate sleep time until next candle for a specific cycle"""
+        """Calculate sleep time until next candle for a specific cycle - EXACT TIMING"""
         timeframe = CYCLE_SLEEP_TIMEFRAMES.get(cycle_type)
         if not timeframe:
             return BASE_INTERVAL
@@ -301,13 +312,13 @@ class RobustTimingManager:
         next_candle_time = self.calculate_next_candle_time(timeframe)
         current_time = datetime.now(self.ny_tz)
         
-        # Add buffer seconds for API data availability
+        # Sleep until next candle + buffer for API data availability
         sleep_seconds = (next_candle_time - current_time).total_seconds() + CANDLE_BUFFER_SECONDS
         
         return max(MIN_INTERVAL, sleep_seconds)
     
     def get_sleep_time_for_crt(self, crt_timeframe):
-        """Calculate sleep time until next CRT candle"""
+        """Calculate sleep time until next CRT candle - EXACT TIMING"""
         next_candle_time = self.calculate_next_candle_time(crt_timeframe)
         current_time = datetime.now(self.ny_tz)
         
@@ -1017,21 +1028,25 @@ class RobustSignalBuilder:
         return ['monthly', 'weekly', 'daily', '90min']
     
     def get_sleep_cycle(self):
-        """Get which cycle to use for sleep timing"""
-        # If we have active signals, use the smallest timeframe cycle
-        if self.active_crt:
-            # For CRT, sleep until next candle of CRT timeframe
+        """Get which cycle to use for sleep timing - PROPER PRIORITY"""
+        # Priority 1: If we have CRT, sleep until next CRT candle
+        if self.active_crt and self.crt_timeframe:
             return None  # Special handling for CRT
             
-        # For SMT, use the smallest cycle we're monitoring
-        if '90min' in self.active_smts:
-            return '90min'
-        elif 'daily' in self.active_smts:
-            return 'daily'
-        elif 'weekly' in self.active_smts:
-            return 'weekly'
-        else:
-            return 'monthly'
+        # Priority 2: If we have active SMTs, use the smallest timeframe cycle
+        if self.active_smts:
+            if '90min' in self.active_smts:
+                return '90min'
+            elif 'daily' in self.active_smts:
+                return 'daily'
+            elif 'weekly' in self.active_smts:
+                return 'weekly'
+            elif 'monthly' in self.active_smts:
+                return 'monthly'
+        
+        # Priority 3: When no signals, use shortest cycle for responsive scanning
+        # BUT this will sleep until next M5 candle (not arbitrary 5 minutes)
+        return '90min'
     
     def get_progress_status(self):
         """Get current progress status for logging"""
@@ -1182,18 +1197,27 @@ class RobustTradingSystem:
                 logger.info(f"🔄 Removed invalidated SMT: {cycle}")
     
     def get_sleep_time(self):
-        """Calculate sleep time until next relevant candle"""
+        """Calculate sleep time until next relevant candle - EXACT CANDLE TIMING"""
         sleep_cycle = self.signal_builder.get_sleep_cycle()
         
         if sleep_cycle:
             # Sleep until next candle of the current cycle's timeframe
-            return self.timing_manager.get_sleep_time_for_cycle(sleep_cycle)
+            sleep_time = self.timing_manager.get_sleep_time_for_cycle(sleep_cycle)
+            timeframe = CYCLE_SLEEP_TIMEFRAMES.get(sleep_cycle, 'M5')
+            next_candle = datetime.now(NY_TZ) + timedelta(seconds=sleep_time)
+            logger.info(f"⏰ {self.pair_group}: Sleeping {sleep_time:.1f}s until next {timeframe} candle at {next_candle.strftime('%H:%M:%S')}")
+            return sleep_time
         elif self.signal_builder.active_crt and self.signal_builder.crt_timeframe:
             # Sleep until next CRT candle
-            return self.timing_manager.get_sleep_time_for_crt(self.signal_builder.crt_timeframe)
+            sleep_time = self.timing_manager.get_sleep_time_for_crt(self.signal_builder.crt_timeframe)
+            next_candle = datetime.now(NY_TZ) + timedelta(seconds=sleep_time)
+            logger.info(f"⏰ {self.pair_group}: Sleeping {sleep_time:.1f}s until next {self.signal_builder.crt_timeframe} CRT candle at {next_candle.strftime('%H:%M:%S')}")
+            return sleep_time
         else:
-            # Default sleep time
-            return BASE_INTERVAL
+            # This shouldn't happen with the logic above, but fallback
+            sleep_time = BASE_INTERVAL
+            logger.info(f"⏰ {self.pair_group}: Default sleep {sleep_time}s")
+            return sleep_time
     
     async def _fetch_all_data(self, api_key):
         """Fetch ALL data needed for complete analysis"""
