@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 ROBUST MULTI-PAIR SMT TRADING SYSTEM
-Fixed sleep timing and always scans all timeframes for SMT
+With SMT-CRT direction matching and SMT invalidation logic
 """
 
 import asyncio
@@ -651,13 +651,14 @@ class RobustPSPDetector:
         return None
 
 class RobustSMTDetector:
-    """ROBUST SMT detector that always scans all timeframes"""
+    """ROBUST SMT detector with invalidation logic"""
     
     def __init__(self):
         self.smt_history = []
         self.quarter_manager = QuarterManager()
         self.swing_detector = SwingDetector()
         self.signal_counts = {}
+        self.invalidated_smts = set()  # Track invalidated SMTs
         
     def detect_smt_all_cycles(self, asset1_data, asset2_data, cycle_type):
         """Detect SMT for a specific cycle - always scan"""
@@ -749,12 +750,14 @@ class RobustSMTDetector:
                 smt_type = 'Higher Swing High'
                 asset1_action = f"made higher swing high ({asset1_prev_highest['price']:.4f} → {asset1_curr_highest['price']:.4f})"
                 asset2_action = f"no higher swing high ({asset2_prev_highest['price']:.4f} → {asset2_curr_highest['price']:.4f})"
+                critical_level = asset1_curr_highest['price']  # Highest high for bearish SMT
                 
             elif bullish_smt:
                 direction = 'bullish'
                 smt_type = 'Lower Swing Low'
                 asset1_action = f"made lower swing low ({asset1_prev_lowest['price']:.4f} → {asset1_curr_lowest['price']:.4f})"
                 asset2_action = f"no lower swing low ({asset2_prev_lowest['price']:.4f} → {asset2_curr_lowest['price']:.4f})"
+                critical_level = asset1_curr_lowest['price']  # Lowest low for bullish SMT
                 
             else:
                 return None  # No SMT pattern
@@ -769,7 +772,9 @@ class RobustSMTDetector:
                 'asset1_action': asset1_action,
                 'asset2_action': asset2_action,
                 'details': f"Asset1 {asset1_action}, Asset2 {asset2_action}",
-                'signal_key': f"{cycle_type}_{prev_q}_{curr_q}_{direction}"
+                'signal_key': f"{cycle_type}_{prev_q}_{curr_q}_{direction}",
+                'critical_level': critical_level,  # Store level for invalidation checking
+                'timeframe': self.pair_config['timeframe_mapping'][cycle_type]  # Store timeframe for data access
             }
             
             self.smt_history.append(smt_data)
@@ -778,6 +783,7 @@ class RobustSMTDetector:
             logger.info(f"🎯 SMT: {direction} {cycle_type} {prev_q}→{curr_q}")
             logger.info(f"   Asset1: {asset1_action}")
             logger.info(f"   Asset2: {asset2_action}")
+            logger.info(f"   Critical Level: {critical_level:.4f}")
             
             return smt_data
             
@@ -811,11 +817,53 @@ class RobustSMTDetector:
         
         return asset1_ll and asset2_no_ll
     
+    def check_smt_invalidation(self, smt_data, asset1_data, asset2_data):
+        """Check if SMT has been invalidated by price action"""
+        if not smt_data or smt_data['signal_key'] in self.invalidated_smts:
+            return True  # Already invalidated or no data
+            
+        direction = smt_data['direction']
+        critical_level = smt_data['critical_level']
+        timeframe = smt_data['timeframe']
+        
+        # Get current data for both assets
+        if asset1_data is None or asset2_data is None:
+            return False
+            
+        # Check for invalidation based on direction
+        if direction == 'bearish':
+            # Bearish SMT invalidated if price trades ABOVE critical level (highest high)
+            asset1_current_high = asset1_data['high'].max() if not asset1_data.empty else None
+            asset2_current_high = asset2_data['high'].max() if not asset2_data.empty else None
+            
+            if (asset1_current_high and asset1_current_high > critical_level) or \
+               (asset2_current_high and asset2_current_high > critical_level):
+                logger.info(f"❌ BEARISH SMT INVALIDATED: Price above critical level {critical_level:.4f}")
+                self.invalidated_smts.add(smt_data['signal_key'])
+                return True
+                
+        elif direction == 'bullish':
+            # Bullish SMT invalidated if price trades BELOW critical level (lowest low)
+            asset1_current_low = asset1_data['low'].min() if not asset1_data.empty else None
+            asset2_current_low = asset2_data['low'].min() if not asset2_data.empty else None
+            
+            if (asset1_current_low and asset1_current_low < critical_level) or \
+               (asset2_current_low and asset2_current_low < critical_level):
+                logger.info(f"❌ BULLISH SMT INVALIDATED: Price below critical level {critical_level:.4f}")
+                self.invalidated_smts.add(smt_data['signal_key'])
+                return True
+        
+        return False
+    
     def _is_duplicate_signal(self, smt_data):
         """Check if this signal has been sent too many times"""
         signal_key = smt_data.get('signal_key')
         if not signal_key:
             return False
+            
+        # Check if invalidated
+        if signal_key in self.invalidated_smts:
+            return True
             
         count = self.signal_counts.get(signal_key, 0)
         if count >= 2:  # Max 2 signals per unique SMT
@@ -851,14 +899,19 @@ class RobustSignalBuilder:
         self.crt_timeframe = None
         self.status = "SCANNING_ALL"
         
-    def add_smt_signal(self, smt_data):
-        """Add SMT signal from any cycle"""
+    def add_smt_signal(self, smt_data, crt_direction=None):
+        """Add SMT signal from any cycle - ONLY if direction matches CRT"""
         if not smt_data:
             return False
             
         cycle = smt_data['cycle']
         direction = smt_data['direction']
         
+        # CHECK: SMT direction must match CRT direction if CRT exists
+        if self.active_crt and direction != self.active_crt['direction']:
+            logger.info(f"⚠️ SMT direction mismatch: CRT {self.active_crt['direction']} vs SMT {direction} - skipping")
+            return False
+            
         # Store SMT by cycle
         self.active_smts[cycle] = smt_data
         self.signal_strength += 2
@@ -904,8 +957,36 @@ class RobustSignalBuilder:
             self.criteria.append(f"CRT {timeframe}: {crt_data['direction']}")
             self.status = f"CRT_{crt_data['direction'].upper()}_WAITING_SMT"
             logger.info(f"🔷 {self.pair_group}: {timeframe} {crt_data['direction']} CRT detected → Waiting for SMT confirmation")
+            
+            # Remove any SMTs that don't match CRT direction
+            self._remove_mismatched_smts()
+            
             return True
         return False
+    
+    def _remove_mismatched_smts(self):
+        """Remove SMTs that don't match the current CRT direction"""
+        if not self.active_crt:
+            return
+            
+        crt_direction = self.active_crt['direction']
+        smts_to_remove = []
+        
+        for cycle, smt in self.active_smts.items():
+            if smt['direction'] != crt_direction:
+                smts_to_remove.append(cycle)
+                logger.info(f"🔄 Removing mismatched SMT: {cycle} {smt['direction']} (CRT is {crt_direction})")
+        
+        for cycle in smts_to_remove:
+            self._remove_smt(cycle)
+    
+    def _remove_smt(self, cycle):
+        """Remove an SMT and adjust signal strength"""
+        if cycle in self.active_smts:
+            del self.active_smts[cycle]
+            self.signal_strength = max(0, self.signal_strength - 2)
+            # Remove from criteria
+            self.criteria = [c for c in self.criteria if not c.startswith(f"SMT {cycle}:")]
     
     def set_psp_signal(self, psp_data):
         """Set PSP signal (must be on previous candle of CRT)"""
@@ -926,10 +1007,10 @@ class RobustSignalBuilder:
         # Path 1: Multiple SMTs in same direction
         multiple_smts = len(self.active_smts) >= 2
         
-        # Path 2: CRT + any SMT
+        # Path 2: CRT + any SMT (direction already matched)
         crt_smt = self.active_crt and len(self.active_smts) >= 1
         
-        # Path 3: CRT + PSP + any SMT
+        # Path 3: CRT + PSP + any SMT (direction already matched)
         crt_psp_smt = self.active_crt and self.active_psp and len(self.active_smts) >= 1
         
         return (multiple_smts or crt_smt or crt_psp_smt) and self.signal_strength >= 5
@@ -1053,6 +1134,9 @@ class RobustTradingSystem:
             # Fetch ALL data needed for analysis
             await self._fetch_all_data(api_key)
             
+            # Check SMT invalidations FIRST
+            await self._check_smt_invalidations()
+            
             # ALWAYS SCAN ALL PATTERNS
             logger.info(f"🔍 {self.pair_group}: Scanning ALL patterns")
             
@@ -1085,6 +1169,21 @@ class RobustTradingSystem:
         except Exception as e:
             logger.error(f"❌ Error in robust analysis for {self.pair_group}: {str(e)}")
             return None
+    
+    async def _check_smt_invalidations(self):
+        """Check if any active SMTs have been invalidated by price action"""
+        if not self.signal_builder.active_smts:
+            return
+            
+        for cycle, smt in list(self.signal_builder.active_smts.items()):
+            timeframe = smt['timeframe']
+            asset1_data = self.market_data[self.pair1].get(timeframe)
+            asset2_data = self.market_data[self.pair2].get(timeframe)
+            
+            if self.smt_detector.check_smt_invalidation(smt, asset1_data, asset2_data):
+                # Remove invalidated SMT
+                self.signal_builder._remove_smt(cycle)
+                logger.info(f"🔄 Removed invalidated SMT: {cycle}")
     
     def get_sleep_time(self):
         """Calculate sleep time until next relevant candle"""
@@ -1142,7 +1241,9 @@ class RobustTradingSystem:
             smt_signal = self.smt_detector.detect_smt_all_cycles(pair1_data, pair2_data, cycle)
             
             if smt_signal:
-                self.signal_builder.add_smt_signal(smt_signal)
+                # Pass CRT direction to ensure SMT matches
+                crt_direction = self.signal_builder.active_crt['direction'] if self.signal_builder.active_crt else None
+                self.signal_builder.add_smt_signal(smt_signal, crt_direction)
     
     async def _scan_crt_signals(self):
         """Scan for CRT signals on all timeframes"""
