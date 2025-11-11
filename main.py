@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-PRECISE MULTI-PAIR SMT TRADING SYSTEM - FIXED CRT/PSP TIMING
-Fixed CRT detection on current candle and PSP on candle 2 with proper timing
+OPTIMIZED MULTI-PAIR SMT TRADING SYSTEM
+Only fetches necessary timeframes and sleeps until next candle
 """
 
 import asyncio
@@ -148,7 +148,7 @@ def send_telegram(message, token=None, chat_id=None):
     return False
 
 def fetch_candles(instrument, timeframe, count=100, api_key=None):
-    """Fetch candles from OANDA API - Increased count for quarter analysis"""
+    """Fetch candles from OANDA API"""
     logger.debug(f"Fetching {count} candles for {instrument} {timeframe}")
     
     if not api_key:
@@ -232,11 +232,11 @@ def fetch_candles(instrument, timeframe, count=100, api_key=None):
     return pd.DataFrame()
 
 # ================================
-# ADVANCED CANDLE TIMING MANAGER
+# OPTIMIZED TIMING MANAGER
 # ================================
 
-class AdvancedCandleTimingManager:
-    """Advanced timing manager with proper HTF candle calculations"""
+class OptimizedTimingManager:
+    """Optimized timing manager that calculates exact sleep times"""
     
     def __init__(self):
         self.ny_tz = pytz.timezone('America/New_York')
@@ -295,8 +295,8 @@ class AdvancedCandleTimingManager:
         next_candle_timestamp = (current_timestamp // (minutes * 60) + 1) * (minutes * 60)
         return datetime.fromtimestamp(next_candle_timestamp, self.ny_tz)
     
-    def get_sleep_time_to_next_candle(self, timeframes):
-        """Calculate sleep time until next important candle plus buffer"""
+    def get_sleep_time_for_timeframes(self, timeframes):
+        """Calculate sleep time until next candle for given timeframes"""
         next_times = []
         
         for tf in timeframes:
@@ -326,7 +326,7 @@ class AdvancedCandleTimingManager:
         return age_seconds <= (max_age_minutes * 60)
 
 # ================================
-# QUARTER MANAGER - FIXED 90MIN CYCLES
+# QUARTER MANAGER
 # ================================
 
 class QuarterManager:
@@ -548,7 +548,7 @@ class SwingDetector:
         return min(swing_lows, key=lambda x: x['price'])
 
 # ================================
-# PATTERN DETECTORS - FIXED CRT/PSP TIMING
+# PATTERN DETECTORS
 # ================================
 
 class FixedCRTDetector:
@@ -869,7 +869,6 @@ class ProgressSignalBuilder:
         """Set PSP signal (must be on previous candle of CRT)"""
         if psp_data and self.active_crt:
             # Check if PSP is on same timeframe and approximate time as CRT's previous candle
-            # Since PSP is on candle 2 and CRT is on candle 3, they should be close in time
             time_diff = abs((psp_data['timestamp'] - self.active_crt['timestamp']).total_seconds())
             if time_diff < 3600:  # Within 1 hour (same general period)
                 self.active_psp = psp_data
@@ -1002,57 +1001,59 @@ class ProgressSignalBuilder:
         logger.info(f"🔄 {self.pair_group}: Signal builder reset")
 
 # ================================
-# FIXED TIMING TRADING SYSTEM
+# OPTIMIZED TRADING SYSTEM
 # ================================
 
-class FixedTimingTradingSystem:
+class OptimizedTradingSystem:
     def __init__(self, pair_group, pair_config):
         self.pair_group = pair_group
         self.pair_config = pair_config
         self.pair1 = pair_config['pair1']
         self.pair2 = pair_config['pair2']
         
-        # Initialize components with fixed timing
-        self.timing_manager = AdvancedCandleTimingManager()
+        # Initialize components
+        self.timing_manager = OptimizedTimingManager()
         self.quarter_manager = QuarterManager()
-        self.crt_detector = FixedCRTDetector(self.timing_manager)  # Fixed CRT with timing
-        self.psp_detector = FixedPSPDetector()  # Fixed PSP for previous candle
+        self.crt_detector = FixedCRTDetector(self.timing_manager)
+        self.psp_detector = FixedPSPDetector()
         self.smt_detector = SwingBasedSMTDetector()
         self.signal_builder = ProgressSignalBuilder(pair_group)
         
         # Data storage
         self.market_data = {self.pair1: {}, self.pair2: {}}
         
-        logger.info(f"🎯 Initialized FIXED TIMING trading system for {self.pair1}/{self.pair2}")
+        logger.info(f"🎯 Initialized OPTIMIZED trading system for {self.pair1}/{self.pair2}")
     
-    async def run_fixed_timing_analysis(self, api_key):
-        """Run analysis with fixed CRT/PSP timing"""
+    async def run_optimized_analysis(self, api_key):
+        """Run optimized analysis - always do SMT analysis, only fetch needed timeframes"""
         try:
             # Log current status
             current_status = self.signal_builder.get_progress_status()
             if current_status != "IDLE":
                 logger.info(f"📊 {self.pair_group}: Current status - {current_status}")
             
-            # Fetch market data for required timeframes
-            await self._fetch_required_data(api_key)
+            # Determine which timeframes we need to fetch
+            required_timeframes = self._get_required_timeframes()
             
-            # Check if we should wait for candle data
-            if await self._should_wait_for_data():
-                return None
+            # Fetch only required data
+            await self._fetch_required_data(api_key, required_timeframes)
             
-            # Step 1: Scan for CRT signals (1H and above only)
+            # ALWAYS DO SMT ANALYSIS - regardless of CRT state
+            logger.info(f"🔍 {self.pair_group}: Starting SMT analysis")
+            
+            # Step 1: Scan for HTF SMT (always do this)
+            if not self.signal_builder.htf_smt:
+                await self._scan_htf_smt()
+            
+            # Step 2: Scan for CRT signals (only if we don't have HTF SMT)
             if not self.signal_builder.active_crt and not self.signal_builder.htf_smt:
                 await self._scan_crt_signals()
             
-            # Step 2: If we have CRT, scan for PSP on previous candle
+            # Step 3: If we have CRT, scan for PSP on previous candle
             if self.signal_builder.active_crt and not self.signal_builder.active_psp:
                 await self._scan_psp_previous_candle()
             
-            # Step 3: Scan for HTF SMT (if no CRT)
-            if not self.signal_builder.active_crt and not self.signal_builder.htf_smt:
-                await self._scan_htf_smt()
-            
-            # Step 4: Scan for LTF SMT confirmation
+            # Step 4: Scan for LTF SMT confirmation (if we have CRT or HTF SMT)
             if self.signal_builder.active_crt or self.signal_builder.htf_smt:
                 await self._scan_ltf_confirmation()
             
@@ -1060,7 +1061,7 @@ class FixedTimingTradingSystem:
             if self.signal_builder.is_signal_ready():
                 signal = self.signal_builder.get_signal_details()
                 if signal:
-                    logger.info(f"🎯 {self.pair_group}: FIXED TIMING SIGNAL COMPLETE via {signal['path']}")
+                    logger.info(f"🎯 {self.pair_group}: OPTIMIZED SIGNAL COMPLETE via {signal['path']}")
                     self.signal_builder.reset()
                     return signal
             
@@ -1068,78 +1069,49 @@ class FixedTimingTradingSystem:
             if self.signal_builder.is_expired():
                 self.signal_builder.reset()
             
+            logger.info(f"✅ {self.pair_group}: Optimized analysis complete")
             return None
             
         except Exception as e:
-            logger.error(f"❌ Error in fixed timing analysis for {self.pair_group}: {str(e)}")
+            logger.error(f"❌ Error in optimized analysis for {self.pair_group}: {str(e)}")
             return None
     
-    async def _fetch_required_data(self, api_key):
-        """Fetch only required market data based on current signal state"""
+    def _get_required_timeframes(self):
+        """Get only the timeframes needed for current analysis state"""
         required_timeframes = set()
         
-        # Always fetch cycle timeframes
+        # Always need SMT timeframes for analysis
         for tf in self.pair_config['timeframe_mapping'].values():
             required_timeframes.add(tf)
         
         # Add CRT timeframes if we're scanning for CRT
-        if not self.signal_builder.active_crt:
+        if not self.signal_builder.active_crt and not self.signal_builder.htf_smt:
             for tf in CRT_TIMEFRAMES:
                 required_timeframes.add(tf)
         
-        # Fetch data for required timeframes
+        logger.debug(f"📊 {self.pair_group}: Required timeframes: {required_timeframes}")
+        return list(required_timeframes)
+    
+    async def _fetch_required_data(self, api_key, timeframes):
+        """Fetch only required timeframes"""
         for pair in [self.pair1, self.pair2]:
-            for tf in required_timeframes:
-                if tf not in self.market_data[pair] or self._is_data_stale(self.market_data[pair].get(tf), tf):
-                    try:
-                        df = await asyncio.get_event_loop().run_in_executor(
-                            None, fetch_candles, pair, tf, 100, api_key
-                        )
-                        if df is not None and not df.empty:
-                            self.market_data[pair][tf] = df
-                            logger.debug(f"📥 Fetched {len(df)} {tf} candles for {pair}")
-                        else:
-                            logger.warning(f"⚠️ No data received for {pair} {tf}")
-                    except Exception as e:
-                        logger.error(f"❌ Error fetching {pair} {tf}: {str(e)}")
+            for tf in timeframes:
+                try:
+                    df = await asyncio.get_event_loop().run_in_executor(
+                        None, fetch_candles, pair, tf, 100, api_key
+                    )
+                    if df is not None and not df.empty:
+                        self.market_data[pair][tf] = df
+                        logger.debug(f"📥 Fetched {len(df)} {tf} candles for {pair}")
+                    else:
+                        logger.warning(f"⚠️ No data received for {pair} {tf}")
+                except Exception as e:
+                    logger.error(f"❌ Error fetching {pair} {tf}: {str(e)}")
     
-    def _is_data_stale(self, df, timeframe):
-        """Check if data is stale and needs refresh"""
-        if df is None or not isinstance(df, pd.DataFrame) or df.empty:
-            return True
-        
-        # Check if we should refresh based on timeframe
-        tf_minutes = self._timeframe_to_minutes(timeframe)
-        if tf_minutes and tf_minutes <= 60:  # Refresh hourly or more frequently
-            return True
-            
-        return False
-    
-    def _timeframe_to_minutes(self, timeframe):
-        """Convert timeframe string to minutes"""
-        tf_map = {
-            'M1': 1, 'M5': 5, 'M15': 15, 'M30': 30,
-            'H1': 60, 'H2': 120, 'H3': 180, 'H4': 240,
-            'H6': 360, 'H8': 480, 'H12': 720
-        }
-        return tf_map.get(timeframe)
-    
-    async def _should_wait_for_data(self):
-        """Check if we should wait for new candle data"""
-        important_timeframes = list(self.pair_config['timeframe_mapping'].values()) + CRT_TIMEFRAMES
-        
-        for tf in important_timeframes:
-            pair1_data = self.market_data[self.pair1].get(tf)
-            if pair1_data is not None and isinstance(pair1_data, pd.DataFrame) and not pair1_data.empty:
-                # Check if we have incomplete candles that might complete soon
-                incomplete_candles = pair1_data[pair1_data['is_current'] == True]
-                if not incomplete_candles.empty:
-                    # If we have incomplete candles, check if they're fresh
-                    current_candle = incomplete_candles.iloc[0]
-                    if self.timing_manager.is_crt_fresh(current_candle['time'], max_age_minutes=5):
-                        return True
-                
-        return False
+    def get_sleep_time(self):
+        """Calculate sleep time until next required candle"""
+        required_timeframes = self._get_required_timeframes()
+        return self.timing_manager.get_sleep_time_for_timeframes(required_timeframes)
     
     async def _scan_crt_signals(self):
         """Scan for CRT signals on 1H and above timeframes"""
@@ -1159,7 +1131,7 @@ class FixedTimingTradingSystem:
             crt_signal = crt_asset1 if crt_asset1 else crt_asset2
             
             if crt_signal and self.signal_builder.set_crt_signal(crt_signal, timeframe):
-                logger.info(f"🔷 {self.pair_group}: Fresh CRT detected on {timeframe} at {crt_signal['timestamp']}")
+                logger.info(f"🔷 {self.pair_group}: Fresh CRT detected on {timeframe}")
                 break
     
     async def _scan_psp_previous_candle(self):
@@ -1178,11 +1150,11 @@ class FixedTimingTradingSystem:
         psp_signal = self.psp_detector.detect_psp_previous_candle(pair1_data, pair2_data, timeframe)
         if psp_signal:
             self.signal_builder.set_psp_signal(psp_signal)
-            logger.info(f"🔷 {self.pair_group}: PSP confirmed on previous candle at {psp_signal['timestamp']}")
+            logger.info(f"🔷 {self.pair_group}: PSP confirmed on previous candle")
     
     async def _scan_htf_smt(self):
         """Scan for higher timeframe SMT with swing-based detection"""
-        htf_cycles = ['monthly', 'weekly']  # Higher timeframes
+        htf_cycles = ['monthly', 'weekly']
         
         for cycle in htf_cycles:
             timeframe = self.pair_config['timeframe_mapping'][cycle]
@@ -1196,6 +1168,7 @@ class FixedTimingTradingSystem:
             smt_signal = self.smt_detector.detect_swing_smt(pair1_data, pair2_data, cycle)
             
             if smt_signal and self.signal_builder.set_htf_smt(smt_signal):
+                logger.info(f"🔷 {self.pair_group}: HTF SMT found in {cycle}")
                 break
     
     async def _scan_ltf_confirmation(self):
@@ -1215,51 +1188,47 @@ class FixedTimingTradingSystem:
             
             if smt_signal:
                 if self.signal_builder.set_ltf_smt(smt_signal):
-                    logger.info(f"🎯 {self.pair_group}: LTF SMT confirmed with swing-based detection")
+                    logger.info(f"🎯 {self.pair_group}: LTF SMT confirmed in {cycle}")
                     break
             else:
-                logger.info(f"🔍 {self.pair_group}: No LTF SMT found in {cycle} with swing-based detection")
+                logger.debug(f"🔍 {self.pair_group}: No LTF SMT found in {cycle}")
 
 # ================================
-# FIXED TIMING MAIN MANAGER
+# OPTIMIZED MAIN MANAGER
 # ================================
 
-class FixedTimingTradingManager:
+class OptimizedTradingManager:
     def __init__(self, api_key, telegram_token, chat_id):
         self.api_key = api_key
         self.telegram_token = telegram_token
         self.chat_id = chat_id
-        self.timing_manager = AdvancedCandleTimingManager()
+        self.timing_manager = OptimizedTimingManager()
         self.trading_systems = {}
         
         # Initialize trading systems for all pairs
         for pair_group, pair_config in TRADING_PAIRS.items():
-            self.trading_systems[pair_group] = FixedTimingTradingSystem(pair_group, pair_config)
+            self.trading_systems[pair_group] = OptimizedTradingSystem(pair_group, pair_config)
         
-        logger.info(f"🎯 Initialized FIXED TIMING trading manager with {len(self.trading_systems)} pair groups")
+        logger.info(f"🎯 Initialized OPTIMIZED trading manager with {len(self.trading_systems)} pair groups")
     
-    async def run_fixed_timing_systems(self):
-        """Run all trading systems with fixed CRT/PSP timing"""
-        logger.info("🎯 Starting FIXED TIMING Multi-Pair Trading System...")
+    async def run_optimized_systems(self):
+        """Run all trading systems with optimized data fetching and sleep times"""
+        logger.info("🎯 Starting OPTIMIZED Multi-Pair Trading System...")
         
         while True:
             try:
-                # Calculate optimal sleep time based on next important candles
-                important_timeframes = []
-                for pair_config in TRADING_PAIRS.values():
-                    important_timeframes.extend(pair_config['timeframe_mapping'].values())
-                important_timeframes.extend(CRT_TIMEFRAMES)
-                
-                sleep_time = self.timing_manager.get_sleep_time_to_next_candle(important_timeframes)
-                
                 # Run analysis for all pairs
                 tasks = []
+                sleep_times = []
+                
                 for pair_group, system in self.trading_systems.items():
                     task = asyncio.create_task(
-                        system.run_fixed_timing_analysis(self.api_key),
+                        system.run_optimized_analysis(self.api_key),
                         name=f"analysis_{pair_group}"
                     )
                     tasks.append(task)
+                    # Get individual sleep time for each system
+                    sleep_times.append(system.get_sleep_time())
                 
                 # Wait for all analyses to complete
                 results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -1272,42 +1241,44 @@ class FixedTimingTradingManager:
                         logger.error(f"❌ Analysis task failed for {pair_group}: {str(result)}")
                     elif result is not None:
                         signals.append(result)
-                        logger.info(f"🎯 FIXED TIMING SIGNAL FOUND for {pair_group}")
+                        logger.info(f"🎯 OPTIMIZED SIGNAL FOUND for {pair_group}")
                 
                 # Send signals to Telegram
                 if signals:
                     await self._process_signals(signals)
                 
-                logger.info(f"⏰ Fixed timing cycle complete. Sleeping for {sleep_time:.1f} seconds")
+                # Use the minimum sleep time from all systems
+                sleep_time = min(sleep_times) if sleep_times else BASE_INTERVAL
+                logger.info(f"⏰ Optimized cycle complete. Sleeping for {sleep_time:.1f} seconds")
                 await asyncio.sleep(sleep_time)
                 
             except Exception as e:
-                logger.error(f"❌ Error in fixed timing main loop: {str(e)}")
+                logger.error(f"❌ Error in optimized main loop: {str(e)}")
                 await asyncio.sleep(60)
     
     async def _process_signals(self, signals):
         """Process and send signals to Telegram"""
         for signal in signals:
             try:
-                message = self._format_fixed_timing_signal_message(signal)
+                message = self._format_optimized_signal_message(signal)
                 success = send_telegram(message, self.telegram_token, self.chat_id)
                 
                 if success:
-                    logger.info(f"📤 Fixed timing signal sent to Telegram for {signal['pair_group']}")
+                    logger.info(f"📤 Optimized signal sent to Telegram for {signal['pair_group']}")
                 else:
-                    logger.error(f"❌ Failed to send fixed timing signal for {signal['pair_group']}")
+                    logger.error(f"❌ Failed to send optimized signal for {signal['pair_group']}")
                     
             except Exception as e:
-                logger.error(f"❌ Error processing fixed timing signal: {str(e)}")
+                logger.error(f"❌ Error processing optimized signal: {str(e)}")
     
-    def _format_fixed_timing_signal_message(self, signal):
-        """Format fixed timing signal for Telegram"""
+    def _format_optimized_signal_message(self, signal):
+        """Format optimized signal for Telegram"""
         pair_group = signal.get('pair_group', 'Unknown')
         direction = signal.get('direction', 'UNKNOWN').upper()
         strength = signal.get('strength', 0)
         path = signal.get('path', 'UNKNOWN')
         
-        message = f"🎯 *FIXED TIMING TRADING SIGNAL* 🎯\n\n"
+        message = f"🎯 *OPTIMIZED TRADING SIGNAL* 🎯\n\n"
         message += f"*Pair Group:* {pair_group.replace('_', ' ').title()}\n"
         message += f"*Direction:* {direction}\n"
         message += f"*Strength:* {strength}/9\n"
@@ -1326,7 +1297,7 @@ class FixedTimingTradingManager:
             message += f"*LTF SMT Details:* {signal['ltf_smt']['details']}\n"
         
         message += f"\n*Detection Time:* {signal['timestamp'].strftime('%Y-%m-%d %H:%M:%S %Z')}\n"
-        message += f"\n#FixedTimingSignal #{pair_group} #{path}"
+        message += f"\n#OptimizedSignal #{pair_group} #{path}"
         
         return message
 
@@ -1336,7 +1307,7 @@ class FixedTimingTradingManager:
 
 async def main():
     """Main entry point"""
-    logger.info("🎯 Starting FIXED TIMING Multi-Pair SMT Trading System")
+    logger.info("🎯 Starting OPTIMIZED Multi-Pair SMT Trading System")
     
     # Get credentials from environment
     api_key = os.getenv('OANDA_API_KEY')
@@ -1351,10 +1322,10 @@ async def main():
     
     try:
         # Initialize manager
-        manager = FixedTimingTradingManager(api_key, telegram_token, telegram_chat_id)
+        manager = OptimizedTradingManager(api_key, telegram_token, telegram_chat_id)
         
-        # Run all systems with fixed timing
-        await manager.run_fixed_timing_systems()
+        # Run all systems with optimized timing
+        await manager.run_optimized_systems()
         
     except KeyboardInterrupt:
         logger.info("🛑 System stopped by user")
