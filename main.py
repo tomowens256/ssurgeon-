@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 ROBUST MULTI-PAIR SMT TRADING SYSTEM
-With SMT-CRT direction matching and SMT invalidation logic
+With SMT-CRT direction matching and SMT invalidation logic - FIXED VERSION
 """
 
 import asyncio
@@ -37,7 +37,7 @@ TRADING_PAIRS = {
         }
     },
     'us_indices': {
-        'pair1': 'NAS100_USD',
+        'pair1': 'US30_USD',
         'pair2': 'SPX500_USD',
         'timeframe_mapping': {
             'monthly': 'H4',
@@ -651,14 +651,15 @@ class RobustPSPDetector:
         return None
 
 class RobustSMTDetector:
-    """ROBUST SMT detector with invalidation logic"""
+    """ROBUST SMT detector with invalidation logic - FIXED VERSION"""
     
-    def __init__(self):
+    def __init__(self, pair_config):
         self.smt_history = []
         self.quarter_manager = QuarterManager()
         self.swing_detector = SwingDetector()
         self.signal_counts = {}
         self.invalidated_smts = set()  # Track invalidated SMTs
+        self.pair_config = pair_config  # Store pair config for timeframe mapping
         
     def detect_smt_all_cycles(self, asset1_data, asset2_data, cycle_type):
         """Detect SMT for a specific cycle - always scan"""
@@ -824,12 +825,7 @@ class RobustSMTDetector:
             
         direction = smt_data['direction']
         critical_level = smt_data['critical_level']
-        timeframe = smt_data['timeframe']
         
-        # Get current data for both assets
-        if asset1_data is None or asset2_data is None:
-            return False
-            
         # Check for invalidation based on direction
         if direction == 'bearish':
             # Bearish SMT invalidated if price trades ABOVE critical level (highest high)
@@ -1116,7 +1112,7 @@ class RobustTradingSystem:
         self.quarter_manager = QuarterManager()
         self.crt_detector = RobustCRTDetector(self.timing_manager)
         self.psp_detector = RobustPSPDetector()
-        self.smt_detector = RobustSMTDetector()
+        self.smt_detector = RobustSMTDetector(pair_config)  # FIXED: Pass pair_config
         self.signal_builder = RobustSignalBuilder(pair_group)
         
         # Data storage
