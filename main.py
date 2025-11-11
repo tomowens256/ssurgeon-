@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-PRECISE MULTI-PAIR SMT TRADING SYSTEM - CORRECTED QUARTER-BASED SMT
-Fixed SMT detection comparing HH/LL across consecutive quarters
+PRECISE MULTI-PAIR SMT TRADING SYSTEM - SWING-BASED SMT DETECTION
+Fixed SMT detection using swing highs/lows within quarters with proper time alignment
 """
 
 import asyncio
@@ -37,7 +37,7 @@ TRADING_PAIRS = {
         }
     },
     'us_indices': {
-        'pair1': 'NAS100_USD',
+        'pair1': 'US30_USD',
         'pair2': 'SPX500_USD',
         'timeframe_mapping': {
             'monthly': 'H4',
@@ -407,6 +407,31 @@ class QuarterManager:
         
         return 'q_less'
     
+    def get_valid_quarter_pairs(self, current_quarter, cycle_type):
+        """Get valid consecutive quarter pairs to check based on current quarter"""
+        # Define quarter sequences
+        quarter_sequence = ['q1', 'q2', 'q3', 'q4']
+        
+        # Find current quarter index
+        try:
+            current_idx = quarter_sequence.index(current_quarter)
+        except ValueError:
+            return []
+        
+        # Only check the 2 most recent consecutive pairs (don't skip quarters)
+        valid_pairs = []
+        
+        # Pair 1: current-2 → current-1 (if available)
+        if current_idx >= 2:
+            valid_pairs.append((quarter_sequence[current_idx-2], quarter_sequence[current_idx-1]))
+        
+        # Pair 2: current-1 → current (if available)  
+        if current_idx >= 1:
+            valid_pairs.append((quarter_sequence[current_idx-1], quarter_sequence[current_idx]))
+        
+        logger.debug(f"Current {cycle_type} quarter: {current_quarter}, Valid pairs: {valid_pairs}")
+        return valid_pairs
+    
     def group_candles_by_quarters(self, df, cycle_type, num_quarters=4):
         """Group candles into exact quarters based on their timestamps"""
         if df is None or not isinstance(df, pd.DataFrame) or df.empty:
@@ -427,11 +452,7 @@ class QuarterManager:
             quarters_data[quarter] = pd.DataFrame(quarters_data[quarter])
             quarters_data[quarter] = quarters_data[quarter].sort_values('time')
         
-        # Get only the most recent quarters
-        all_quarters = list(quarters_data.keys())
-        recent_quarters = all_quarters[-num_quarters:] if len(all_quarters) >= num_quarters else all_quarters
-        
-        return {q: quarters_data[q] for q in recent_quarters if q in quarters_data}
+        return quarters_data
     
     def _get_candle_quarter(self, candle_time, cycle_type):
         """Get the quarter for a specific candle based on cycle type"""
@@ -447,7 +468,74 @@ class QuarterManager:
             return 'unknown'
 
 # ================================
-# PATTERN DETECTORS - CORRECTED SMT
+# SWING DETECTOR
+# ================================
+
+class SwingDetector:
+    """Detect swing highs and swing lows within quarters"""
+    
+    @staticmethod
+    def find_swing_highs_lows(df, lookback=3):
+        """Find swing highs and swing lows in a DataFrame"""
+        if df is None or not isinstance(df, pd.DataFrame) or len(df) < lookback + 1:
+            return [], []
+        
+        swing_highs = []
+        swing_lows = []
+        
+        for i in range(lookback, len(df) - lookback):
+            # Check for swing high
+            is_swing_high = True
+            current_high = float(df.iloc[i]['high'])
+            
+            for j in range(1, lookback + 1):
+                if (float(df.iloc[i - j]['high']) >= current_high or 
+                    float(df.iloc[i + j]['high']) >= current_high):
+                    is_swing_high = False
+                    break
+            
+            if is_swing_high:
+                swing_highs.append({
+                    'time': df.iloc[i]['time'],
+                    'price': current_high,
+                    'index': i
+                })
+            
+            # Check for swing low
+            is_swing_low = True
+            current_low = float(df.iloc[i]['low'])
+            
+            for j in range(1, lookback + 1):
+                if (float(df.iloc[i - j]['low']) <= current_low or 
+                    float(df.iloc[i + j]['low']) <= current_low):
+                    is_swing_low = False
+                    break
+            
+            if is_swing_low:
+                swing_lows.append({
+                    'time': df.iloc[i]['time'],
+                    'price': current_low,
+                    'index': i
+                })
+        
+        return swing_highs, swing_lows
+    
+    @staticmethod
+    def get_highest_swing_high(swing_highs):
+        """Get the highest swing high from a list"""
+        if not swing_highs:
+            return None
+        return max(swing_highs, key=lambda x: x['price'])
+    
+    @staticmethod
+    def get_lowest_swing_low(swing_lows):
+        """Get the lowest swing low from a list"""
+        if not swing_lows:
+            return None
+        return min(swing_lows, key=lambda x: x['price'])
+
+# ================================
+# PATTERN DETECTORS - SWING-BASED SMT
 # ================================
 
 class PreciseCRTDetector:
@@ -541,44 +629,53 @@ class PrecisePSPDetector:
         
         return None
 
-class CorrectedSMTDetector:
-    """CORRECTED SMT detector comparing HH/LL across consecutive quarters"""
+class SwingBasedSMTDetector:
+    """SWING-BASED SMT detector using swing highs/lows within quarters"""
     
     def __init__(self):
         self.smt_history = []
         self.quarter_manager = QuarterManager()
-        self.signal_counts = {}  # Track signal counts to prevent duplicates
+        self.swing_detector = SwingDetector()
+        self.signal_counts = {}
         
-    def detect_smt_corrected(self, asset1_data, asset2_data, cycle_type):
-        """Detect SMT by comparing HH/LL across consecutive quarters"""
+    def detect_swing_smt(self, asset1_data, asset2_data, cycle_type):
+        """Detect SMT using swing highs/lows comparison between consecutive quarters"""
         try:
             if (asset1_data is None or not isinstance(asset1_data, pd.DataFrame) or asset1_data.empty or
                 asset2_data is None or not isinstance(asset2_data, pd.DataFrame) or asset2_data.empty):
                 return None
             
+            # Get current quarter
+            current_quarters = self.quarter_manager.detect_current_quarters()
+            current_quarter = current_quarters.get(cycle_type)
+            
+            if not current_quarter:
+                return None
+            
+            # Get valid quarter pairs to check (only consecutive quarters, no skipping)
+            valid_pairs = self.quarter_manager.get_valid_quarter_pairs(current_quarter, cycle_type)
+            
+            if not valid_pairs:
+                return None
+            
             # Group candles into quarters for both assets
-            asset1_quarters = self.quarter_manager.group_candles_by_quarters(asset1_data, cycle_type, num_quarters=4)
-            asset2_quarters = self.quarter_manager.group_candles_by_quarters(asset2_data, cycle_type, num_quarters=4)
+            asset1_quarters = self.quarter_manager.group_candles_by_quarters(asset1_data, cycle_type)
+            asset2_quarters = self.quarter_manager.group_candles_by_quarters(asset2_data, cycle_type)
             
             if not asset1_quarters or not asset2_quarters:
                 return None
             
-            # Get quarter names in chronological order
-            quarter_names = sorted(asset1_quarters.keys())
-            if len(quarter_names) < 2:
-                return None
-            
-            # Check consecutive quarter pairs (limit to 3 quarters back)
-            max_pairs = min(3, len(quarter_names) - 1)
-            
-            for i in range(len(quarter_names) - max_pairs, len(quarter_names) - 1):
-                prev_quarter = quarter_names[i]
-                curr_quarter = quarter_names[i + 1]
+            # Check each valid quarter pair for SMT
+            for prev_q, curr_q in valid_pairs:
+                if prev_q not in asset1_quarters or curr_q not in asset1_quarters:
+                    continue
+                if prev_q not in asset2_quarters or curr_q not in asset2_quarters:
+                    continue
                 
-                smt_result = self._compare_consecutive_quarters(
-                    asset1_quarters[prev_quarter], asset1_quarters[curr_quarter],
-                    asset2_quarters[prev_quarter], asset2_quarters[curr_quarter],
-                    cycle_type, prev_quarter, curr_quarter
+                smt_result = self._compare_quarters_swing_based(
+                    asset1_quarters[prev_q], asset1_quarters[curr_q],
+                    asset2_quarters[prev_q], asset2_quarters[curr_q],
+                    cycle_type, prev_q, curr_q
                 )
                 
                 if smt_result and not self._is_duplicate_signal(smt_result):
@@ -587,48 +684,56 @@ class CorrectedSMTDetector:
             return None
             
         except Exception as e:
-            logger.error(f"Error in corrected SMT detection for {cycle_type}: {str(e)}")
+            logger.error(f"Error in swing-based SMT detection for {cycle_type}: {str(e)}")
             return None
     
-    def _compare_consecutive_quarters(self, asset1_prev, asset1_curr, asset2_prev, asset2_curr, cycle_type, prev_q, curr_q):
-        """Compare two consecutive quarters for HH/LL mismatches"""
+    def _compare_quarters_swing_based(self, asset1_prev, asset1_curr, asset2_prev, asset2_curr, cycle_type, prev_q, curr_q):
+        """Compare two consecutive quarters using swing highs/lows"""
         try:
             if (asset1_prev.empty or asset1_curr.empty or 
                 asset2_prev.empty or asset2_curr.empty):
                 return None
             
-            # Get extreme highs and lows for each quarter
-            asset1_prev_high = float(asset1_prev['high'].max())
-            asset1_curr_high = float(asset1_curr['high'].max())
-            asset1_prev_low = float(asset1_prev['low'].min())
-            asset1_curr_low = float(asset1_curr['low'].min())
+            # Find swing highs and lows for each quarter
+            asset1_prev_swing_highs, asset1_prev_swing_lows = self.swing_detector.find_swing_highs_lows(asset1_prev)
+            asset1_curr_swing_highs, asset1_curr_swing_lows = self.swing_detector.find_swing_highs_lows(asset1_curr)
             
-            asset2_prev_high = float(asset2_prev['high'].max())
-            asset2_curr_high = float(asset2_curr['high'].max())
-            asset2_prev_low = float(asset2_prev['low'].min())
-            asset2_curr_low = float(asset2_curr['low'].min())
+            asset2_prev_swing_highs, asset2_prev_swing_lows = self.swing_detector.find_swing_highs_lows(asset2_prev)
+            asset2_curr_swing_highs, asset2_curr_swing_lows = self.swing_detector.find_swing_highs_lows(asset2_curr)
             
-            # Check for Bearish SMT: Asset1 makes HH, Asset2 doesn't
-            asset1_hh = asset1_curr_high > asset1_prev_high  # TRUE: makes higher high
-            asset2_hh = asset2_curr_high > asset2_prev_high  # FALSE: doesn't make higher high
+            # Get highest swing highs and lowest swing lows
+            asset1_prev_highest = self.swing_detector.get_highest_swing_high(asset1_prev_swing_highs)
+            asset1_curr_highest = self.swing_detector.get_highest_swing_high(asset1_curr_swing_highs)
+            asset1_prev_lowest = self.swing_detector.get_lowest_swing_low(asset1_prev_swing_lows)
+            asset1_curr_lowest = self.swing_detector.get_lowest_swing_low(asset1_curr_swing_lows)
             
-            # Check for Bullish SMT: Asset1 makes LL, Asset2 doesn't  
-            asset1_ll = asset1_curr_low < asset1_prev_low    # TRUE: makes lower low
-            asset2_ll = asset2_curr_low < asset2_prev_low    # FALSE: doesn't make lower low
+            asset2_prev_highest = self.swing_detector.get_highest_swing_high(asset2_prev_swing_highs)
+            asset2_curr_highest = self.swing_detector.get_highest_swing_high(asset2_curr_swing_highs)
+            asset2_prev_lowest = self.swing_detector.get_lowest_swing_low(asset2_prev_swing_lows)
+            asset2_curr_lowest = self.swing_detector.get_lowest_swing_low(asset2_curr_swing_lows)
             
-            if asset1_hh and not asset2_hh:
-                # Bearish SMT detected
+            # Check for valid SMT patterns
+            bearish_smt = self._check_bearish_smt(
+                asset1_prev_highest, asset1_curr_highest,
+                asset2_prev_highest, asset2_curr_highest
+            )
+            
+            bullish_smt = self._check_bullish_smt(
+                asset1_prev_lowest, asset1_curr_lowest,
+                asset2_prev_lowest, asset2_curr_lowest
+            )
+            
+            if bearish_smt:
                 direction = 'bearish'
-                smt_type = 'Higher High'
-                asset1_action = f"made HH ({asset1_prev_high:.4f} → {asset1_curr_high:.4f})"
-                asset2_action = f"no HH ({asset2_prev_high:.4f} → {asset2_curr_high:.4f})"
+                smt_type = 'Higher Swing High'
+                asset1_action = f"made higher swing high ({asset1_prev_highest['price']:.4f} → {asset1_curr_highest['price']:.4f})"
+                asset2_action = f"no higher swing high ({asset2_prev_highest['price']:.4f} → {asset2_curr_highest['price']:.4f})"
                 
-            elif asset1_ll and not asset2_ll:
-                # Bullish SMT detected
-                direction = 'bullish' 
-                smt_type = 'Lower Low'
-                asset1_action = f"made LL ({asset1_prev_low:.4f} → {asset1_curr_low:.4f})"
-                asset2_action = f"no LL ({asset2_prev_low:.4f} → {asset2_curr_low:.4f})"
+            elif bullish_smt:
+                direction = 'bullish'
+                smt_type = 'Lower Swing Low'
+                asset1_action = f"made lower swing low ({asset1_prev_lowest['price']:.4f} → {asset1_curr_lowest['price']:.4f})"
+                asset2_action = f"no lower swing low ({asset2_prev_lowest['price']:.4f} → {asset2_curr_lowest['price']:.4f})"
                 
             else:
                 return None  # No SMT pattern
@@ -643,13 +748,13 @@ class CorrectedSMTDetector:
                 'asset1_action': asset1_action,
                 'asset2_action': asset2_action,
                 'details': f"Asset1 {asset1_action}, Asset2 {asset2_action}",
-                'signal_key': f"{cycle_type}_{prev_q}_{curr_q}_{direction}"  # Unique key for duplicate tracking
+                'signal_key': f"{cycle_type}_{prev_q}_{curr_q}_{direction}"
             }
             
             self.smt_history.append(smt_data)
             self._update_signal_count(smt_data['signal_key'])
             
-            logger.info(f"🎯 CORRECTED SMT: {direction} {cycle_type} {prev_q}→{curr_q}")
+            logger.info(f"🎯 SWING SMT: {direction} {cycle_type} {prev_q}→{curr_q}")
             logger.info(f"   Asset1: {asset1_action}")
             logger.info(f"   Asset2: {asset2_action}")
             
@@ -658,6 +763,32 @@ class CorrectedSMTDetector:
         except Exception as e:
             logger.error(f"Error comparing quarters {prev_q}→{curr_q}: {str(e)}")
             return None
+    
+    def _check_bearish_smt(self, asset1_prev_high, asset1_curr_high, asset2_prev_high, asset2_curr_high):
+        """Check for bearish SMT: Asset1 makes HH, Asset2 doesn't"""
+        if not all([asset1_prev_high, asset1_curr_high, asset2_prev_high, asset2_curr_high]):
+            return False
+        
+        # Asset1: current swing high > previous swing high (makes HH)
+        asset1_hh = asset1_curr_high['price'] > asset1_prev_high['price']
+        
+        # Asset2: current swing high <= previous swing high (doesn't make HH)
+        asset2_no_hh = asset2_curr_high['price'] <= asset2_prev_high['price']
+        
+        return asset1_hh and asset2_no_hh
+    
+    def _check_bullish_smt(self, asset1_prev_low, asset1_curr_low, asset2_prev_low, asset2_curr_low):
+        """Check for bullish SMT: Asset1 makes LL, Asset2 doesn't"""
+        if not all([asset1_prev_low, asset1_curr_low, asset2_prev_low, asset2_curr_low]):
+            return False
+        
+        # Asset1: current swing low < previous swing low (makes LL)
+        asset1_ll = asset1_curr_low['price'] < asset1_prev_low['price']
+        
+        # Asset2: current swing low >= previous swing low (doesn't make LL)
+        asset2_no_ll = asset2_curr_low['price'] >= asset2_prev_low['price']
+        
+        return asset1_ll and asset2_no_ll
     
     def _is_duplicate_signal(self, smt_data):
         """Check if this signal has been sent too many times"""
@@ -848,10 +979,10 @@ class ProgressSignalBuilder:
         logger.info(f"🔄 {self.pair_group}: Signal builder reset")
 
 # ================================
-# CORRECTED TRADING SYSTEM
+# SWING-BASED TRADING SYSTEM
 # ================================
 
-class CorrectedTradingSystem:
+class SwingBasedTradingSystem:
     def __init__(self, pair_group, pair_config):
         self.pair_group = pair_group
         self.pair_config = pair_config
@@ -863,16 +994,16 @@ class CorrectedTradingSystem:
         self.quarter_manager = QuarterManager()
         self.crt_detector = PreciseCRTDetector()
         self.psp_detector = PrecisePSPDetector()
-        self.smt_detector = CorrectedSMTDetector()  # Use corrected SMT detector
+        self.smt_detector = SwingBasedSMTDetector()  # Use swing-based SMT detector
         self.signal_builder = ProgressSignalBuilder(pair_group)
         
         # Data storage
         self.market_data = {self.pair1: {}, self.pair2: {}}
         
-        logger.info(f"🎯 Initialized CORRECTED trading system for {self.pair1}/{self.pair2}")
+        logger.info(f"🎯 Initialized SWING-BASED trading system for {self.pair1}/{self.pair2}")
     
-    async def run_corrected_analysis(self, api_key):
-        """Run corrected analysis with proper quarter-based SMT"""
+    async def run_swing_analysis(self, api_key):
+        """Run swing-based analysis with proper quarter scanning"""
         try:
             # Log current status
             current_status = self.signal_builder.get_progress_status()
@@ -906,7 +1037,7 @@ class CorrectedTradingSystem:
             if self.signal_builder.is_signal_ready():
                 signal = self.signal_builder.get_signal_details()
                 if signal:
-                    logger.info(f"🎯 {self.pair_group}: CORRECTED SIGNAL COMPLETE via {signal['path']}")
+                    logger.info(f"🎯 {self.pair_group}: SWING-BASED SIGNAL COMPLETE via {signal['path']}")
                     self.signal_builder.reset()
                     return signal
             
@@ -917,7 +1048,7 @@ class CorrectedTradingSystem:
             return None
             
         except Exception as e:
-            logger.error(f"❌ Error in corrected analysis for {self.pair_group}: {str(e)}")
+            logger.error(f"❌ Error in swing analysis for {self.pair_group}: {str(e)}")
             return None
     
     async def _fetch_required_data(self, api_key):
@@ -1011,7 +1142,7 @@ class CorrectedTradingSystem:
             self.signal_builder.set_psp_signal(psp_signal)
     
     async def _scan_htf_smt(self):
-        """Scan for higher timeframe SMT with corrected quarter comparison"""
+        """Scan for higher timeframe SMT with swing-based detection"""
         htf_cycles = ['monthly', 'weekly']  # Higher timeframes
         
         for cycle in htf_cycles:
@@ -1023,13 +1154,13 @@ class CorrectedTradingSystem:
                 pair2_data is None or not isinstance(pair2_data, pd.DataFrame) or pair2_data.empty):
                 continue
             
-            smt_signal = self.smt_detector.detect_smt_corrected(pair1_data, pair2_data, cycle)
+            smt_signal = self.smt_detector.detect_swing_smt(pair1_data, pair2_data, cycle)
             
             if smt_signal and self.signal_builder.set_htf_smt(smt_signal):
                 break
     
     async def _scan_ltf_confirmation(self):
-        """Scan for lower timeframe SMT confirmation with corrected quarter comparison"""
+        """Scan for lower timeframe SMT confirmation with swing-based detection"""
         confirmation_cycles = self.signal_builder.get_required_confirmation_cycles()
         
         for cycle in confirmation_cycles:
@@ -1041,20 +1172,20 @@ class CorrectedTradingSystem:
                 pair2_data is None or not isinstance(pair2_data, pd.DataFrame) or pair2_data.empty):
                 continue
             
-            smt_signal = self.smt_detector.detect_smt_corrected(pair1_data, pair2_data, cycle)
+            smt_signal = self.smt_detector.detect_swing_smt(pair1_data, pair2_data, cycle)
             
             if smt_signal:
                 if self.signal_builder.set_ltf_smt(smt_signal):
-                    logger.info(f"🎯 {self.pair_group}: LTF SMT confirmed with corrected quarter comparison")
+                    logger.info(f"🎯 {self.pair_group}: LTF SMT confirmed with swing-based detection")
                     break
             else:
-                logger.info(f"🔍 {self.pair_group}: No LTF SMT found in {cycle} with corrected quarter comparison")
+                logger.info(f"🔍 {self.pair_group}: No LTF SMT found in {cycle} with swing-based detection")
 
 # ================================
-# CORRECTED MAIN MANAGER
+# SWING-BASED MAIN MANAGER
 # ================================
 
-class CorrectedTradingManager:
+class SwingBasedTradingManager:
     def __init__(self, api_key, telegram_token, chat_id):
         self.api_key = api_key
         self.telegram_token = telegram_token
@@ -1064,13 +1195,13 @@ class CorrectedTradingManager:
         
         # Initialize trading systems for all pairs
         for pair_group, pair_config in TRADING_PAIRS.items():
-            self.trading_systems[pair_group] = CorrectedTradingSystem(pair_group, pair_config)
+            self.trading_systems[pair_group] = SwingBasedTradingSystem(pair_group, pair_config)
         
-        logger.info(f"🎯 Initialized CORRECTED trading manager with {len(self.trading_systems)} pair groups")
+        logger.info(f"🎯 Initialized SWING-BASED trading manager with {len(self.trading_systems)} pair groups")
     
-    async def run_corrected_systems(self):
-        """Run all trading systems with corrected SMT detection"""
-        logger.info("🎯 Starting CORRECTED Multi-Pair Trading System...")
+    async def run_swing_systems(self):
+        """Run all trading systems with swing-based SMT detection"""
+        logger.info("🎯 Starting SWING-BASED Multi-Pair Trading System...")
         
         while True:
             try:
@@ -1086,7 +1217,7 @@ class CorrectedTradingManager:
                 tasks = []
                 for pair_group, system in self.trading_systems.items():
                     task = asyncio.create_task(
-                        system.run_corrected_analysis(self.api_key),
+                        system.run_swing_analysis(self.api_key),
                         name=f"analysis_{pair_group}"
                     )
                     tasks.append(task)
@@ -1102,61 +1233,61 @@ class CorrectedTradingManager:
                         logger.error(f"❌ Analysis task failed for {pair_group}: {str(result)}")
                     elif result is not None:
                         signals.append(result)
-                        logger.info(f"🎯 CORRECTED SIGNAL FOUND for {pair_group}")
+                        logger.info(f"🎯 SWING-BASED SIGNAL FOUND for {pair_group}")
                 
                 # Send signals to Telegram
                 if signals:
                     await self._process_signals(signals)
                 
-                logger.info(f"⏰ Corrected cycle complete. Sleeping for {sleep_time:.1f} seconds")
+                logger.info(f"⏰ Swing-based cycle complete. Sleeping for {sleep_time:.1f} seconds")
                 await asyncio.sleep(sleep_time)
                 
             except Exception as e:
-                logger.error(f"❌ Error in corrected main loop: {str(e)}")
+                logger.error(f"❌ Error in swing-based main loop: {str(e)}")
                 await asyncio.sleep(60)
     
     async def _process_signals(self, signals):
         """Process and send signals to Telegram"""
         for signal in signals:
             try:
-                message = self._format_corrected_signal_message(signal)
+                message = self._format_swing_signal_message(signal)
                 success = send_telegram(message, self.telegram_token, self.chat_id)
                 
                 if success:
-                    logger.info(f"📤 Corrected signal sent to Telegram for {signal['pair_group']}")
+                    logger.info(f"📤 Swing-based signal sent to Telegram for {signal['pair_group']}")
                 else:
-                    logger.error(f"❌ Failed to send corrected signal for {signal['pair_group']}")
+                    logger.error(f"❌ Failed to send swing-based signal for {signal['pair_group']}")
                     
             except Exception as e:
-                logger.error(f"❌ Error processing corrected signal: {str(e)}")
+                logger.error(f"❌ Error processing swing-based signal: {str(e)}")
     
-    def _format_corrected_signal_message(self, signal):
-        """Format corrected signal for Telegram"""
+    def _format_swing_signal_message(self, signal):
+        """Format swing-based signal for Telegram"""
         pair_group = signal.get('pair_group', 'Unknown')
         direction = signal.get('direction', 'UNKNOWN').upper()
         strength = signal.get('strength', 0)
         path = signal.get('path', 'UNKNOWN')
         
-        message = f"🎯 *CORRECTED TRADING SIGNAL* 🎯\n\n"
+        message = f"🎯 *SWING-BASED TRADING SIGNAL* 🎯\n\n"
         message += f"*Pair Group:* {pair_group.replace('_', ' ').title()}\n"
         message += f"*Direction:* {direction}\n"
         message += f"*Strength:* {strength}/9\n"
         message += f"*Path:* {path}\n\n"
         
-        # Add criteria with quarter comparison details
+        # Add criteria with swing details
         if 'criteria' in signal:
             message += "*Signal Criteria:*\n"
             for criterion in signal['criteria']:
                 message += f"• {criterion}\n"
         
-        # Add quarter comparison details from SMT
+        # Add swing details from SMT
         if signal.get('htf_smt') and 'details' in signal['htf_smt']:
             message += f"\n*HTF SMT Details:* {signal['htf_smt']['details']}\n"
         if signal.get('ltf_smt') and 'details' in signal['ltf_smt']:
             message += f"*LTF SMT Details:* {signal['ltf_smt']['details']}\n"
         
         message += f"\n*Detection Time:* {signal['timestamp'].strftime('%Y-%m-%d %H:%M:%S %Z')}\n"
-        message += f"\n#CorrectedSignal #{pair_group} #{path}"
+        message += f"\n#SwingSignal #{pair_group} #{path}"
         
         return message
 
@@ -1166,7 +1297,7 @@ class CorrectedTradingManager:
 
 async def main():
     """Main entry point"""
-    logger.info("🎯 Starting CORRECTED Multi-Pair SMT Trading System")
+    logger.info("🎯 Starting SWING-BASED Multi-Pair SMT Trading System")
     
     # Get credentials from environment
     api_key = os.getenv('OANDA_API_KEY')
@@ -1181,10 +1312,10 @@ async def main():
     
     try:
         # Initialize manager
-        manager = CorrectedTradingManager(api_key, telegram_token, telegram_chat_id)
+        manager = SwingBasedTradingManager(api_key, telegram_token, telegram_chat_id)
         
-        # Run all systems with corrected SMT detection
-        await manager.run_corrected_systems()
+        # Run all systems with swing-based SMT detection
+        await manager.run_swing_systems()
         
     except KeyboardInterrupt:
         logger.info("🛑 System stopped by user")
