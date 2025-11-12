@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
 ROBUST MULTI-PAIR SMT TRADING SYSTEM
-With FX Triad (GBPUSD, EURUSD) and NAS100_USD
-Proper sleep timing to next candle + buffer
+With SMT+PSP signal type and enhanced signal descriptions
 """
 
 import asyncio
@@ -38,7 +37,7 @@ TRADING_PAIRS = {
         }
     },
     'us_indices': {
-        'pair1': 'NAS100_USD',  # CHANGED: US30_USD to NAS100_USD
+        'pair1': 'NAS100_USD',
         'pair2': 'SPX500_USD',
         'timeframe_mapping': {
             'monthly': 'H4',
@@ -57,7 +56,7 @@ TRADING_PAIRS = {
             '90min': 'M5'
         }
     },
-    'fx_triad': {  # ADDED: FX Triad
+    'fx_triad': {
         'pair1': 'GBP_USD',
         'pair2': 'EUR_USD',
         'timeframe_mapping': {
@@ -619,27 +618,27 @@ class RobustCRTDetector:
         return None
 
 class RobustPSPDetector:
-    """PSP detector for candle 2 (previous candle) of CRT"""
+    """PSP detector for closed candles only"""
     
     @staticmethod
-    def detect_psp_previous_candle(asset1_data, asset2_data, timeframe):
-        """Detect PSP on the previous candle (candle 2 of CRT)"""
+    def detect_psp_closed_candle(asset1_data, asset2_data, timeframe):
+        """Detect PSP on the most recent CLOSED candle"""
         if (asset1_data is None or not isinstance(asset1_data, pd.DataFrame) or asset1_data.empty or
             asset2_data is None or not isinstance(asset2_data, pd.DataFrame) or asset2_data.empty):
             return None
         
-        # Get the previous complete candle (candle 2 of CRT)
-        asset1_prev = asset1_data[asset1_data['complete'] == True]
-        asset2_prev = asset2_data[asset2_data['complete'] == True]
+        # Get only COMPLETE candles (closed candles)
+        asset1_complete = asset1_data[asset1_data['complete'] == True]
+        asset2_complete = asset2_data[asset2_data['complete'] == True]
         
-        if asset1_prev.empty or asset2_prev.empty:
+        if asset1_complete.empty or asset2_complete.empty:
             return None
             
-        # Get the most recent complete candle (previous candle)
-        asset1_candle = asset1_prev.iloc[-1]
-        asset2_candle = asset2_prev.iloc[-1]
+        # Get the most recent COMPLETE candle
+        asset1_candle = asset1_complete.iloc[-1]
+        asset2_candle = asset2_complete.iloc[-1]
         
-        # Check if both previous candles have the same timestamp (same candle)
+        # Check if both candles have the same timestamp (same candle period)
         if asset1_candle['time'] != asset2_candle['time']:
             logger.debug(f"PSP timestamps don't match: {asset1_candle['time']} vs {asset2_candle['time']}")
             return None
@@ -653,7 +652,8 @@ class RobustPSPDetector:
                     'timeframe': timeframe,
                     'asset1_color': asset1_color,
                     'asset2_color': asset2_color,
-                    'timestamp': asset1_candle['time']
+                    'timestamp': asset1_candle['time'],
+                    'candle_time': asset1_candle['time']
                 }
         except (ValueError, TypeError) as e:
             logger.error(f"Error in PSP calculation: {e}")
@@ -662,7 +662,7 @@ class RobustPSPDetector:
         return None
 
 class RobustSMTDetector:
-    """ROBUST SMT detector with invalidation logic - FIXED VERSION"""
+    """ROBUST SMT detector with invalidation logic"""
     
     def __init__(self, pair_config):
         self.smt_history = []
@@ -996,22 +996,18 @@ class RobustSignalBuilder:
             self.criteria = [c for c in self.criteria if not c.startswith(f"SMT {cycle}:")]
     
     def set_psp_signal(self, psp_data):
-        """Set PSP signal (must be on previous candle of CRT)"""
-        if psp_data and self.active_crt:
-            # Check if PSP is on same timeframe and approximate time as CRT's previous candle
-            time_diff = abs((psp_data['timestamp'] - self.active_crt['timestamp']).total_seconds())
-            if time_diff < 3600:  # Within 1 hour (same general period)
-                self.active_psp = psp_data
-                self.signal_strength += 2
-                self.criteria.append(f"PSP {psp_data['timeframe']}: {psp_data['asset1_color']}/{psp_data['asset2_color']}")
-                self.status = f"CRT_PSP_{self.active_crt['direction'].upper()}_WAITING_SMT"
-                logger.info(f"🔷 {self.pair_group}: PSP confirmed on previous candle → Waiting for SMT")
-                return True
+        """Set PSP signal (must be on closed candle)"""
+        if psp_data:
+            self.active_psp = psp_data
+            self.signal_strength += 2
+            self.criteria.append(f"PSP {psp_data['timeframe']}: {psp_data['asset1_color']}/{psp_data['asset2_color']}")
+            logger.info(f"🔷 {self.pair_group}: PSP confirmed on closed {psp_data['timeframe']} candle")
+            return True
         return False
     
     def is_signal_ready(self):
-        """Check if we have complete signal"""
-        # Path 1: Multiple SMTs in same direction
+        """Check if we have complete signal - NOW INCLUDES SMT+PSP"""
+        # Path 1: Multiple SMTs in same direction (2+ SMTs)
         multiple_smts = len(self.active_smts) >= 2
         
         # Path 2: CRT + any SMT (direction already matched)
@@ -1020,7 +1016,19 @@ class RobustSignalBuilder:
         # Path 3: CRT + PSP + any SMT (direction already matched)
         crt_psp_smt = self.active_crt and self.active_psp and len(self.active_smts) >= 1
         
-        return (multiple_smts or crt_smt or crt_psp_smt) and self.signal_strength >= 5
+        # NEW PATH 4: SMT + PSP on same timeframe (no CRT required)
+        smt_psp = len(self.active_smts) >= 1 and self.active_psp
+        
+        # Check if PSP is on same timeframe as any active SMT
+        smt_psp_same_timeframe = False
+        if smt_psp:
+            psp_timeframe = self.active_psp['timeframe']
+            for smt in self.active_smts.values():
+                if smt['timeframe'] == psp_timeframe:
+                    smt_psp_same_timeframe = True
+                    break
+        
+        return (multiple_smts or crt_smt or crt_psp_smt or (smt_psp and smt_psp_same_timeframe)) and self.signal_strength >= 5
     
     def get_required_cycles(self):
         """Get which cycles to scan based on current signals"""
@@ -1070,20 +1078,41 @@ class RobustSignalBuilder:
             return None
         
         # Determine signal path
-        if len(self.active_smts) >= 2:
+        multiple_smts = len(self.active_smts) >= 2
+        crt_smt = self.active_crt and len(self.active_smts) >= 1
+        crt_psp_smt = self.active_crt and self.active_psp and len(self.active_smts) >= 1
+        
+        # Check for SMT+PSP on same timeframe
+        smt_psp_same_timeframe = False
+        if self.active_psp and len(self.active_smts) >= 1:
+            psp_timeframe = self.active_psp['timeframe']
+            for smt in self.active_smts.values():
+                if smt['timeframe'] == psp_timeframe:
+                    smt_psp_same_timeframe = True
+                    break
+        
+        if multiple_smts:
             path = "MULTIPLE_SMTS"
-        elif self.active_crt and self.active_psp:
+            description = "Two or more SMT signals in the same direction across different timeframes"
+        elif crt_psp_smt:
             path = "CRT_PSP_SMT"
-        elif self.active_crt:
+            description = "CRT signal confirmed by PSP on previous candle and supported by SMT"
+        elif crt_smt:
             path = "CRT_SMT"
+            description = "CRT signal supported by SMT in direction"
+        elif smt_psp_same_timeframe:
+            path = "SMT_PSP"
+            description = "SMT signal confirmed by PSP on the same timeframe"
         else:
             path = "UNKNOWN"
+            description = "Unknown signal path"
         
         return {
             'pair_group': self.pair_group,
             'direction': direction,
             'strength': self.signal_strength,
             'path': path,
+            'description': description,
             'criteria': self.criteria.copy(),
             'crt': self.active_crt,
             'psp': self.active_psp,
@@ -1127,7 +1156,7 @@ class RobustTradingSystem:
         self.quarter_manager = QuarterManager()
         self.crt_detector = RobustCRTDetector(self.timing_manager)
         self.psp_detector = RobustPSPDetector()
-        self.smt_detector = RobustSMTDetector(pair_config)  # FIXED: Pass pair_config
+        self.smt_detector = RobustSMTDetector(pair_config)
         self.signal_builder = RobustSignalBuilder(pair_group)
         
         # Data storage
@@ -1158,15 +1187,16 @@ class RobustTradingSystem:
             if not self.signal_builder.is_signal_ready():
                 await self._scan_crt_signals()
             
-            # Step 3: If we have CRT, scan for PSP on previous candle
-            if self.signal_builder.active_crt and not self.signal_builder.active_psp:
-                await self._scan_psp_previous_candle()
+            # Step 3: Scan for PSP on ALL timeframes (for SMT+PSP signals)
+            if not self.signal_builder.is_signal_ready():
+                await self._scan_psp_all_timeframes()
             
             # Check if signal is complete
             if self.signal_builder.is_signal_ready():
                 signal = self.signal_builder.get_signal_details()
                 if signal:
                     logger.info(f"🎯 {self.pair_group}: ROBUST SIGNAL COMPLETE via {signal['path']}")
+                    logger.info(f"📋 Signal Description: {signal['description']}")
                     self.signal_builder.reset()
                     return signal
             
@@ -1286,23 +1316,30 @@ class RobustTradingSystem:
                 logger.info(f"🔷 {self.pair_group}: Fresh CRT detected on {timeframe}")
                 break
     
-    async def _scan_psp_previous_candle(self):
-        """Scan for PSP on the previous candle (candle 2 of CRT)"""
-        if not self.signal_builder.active_crt or not self.signal_builder.crt_timeframe:
-            return
+    async def _scan_psp_all_timeframes(self):
+        """Scan for PSP on ALL timeframes (for SMT+PSP signals)"""
+        # Get all timeframes we have data for
+        all_timeframes = set()
+        for pair in [self.pair1, self.pair2]:
+            all_timeframes.update(self.market_data[pair].keys())
         
-        timeframe = self.signal_builder.crt_timeframe
-        pair1_data = self.market_data[self.pair1].get(timeframe)
-        pair2_data = self.market_data[self.pair2].get(timeframe)
-        
-        if (pair1_data is None or not isinstance(pair1_data, pd.DataFrame) or pair1_data.empty or
-            pair2_data is None or not isinstance(pair2_data, pd.DataFrame) or pair2_data.empty):
-            return
-        
-        psp_signal = self.psp_detector.detect_psp_previous_candle(pair1_data, pair2_data, timeframe)
-        if psp_signal:
-            self.signal_builder.set_psp_signal(psp_signal)
-            logger.info(f"🔷 {self.pair_group}: PSP confirmed on previous candle")
+        for timeframe in all_timeframes:
+            # Skip if we already have a PSP signal
+            if self.signal_builder.active_psp:
+                break
+                
+            pair1_data = self.market_data[self.pair1].get(timeframe)
+            pair2_data = self.market_data[self.pair2].get(timeframe)
+            
+            if (pair1_data is None or not isinstance(pair1_data, pd.DataFrame) or pair1_data.empty or
+                pair2_data is None or not isinstance(pair2_data, pd.DataFrame) or pair2_data.empty):
+                continue
+            
+            psp_signal = self.psp_detector.detect_psp_closed_candle(pair1_data, pair2_data, timeframe)
+            
+            if psp_signal:
+                self.signal_builder.set_psp_signal(psp_signal)
+                logger.info(f"🔷 {self.pair_group}: PSP detected on {timeframe}")
 
 # ================================
 # ROBUST MAIN MANAGER
@@ -1388,12 +1425,14 @@ class RobustTradingManager:
         direction = signal.get('direction', 'UNKNOWN').upper()
         strength = signal.get('strength', 0)
         path = signal.get('path', 'UNKNOWN')
+        description = signal.get('description', '')
         
         message = f"🎯 *ROBUST TRADING SIGNAL* 🎯\n\n"
         message += f"*Pair Group:* {pair_group.replace('_', ' ').title()}\n"
         message += f"*Direction:* {direction}\n"
         message += f"*Strength:* {strength}/9\n"
-        message += f"*Path:* {path}\n\n"
+        message += f"*Path:* {path}\n"
+        message += f"*Description:* {description}\n\n"
         
         # Add criteria
         if 'criteria' in signal:
