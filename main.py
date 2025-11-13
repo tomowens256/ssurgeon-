@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-ADVANCED SMT TRADING SYSTEM WITH INTELLIGENT MINDSET
-- Looks back for PSP when SMT forms
-- Tracks multiple SMTs in same direction
-- Strength-based decision making
-- Continuous PSP monitoring
+ADVANCED SMT TRADING SYSTEM WITH TIME-BASED SWING DESCRIPTIONS
+- Shows swing timing instead of just prices
+- Clearer SMT formation descriptions
+- Time-based signal naming
+- Enhanced tracking
 """
 
 import asyncio
@@ -93,7 +93,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('advanced_trading_system.log'),
+        logging.FileHandler('swing_time_trading_system.log'),
         logging.StreamHandler()
     ]
 )
@@ -237,7 +237,7 @@ def fetch_candles(instrument, timeframe, count=100, api_key=None):
     return pd.DataFrame()
 
 # ================================
-# ADVANCED TIMING MANAGER
+# TIMING MANAGER
 # ================================
 
 class AdvancedTimingManager:
@@ -345,7 +345,7 @@ class AdvancedTimingManager:
         return age_seconds <= (max_age_minutes * 60)
 
 # ================================
-# ADVANCED QUARTER MANAGER
+# QUARTER MANAGER
 # ================================
 
 class AdvancedQuarterManager:
@@ -488,11 +488,11 @@ class AdvancedQuarterManager:
             return 'unknown'
 
 # ================================
-# ADVANCED SWING DETECTOR
+# SWING DETECTOR WITH TIME DESCRIPTIONS
 # ================================
 
-class AdvancedSwingDetector:
-    """Enhanced swing detection with better pattern recognition"""
+class TimeBasedSwingDetector:
+    """Swing detection with time-based descriptions"""
     
     @staticmethod
     def find_swing_highs_lows(df, lookback=3):
@@ -549,106 +549,259 @@ class AdvancedSwingDetector:
         if not swing_lows:
             return None
         return min(swing_lows, key=lambda x: x['price'])
-
-# ================================
-# ADVANCED PATTERN DETECTORS
-# ================================
-
-class AdvancedCRTDetector:
-    """Enhanced CRT detector with better validation"""
-    
-    def __init__(self, timing_manager):
-        self.timing_manager = timing_manager
-    
-    def calculate_crt_current_candle(self, df):
-        """Calculate CRT only on the current (incomplete) candle"""
-        if df is None or not isinstance(df, pd.DataFrame) or df.empty or len(df) < 3:
-            return None
-        
-        current_candle = df[df['is_current'] == True]
-        if current_candle.empty:
-            return None
-            
-        current_candle = current_candle.iloc[0]
-        
-        if not self.timing_manager.is_crt_fresh(current_candle['time']):
-            logger.debug("CRT candle too old, skipping")
-            return None
-        
-        complete_candles = df[df['complete'] == True].tail(2)
-        if len(complete_candles) < 2:
-            return None
-            
-        c1 = complete_candles.iloc[0]
-        c2 = complete_candles.iloc[1]
-        c3 = current_candle
-        
-        try:
-            c2_range = float(c2['high']) - float(c2['low'])
-            c2_mid = float(c2['low']) + 0.5 * c2_range
-            
-            buy_crt = (float(c2['low']) < float(c1['low']) and 
-                      float(c2['close']) > float(c1['low']) and 
-                      float(c3['open']) > c2_mid)
-            
-            sell_crt = (float(c2['high']) > float(c1['high']) and 
-                       float(c2['close']) < float(c1['high']) and 
-                       float(c3['open']) < c2_mid)
-            
-            if buy_crt:
-                return {'direction': 'bullish', 'timestamp': c3['time']}
-            elif sell_crt:
-                return {'direction': 'bearish', 'timestamp': c3['time']}
-        except (ValueError, TypeError) as e:
-            logger.error(f"Error in CRT calculation: {e}")
-            return None
-        
-        return None
-
-class AdvancedPSPDetector:
-    """Advanced PSP detector with lookback capability"""
     
     @staticmethod
-    def detect_psp_closed_candle(asset1_data, asset2_data, timeframe):
-        """Detect PSP on the most recent CLOSED candle"""
-        if (asset1_data is None or not isinstance(asset1_data, pd.DataFrame) or asset1_data.empty or
-            asset2_data is None or not isinstance(asset2_data, pd.DataFrame) or asset2_data.empty):
-            return None
+    def format_swing_time_description(prev_swing, curr_swing, swing_type="low"):
+        """Create time-based description for swing formation"""
+        if not prev_swing or not curr_swing:
+            return "insufficient swing data"
         
-        asset1_complete = asset1_data[asset1_data['complete'] == True]
-        asset2_complete = asset2_data[asset2_data['complete'] == True]
+        prev_time = prev_swing['time'].strftime('%H:%M')
+        curr_time = curr_swing['time'].strftime('%H:%M')
         
-        if asset1_complete.empty or asset2_complete.empty:
-            return None
-            
-        asset1_candle = asset1_complete.iloc[-1]
-        asset2_candle = asset2_complete.iloc[-1]
+        if swing_type == "high":
+            if curr_swing['price'] > prev_swing['price']:
+                return f"made first high at {prev_time} and higher high at {curr_time}"
+            else:
+                return f"made first high at {prev_time} and lower high at {curr_time}"
+        else:  # low
+            if curr_swing['price'] < prev_swing['price']:
+                return f"made first low at {prev_time} and lower low at {curr_time}"
+            else:
+                return f"made first low at {prev_time} and higher low at {curr_time}"
+
+# ================================
+# TIME-BASED SMT DETECTOR WITH SWING TIME DESCRIPTIONS
+# ================================
+
+class SwingTimeSMTDetector:
+    """SMT detector with swing time-based descriptions"""
+    
+    def __init__(self, pair_config):
+        self.smt_history = []
+        self.quarter_manager = AdvancedQuarterManager()
+        self.swing_detector = TimeBasedSwingDetector()
+        self.signal_counts = {}
+        self.invalidated_smts = set()
+        self.pair_config = pair_config
+        self.active_smts = {}
         
-        if asset1_candle['time'] != asset2_candle['time']:
-            logger.debug(f"PSP timestamps don't match: {asset1_candle['time']} vs {asset2_candle['time']}")
-            return None
+        # PSP tracking for each SMT
+        self.smt_psp_tracking = {}
         
+    def detect_smt_all_cycles(self, asset1_data, asset2_data, cycle_type):
+        """Detect SMT for a specific cycle with SWING TIME descriptions"""
         try:
-            asset1_color = 'green' if float(asset1_candle['close']) > float(asset1_candle['open']) else 'red'
-            asset2_color = 'green' if float(asset2_candle['close']) > float(asset2_candle['open']) else 'red'
+            if (asset1_data is None or not isinstance(asset1_data, pd.DataFrame) or asset1_data.empty or
+                asset2_data is None or not isinstance(asset2_data, pd.DataFrame) or asset2_data.empty):
+                return None
             
-            if asset1_color != asset2_color:
-                return {
-                    'timeframe': timeframe,
-                    'asset1_color': asset1_color,
-                    'asset2_color': asset2_color,
-                    'timestamp': asset1_candle['time'],
-                    'candle_time': asset1_candle['time']
+            current_quarters = self.quarter_manager.detect_current_quarters()
+            current_quarter = current_quarters.get(cycle_type)
+            
+            if not current_quarter:
+                return None
+            
+            valid_pairs = self.quarter_manager.get_valid_quarter_pairs(current_quarter, cycle_type)
+            
+            if not valid_pairs:
+                return None
+            
+            asset1_quarters = self.quarter_manager.group_candles_by_quarters(asset1_data, cycle_type)
+            asset2_quarters = self.quarter_manager.group_candles_by_quarters(asset2_data, cycle_type)
+            
+            if not asset1_quarters or not asset2_quarters:
+                return None
+            
+            for prev_q, curr_q in valid_pairs:
+                if prev_q not in asset1_quarters or curr_q not in asset1_quarters:
+                    continue
+                if prev_q not in asset2_quarters or curr_q not in asset2_quarters:
+                    continue
+                
+                smt_result = self._compare_quarters_swing_time_based(
+                    asset1_quarters[prev_q], asset1_quarters[curr_q],
+                    asset2_quarters[prev_q], asset2_quarters[curr_q],
+                    cycle_type, prev_q, curr_q
+                )
+                
+                if smt_result and not self._is_duplicate_signal(smt_result):
+                    # Initialize PSP tracking for this SMT
+                    signal_key = smt_result['signal_key']
+                    if signal_key not in self.smt_psp_tracking:
+                        self.smt_psp_tracking[signal_key] = {
+                            'psp_found': False,
+                            'check_count': 0,
+                            'max_checks': 20,
+                            'last_check': datetime.now(NY_TZ)
+                        }
+                    
+                    return smt_result
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error in SMT detection for {cycle_type}: {str(e)}")
+            return None
+    
+    def _compare_quarters_swing_time_based(self, asset1_prev, asset1_curr, asset2_prev, asset2_curr, cycle_type, prev_q, curr_q):
+        """Compare two consecutive quarters using swing TIMING descriptions"""
+        try:
+            if (asset1_prev.empty or asset1_curr.empty or 
+                asset2_prev.empty or asset2_curr.empty):
+                return None
+            
+            # Find swing highs and lows for each quarter
+            asset1_prev_swing_highs, asset1_prev_swing_lows = self.swing_detector.find_swing_highs_lows(asset1_prev)
+            asset1_curr_swing_highs, asset1_curr_swing_lows = self.swing_detector.find_swing_highs_lows(asset1_curr)
+            
+            asset2_prev_swing_highs, asset2_prev_swing_lows = self.swing_detector.find_swing_highs_lows(asset2_prev)
+            asset2_curr_swing_highs, asset2_curr_swing_lows = self.swing_detector.find_swing_highs_lows(asset2_curr)
+            
+            # Get highest swing highs and lowest swing lows
+            asset1_prev_highest = self.swing_detector.get_highest_swing_high(asset1_prev_swing_highs)
+            asset1_curr_highest = self.swing_detector.get_highest_swing_high(asset1_curr_swing_highs)
+            asset1_prev_lowest = self.swing_detector.get_lowest_swing_low(asset1_prev_swing_lows)
+            asset1_curr_lowest = self.swing_detector.get_lowest_swing_low(asset1_curr_swing_lows)
+            
+            asset2_prev_highest = self.swing_detector.get_highest_swing_high(asset2_prev_swing_highs)
+            asset2_curr_highest = self.swing_detector.get_highest_swing_high(asset2_curr_swing_highs)
+            asset2_prev_lowest = self.swing_detector.get_lowest_swing_low(asset2_prev_swing_lows)
+            asset2_curr_lowest = self.swing_detector.get_lowest_swing_low(asset2_curr_swing_lows)
+            
+            # Check for SMT patterns with TIME DESCRIPTIONS
+            bearish_smt = self._check_bearish_smt(
+                asset1_prev_highest, asset1_curr_highest,
+                asset2_prev_highest, asset2_curr_highest
+            )
+            
+            bullish_smt = self._check_bullish_smt(
+                asset1_prev_lowest, asset1_curr_lowest,
+                asset2_prev_lowest, asset2_curr_lowest
+            )
+            
+            current_time = datetime.now(NY_TZ)
+            
+            if bearish_smt:
+                direction = 'bearish'
+                smt_type = 'Higher Swing High'
+                # USE TIME DESCRIPTIONS INSTEAD OF PRICE DESCRIPTIONS
+                asset1_action = self.swing_detector.format_swing_time_description(
+                    asset1_prev_highest, asset1_curr_highest, "high"
+                )
+                asset2_action = self.swing_detector.format_swing_time_description(
+                    asset2_prev_highest, asset2_curr_highest, "high"
+                )
+                critical_level = asset1_curr_highest['price']
+                
+            elif bullish_smt:
+                direction = 'bullish'
+                smt_type = 'Lower Swing Low'
+                # USE TIME DESCRIPTIONS INSTEAD OF PRICE DESCRIPTIONS
+                asset1_action = self.swing_detector.format_swing_time_description(
+                    asset1_prev_lowest, asset1_curr_lowest, "low"
+                )
+                asset2_action = self.swing_detector.format_swing_time_description(
+                    asset2_prev_lowest, asset2_curr_lowest, "low"
+                )
+                critical_level = asset1_curr_lowest['price']
+                
+            else:
+                return None
+            
+            # TIME-BASED SIGNAL NAMING
+            smt_data = {
+                'direction': direction,
+                'type': smt_type,
+                'cycle': cycle_type,
+                'quarters': f"{prev_q}→{curr_q}",
+                'timestamp': current_time,
+                'formation_time': current_time,
+                'asset1_action': asset1_action,
+                'asset2_action': asset2_action,
+                'details': f"Asset1 {asset1_action}, Asset2 {asset2_action}",
+                'signal_key': f"SMT_{cycle_type}_{prev_q}_{curr_q}_{direction}_{current_time.strftime('%m%d_%H%M')}",
+                'critical_level': critical_level,
+                'timeframe': self.pair_config['timeframe_mapping'][cycle_type],
+                # Store swing times for reference
+                'swing_times': {
+                    'asset1_prev': asset1_prev_highest['time'] if bearish_smt else asset1_prev_lowest['time'],
+                    'asset1_curr': asset1_curr_highest['time'] if bearish_smt else asset1_curr_lowest['time'],
+                    'asset2_prev': asset2_prev_highest['time'] if bearish_smt else asset2_prev_lowest['time'],
+                    'asset2_curr': asset2_curr_highest['time'] if bearish_smt else asset2_curr_lowest['time']
                 }
-        except (ValueError, TypeError) as e:
-            logger.error(f"Error in PSP calculation: {e}")
+            }
+            
+            self.smt_history.append(smt_data)
+            self._update_signal_count(smt_data['signal_key'])
+            
+            logger.info(f"🎯 SWING-TIME SMT: {direction} {cycle_type} {prev_q}→{curr_q}")
+            logger.info(f"   Signal ID: {smt_data['signal_key']}")
+            logger.info(f"   Asset1: {asset1_action}")
+            logger.info(f"   Asset2: {asset2_action}")
+            
+            return smt_data
+            
+        except Exception as e:
+            logger.error(f"Error comparing quarters {prev_q}→{curr_q}: {str(e)}")
             return None
+    
+    def _check_bearish_smt(self, asset1_prev_high, asset1_curr_high, asset2_prev_high, asset2_curr_high):
+        """Check for bearish SMT: Asset1 makes HH, Asset2 doesn't"""
+        if not all([asset1_prev_high, asset1_curr_high, asset2_prev_high, asset2_curr_high]):
+            return False
+        
+        # Asset1: current swing high > previous swing high (makes HH)
+        asset1_hh = asset1_curr_high['price'] > asset1_prev_high['price']
+        
+        # Asset2: current swing high <= previous swing high (doesn't make HH)
+        asset2_no_hh = asset2_curr_high['price'] <= asset2_prev_high['price']
+        
+        return asset1_hh and asset2_no_hh
+    
+    def _check_bullish_smt(self, asset1_prev_low, asset1_curr_low, asset2_prev_low, asset2_curr_low):
+        """Check for bullish SMT: Asset1 makes LL, Asset2 doesn't"""
+        if not all([asset1_prev_low, asset1_curr_low, asset2_prev_low, asset2_curr_low]):
+            return False
+        
+        # Asset1: current swing low < previous swing low (makes LL)
+        asset1_ll = asset1_curr_low['price'] < asset1_prev_low['price']
+        
+        # Asset2: current swing low >= previous swing low (doesn't make LL)
+        asset2_no_ll = asset2_curr_low['price'] >= asset2_prev_low['price']
+        
+        return asset1_ll and asset2_no_ll
+    
+    def check_psp_for_smt(self, smt_data, asset1_data, asset2_data):
+        """Check for PSP in past 5 candles for a specific SMT"""
+        if not smt_data:
+            return None
+            
+        signal_key = smt_data['signal_key']
+        timeframe = smt_data['timeframe']
+        
+        # Update tracking
+        if signal_key in self.smt_psp_tracking:
+            tracking = self.smt_psp_tracking[signal_key]
+            tracking['check_count'] += 1
+            tracking['last_check'] = datetime.now(NY_TZ)
+        
+        # Look for PSP in last 5 candles
+        psp_signal = self._detect_psp_last_n_candles(asset1_data, asset2_data, timeframe, n=5)
+        
+        if psp_signal:
+            logger.info(f"🎯 PSP FOUND for SMT {smt_data['cycle']} {smt_data['quarters']} - {psp_signal['candles_ago']} candles ago")
+            
+            # Mark PSP as found for this SMT
+            if signal_key in self.smt_psp_tracking:
+                self.smt_psp_tracking[signal_key]['psp_found'] = True
+            
+            return psp_signal
         
         return None
     
-    @staticmethod
-    def detect_psp_last_n_candles(asset1_data, asset2_data, timeframe, n=5):
-        """Look back at last N closed candles for PSP"""
+    def _detect_psp_last_n_candles(self, asset1_data, asset2_data, timeframe, n=5):
+        """Look back at last N closed candles for PSP with time-based naming"""
         if (asset1_data is None or not isinstance(asset1_data, pd.DataFrame) or asset1_data.empty or
             asset2_data is None or not isinstance(asset2_data, pd.DataFrame) or asset2_data.empty):
             return None
@@ -679,120 +832,20 @@ class AdvancedPSPDetector:
                 asset2_color = 'green' if float(asset2_candle['close']) > float(asset2_candle['open']) else 'red'
                 
                 if asset1_color != asset2_color:
+                    formation_time = asset1_candle['time']
                     return {
                         'timeframe': timeframe,
                         'asset1_color': asset1_color,
                         'asset2_color': asset2_color,
-                        'timestamp': asset1_candle['time'],
-                        'candle_time': asset1_candle['time'],
-                        'candles_ago': len(asset1_recent) - i - 1
+                        'timestamp': datetime.now(NY_TZ),
+                        'formation_time': formation_time,
+                        'candle_time': formation_time,
+                        'candles_ago': len(asset1_recent) - i - 1,
+                        'signal_key': f"PSP_{timeframe}_{asset1_color}_{asset2_color}_{formation_time.strftime('%m%d_%H%M')}"
                     }
             except (ValueError, TypeError) as e:
                 logger.error(f"Error in PSP calculation: {e}")
                 continue
-        
-        return None
-
-# ================================
-# INTELLIGENT SMT DETECTOR WITH MINDSET
-# ================================
-
-class IntelligentSMTDetector:
-    """INTELLIGENT SMT detector with advanced decision making"""
-    
-    def __init__(self, pair_config):
-        self.smt_history = []
-        self.quarter_manager = AdvancedQuarterManager()
-        self.swing_detector = AdvancedSwingDetector()
-        self.signal_counts = {}
-        self.invalidated_smts = set()
-        self.pair_config = pair_config
-        self.active_smts = {}  # Track active SMTs by cycle and quarters
-        
-        # PSP tracking for each SMT
-        self.smt_psp_tracking = {}  # signal_key -> {'psp_found': bool, 'check_count': int, 'max_checks': 20}
-        
-    def detect_smt_all_cycles(self, asset1_data, asset2_data, cycle_type):
-        """Detect SMT for a specific cycle with enhanced logic"""
-        try:
-            if (asset1_data is None or not isinstance(asset1_data, pd.DataFrame) or asset1_data.empty or
-                asset2_data is None or not isinstance(asset2_data, pd.DataFrame) or asset2_data.empty):
-                return None
-            
-            current_quarters = self.quarter_manager.detect_current_quarters()
-            current_quarter = current_quarters.get(cycle_type)
-            
-            if not current_quarter:
-                return None
-            
-            valid_pairs = self.quarter_manager.get_valid_quarter_pairs(current_quarter, cycle_type)
-            
-            if not valid_pairs:
-                return None
-            
-            asset1_quarters = self.quarter_manager.group_candles_by_quarters(asset1_data, cycle_type)
-            asset2_quarters = self.quarter_manager.group_candles_by_quarters(asset2_data, cycle_type)
-            
-            if not asset1_quarters or not asset2_quarters:
-                return None
-            
-            for prev_q, curr_q in valid_pairs:
-                if prev_q not in asset1_quarters or curr_q not in asset1_quarters:
-                    continue
-                if prev_q not in asset2_quarters or curr_q not in asset2_quarters:
-                    continue
-                
-                smt_result = self._compare_quarters_swing_based(
-                    asset1_quarters[prev_q], asset1_quarters[curr_q],
-                    asset2_quarters[prev_q], asset2_quarters[curr_q],
-                    cycle_type, prev_q, curr_q
-                )
-                
-                if smt_result and not self._is_duplicate_signal(smt_result):
-                    # Initialize PSP tracking for this SMT
-                    signal_key = smt_result['signal_key']
-                    if signal_key not in self.smt_psp_tracking:
-                        self.smt_psp_tracking[signal_key] = {
-                            'psp_found': False,
-                            'check_count': 0,
-                            'max_checks': 20,  # Check up to 20 new candles
-                            'last_check': datetime.now(NY_TZ)
-                        }
-                    
-                    return smt_result
-            
-            return None
-            
-        except Exception as e:
-            logger.error(f"Error in SMT detection for {cycle_type}: {str(e)}")
-            return None
-    
-    def check_psp_for_smt(self, smt_data, asset1_data, asset2_data):
-        """Check for PSP in past 5 candles for a specific SMT"""
-        if not smt_data:
-            return None
-            
-        signal_key = smt_data['signal_key']
-        timeframe = smt_data['timeframe']
-        
-        # Update tracking
-        if signal_key in self.smt_psp_tracking:
-            tracking = self.smt_psp_tracking[signal_key]
-            tracking['check_count'] += 1
-            tracking['last_check'] = datetime.now(NY_TZ)
-        
-        # Look for PSP in last 5 candles
-        psp_detector = AdvancedPSPDetector()
-        psp_signal = psp_detector.detect_psp_last_n_candles(asset1_data, asset2_data, timeframe, n=5)
-        
-        if psp_signal:
-            logger.info(f"🎯 PSP FOUND for SMT {smt_data['cycle']} {smt_data['quarters']} - {psp_signal['candles_ago']} candles ago")
-            
-            # Mark PSP as found for this SMT
-            if signal_key in self.smt_psp_tracking:
-                self.smt_psp_tracking[signal_key]['psp_found'] = True
-            
-            return psp_signal
         
         return None
     
@@ -817,133 +870,6 @@ class IntelligentSMTDetector:
             return False
         
         return True
-    
-    def get_smts_by_direction(self):
-        """Group active SMTs by direction for strength analysis"""
-        bullish_smts = []
-        bearish_smts = []
-        
-        for smt in self.smt_history[-20:]:  # Check recent SMTs
-            if smt['signal_key'] in self.invalidated_smts:
-                continue
-                
-            if smt['direction'] == 'bullish':
-                bullish_smts.append(smt)
-            else:
-                bearish_smts.append(smt)
-        
-        return bullish_smts, bearish_smts
-    
-    def get_stronger_direction(self):
-        """Determine which direction has stronger SMT evidence"""
-        bullish_smts, bearish_smts = self.get_smts_by_direction()
-        
-        bull_strength = len(bullish_smts)
-        bear_strength = len(bearish_smts)
-        
-        logger.info(f"💪 Strength Analysis - Bullish: {bull_strength} SMTs, Bearish: {bear_strength} SMTs")
-        
-        if bull_strength > bear_strength and bull_strength >= 2:
-            return 'bullish', bull_strength
-        elif bear_strength > bull_strength and bear_strength >= 2:
-            return 'bearish', bear_strength
-        else:
-            return None, 0
-    
-    def _compare_quarters_swing_based(self, asset1_prev, asset1_curr, asset2_prev, asset2_curr, cycle_type, prev_q, curr_q):
-        """Compare two consecutive quarters using swing highs/lows"""
-        try:
-            if (asset1_prev.empty or asset1_curr.empty or 
-                asset2_prev.empty or asset2_curr.empty):
-                return None
-            
-            asset1_prev_swing_highs, asset1_prev_swing_lows = self.swing_detector.find_swing_highs_lows(asset1_prev)
-            asset1_curr_swing_highs, asset1_curr_swing_lows = self.swing_detector.find_swing_highs_lows(asset1_curr)
-            
-            asset2_prev_swing_highs, asset2_prev_swing_lows = self.swing_detector.find_swing_highs_lows(asset2_prev)
-            asset2_curr_swing_highs, asset2_curr_swing_lows = self.swing_detector.find_swing_highs_lows(asset2_curr)
-            
-            asset1_prev_highest = self.swing_detector.get_highest_swing_high(asset1_prev_swing_highs)
-            asset1_curr_highest = self.swing_detector.get_highest_swing_high(asset1_curr_swing_highs)
-            asset1_prev_lowest = self.swing_detector.get_lowest_swing_low(asset1_prev_swing_lows)
-            asset1_curr_lowest = self.swing_detector.get_lowest_swing_low(asset1_curr_swing_lows)
-            
-            asset2_prev_highest = self.swing_detector.get_highest_swing_high(asset2_prev_swing_highs)
-            asset2_curr_highest = self.swing_detector.get_highest_swing_high(asset2_curr_swing_highs)
-            asset2_prev_lowest = self.swing_detector.get_lowest_swing_low(asset2_prev_swing_lows)
-            asset2_curr_lowest = self.swing_detector.get_lowest_swing_low(asset2_curr_swing_lows)
-            
-            bearish_smt = self._check_bearish_smt(
-                asset1_prev_highest, asset1_curr_highest,
-                asset2_prev_highest, asset2_curr_highest
-            )
-            
-            bullish_smt = self._check_bullish_smt(
-                asset1_prev_lowest, asset1_curr_lowest,
-                asset2_prev_lowest, asset2_curr_lowest
-            )
-            
-            if bearish_smt:
-                direction = 'bearish'
-                smt_type = 'Higher Swing High'
-                asset1_action = f"made higher swing high ({asset1_prev_highest['price']:.4f} → {asset1_curr_highest['price']:.4f})"
-                asset2_action = f"no higher swing high ({asset2_prev_highest['price']:.4f} → {asset2_curr_highest['price']:.4f})"
-                critical_level = asset1_curr_highest['price']
-                
-            elif bullish_smt:
-                direction = 'bullish'
-                smt_type = 'Lower Swing Low'
-                asset1_action = f"made lower swing low ({asset1_prev_lowest['price']:.4f} → {asset1_curr_lowest['price']:.4f})"
-                asset2_action = f"no lower swing low ({asset2_prev_lowest['price']:.4f} → {asset2_curr_lowest['price']:.4f})"
-                critical_level = asset1_curr_lowest['price']
-                
-            else:
-                return None
-            
-            smt_data = {
-                'direction': direction,
-                'type': smt_type,
-                'cycle': cycle_type,
-                'quarters': f"{prev_q}→{curr_q}",
-                'timestamp': datetime.now(NY_TZ),
-                'asset1_action': asset1_action,
-                'asset2_action': asset2_action,
-                'details': f"Asset1 {asset1_action}, Asset2 {asset2_action}",
-                'signal_key': f"{cycle_type}_{prev_q}_{curr_q}_{direction}",
-                'critical_level': critical_level,
-                'timeframe': self.pair_config['timeframe_mapping'][cycle_type]
-            }
-            
-            self.smt_history.append(smt_data)
-            self._update_signal_count(smt_data['signal_key'])
-            
-            logger.info(f"🎯 INTELLIGENT SMT: {direction} {cycle_type} {prev_q}→{curr_q}")
-            logger.info(f"   Asset1: {asset1_action}")
-            logger.info(f"   Asset2: {asset2_action}")
-            
-            return smt_data
-            
-        except Exception as e:
-            logger.error(f"Error comparing quarters {prev_q}→{curr_q}: {str(e)}")
-            return None
-    
-    def _check_bearish_smt(self, asset1_prev_high, asset1_curr_high, asset2_prev_high, asset2_curr_high):
-        if not all([asset1_prev_high, asset1_curr_high, asset2_prev_high, asset2_curr_high]):
-            return False
-        
-        asset1_hh = asset1_curr_high['price'] > asset1_prev_high['price']
-        asset2_no_hh = asset2_curr_high['price'] <= asset2_prev_high['price']
-        
-        return asset1_hh and asset2_no_hh
-    
-    def _check_bullish_smt(self, asset1_prev_low, asset1_curr_low, asset2_prev_low, asset2_curr_low):
-        if not all([asset1_prev_low, asset1_curr_low, asset2_prev_low, asset2_curr_low]):
-            return False
-        
-        asset1_ll = asset1_curr_low['price'] < asset1_prev_low['price']
-        asset2_no_ll = asset2_curr_low['price'] >= asset2_prev_low['price']
-        
-        return asset1_ll and asset2_no_ll
     
     def check_smt_invalidation(self, smt_data, asset1_data, asset2_data):
         if not smt_data or smt_data['signal_key'] in self.invalidated_smts:
@@ -998,17 +924,80 @@ class IntelligentSMTDetector:
                 del self.signal_counts[key]
 
 # ================================
-# INTELLIGENT SIGNAL BUILDER WITH MINDSET
+# PATTERN DETECTORS
 # ================================
 
-class IntelligentSignalBuilder:
-    """INTELLIGENT signal builder with advanced decision making"""
+class AdvancedCRTDetector:
+    """Enhanced CRT detector with better validation"""
+    
+    def __init__(self, timing_manager):
+        self.timing_manager = timing_manager
+    
+    def calculate_crt_current_candle(self, df):
+        """Calculate CRT only on the current (incomplete) candle"""
+        if df is None or not isinstance(df, pd.DataFrame) or df.empty or len(df) < 3:
+            return None
+        
+        current_candle = df[df['is_current'] == True]
+        if current_candle.empty:
+            return None
+            
+        current_candle = current_candle.iloc[0]
+        
+        if not self.timing_manager.is_crt_fresh(current_candle['time']):
+            logger.debug("CRT candle too old, skipping")
+            return None
+        
+        complete_candles = df[df['complete'] == True].tail(2)
+        if len(complete_candles) < 2:
+            return None
+            
+        c1 = complete_candles.iloc[0]
+        c2 = complete_candles.iloc[1]
+        c3 = current_candle
+        
+        try:
+            c2_range = float(c2['high']) - float(c2['low'])
+            c2_mid = float(c2['low']) + 0.5 * c2_range
+            
+            buy_crt = (float(c2['low']) < float(c1['low']) and 
+                      float(c2['close']) > float(c1['low']) and 
+                      float(c3['open']) > c2_mid)
+            
+            sell_crt = (float(c2['high']) > float(c1['high']) and 
+                       float(c2['close']) < float(c1['high']) and 
+                       float(c3['open']) < c2_mid)
+            
+            if buy_crt:
+                return {
+                    'direction': 'bullish', 
+                    'timestamp': c3['time'],
+                    'signal_key': f"CRT_{c3['time'].strftime('%m%d_%H%M')}_bullish"
+                }
+            elif sell_crt:
+                return {
+                    'direction': 'bearish', 
+                    'timestamp': c3['time'],
+                    'signal_key': f"CRT_{c3['time'].strftime('%m%d_%H%M')}_bearish"
+                }
+        except (ValueError, TypeError) as e:
+            logger.error(f"Error in CRT calculation: {e}")
+            return None
+        
+        return None
+
+# ================================
+# SIGNAL BUILDER (Rest of the code remains similar but uses the new detector)
+# ================================
+
+class SwingTimeSignalBuilder:
+    """Signal builder with swing time descriptions"""
     
     def __init__(self, pair_group):
         self.pair_group = pair_group
         self.active_crt = None
         self.active_smts = {}
-        self.psp_for_smts = {}  # Track PSP for each SMT
+        self.psp_for_smts = {}
         self.signal_strength = 0
         self.criteria = []
         self.creation_time = datetime.now(NY_TZ)
@@ -1052,9 +1041,13 @@ class IntelligentSignalBuilder:
             self.signal_strength += 1
             self.criteria.append(f"SMT {cycle} with PSP: {direction} {smt_data['quarters']}")
             logger.info(f"🔷 {self.pair_group}: {cycle} {direction} SMT + PSP CONFIRMED!")
+            logger.info(f"   📍 {smt_data['asset1_action']}")
+            logger.info(f"   📍 {smt_data['asset2_action']}")
         else:
             self.criteria.append(f"SMT {cycle}: {direction} {smt_data['quarters']}")
             logger.info(f"🔷 {self.pair_group}: {cycle} {direction} SMT detected - looking for PSP")
+            logger.info(f"   📍 {smt_data['asset1_action']}")
+            logger.info(f"   📍 {smt_data['asset2_action']}")
         
         # Check signal readiness
         self._check_signal_readiness()
@@ -1068,7 +1061,8 @@ class IntelligentSignalBuilder:
             self.signal_strength += 1
             
             smt = self.active_smts[cycle]
-            logger.info(f"🎯 {self.pair_group}: PSP CONFIRMED for {cycle} {smt['direction']} SMT!")
+            formation_time = psp_signal['formation_time'].strftime('%H:%M')
+            logger.info(f"🎯 {self.pair_group}: PSP CONFIRMED for {cycle} {smt['direction']} SMT at {formation_time}!")
             
             self._check_signal_readiness()
             return True
@@ -1131,11 +1125,12 @@ class IntelligentSignalBuilder:
             self.active_crt = crt_data
             self.crt_timeframe = timeframe
             self.signal_strength += 3
-            self.criteria.append(f"CRT {timeframe}: {crt_data['direction']}")
+            formation_time = crt_data['timestamp'].strftime('%H:%M')
+            self.criteria.append(f"CRT {timeframe}: {crt_data['direction']} at {formation_time}")
             
             direction = crt_data['direction']
             self.status = f"CRT_{direction.upper()}_WAITING_SMT"
-            logger.info(f"🔷 {self.pair_group}: {timeframe} {direction} CRT detected → Waiting for SMT confirmation")
+            logger.info(f"🔷 {self.pair_group}: {timeframe} {direction} CRT detected at {formation_time} → Waiting for SMT confirmation")
             
             # Remove any SMTs that don't match CRT direction
             self._remove_mismatched_smts()
@@ -1247,7 +1242,7 @@ class IntelligentSignalBuilder:
         elif self.status.startswith('CRT_PSP_SMT_'):
             signal_data['description'] = f"CRT + PSP + SMT confluence - Highest probability setup"
         
-        logger.info(f"🎯 INTELLIGENT SIGNAL: {self.pair_group} {direction} via {self.status}")
+        logger.info(f"🎯 SWING-TIME SIGNAL: {self.pair_group} {direction} via {self.status}")
         logger.info(f"📋 Description: {signal_data['description']}")
         
         return signal_data
@@ -1271,34 +1266,33 @@ class IntelligentSignalBuilder:
         self.bullish_strength = 0
         self.bearish_strength = 0
         self.dominant_direction = None
-        logger.info(f"🔄 {self.pair_group}: Intelligent signal builder reset")
+        logger.info(f"🔄 {self.pair_group}: Swing-time signal builder reset")
 
 # ================================
-# INTELLIGENT TRADING SYSTEM
+# TRADING SYSTEM (Rest remains similar)
 # ================================
 
-class IntelligentTradingSystem:
+class SwingTimeTradingSystem:
     def __init__(self, pair_group, pair_config):
         self.pair_group = pair_group
         self.pair_config = pair_config
         self.pair1 = pair_config['pair1']
         self.pair2 = pair_config['pair2']
         
-        # Initialize advanced components
+        # Initialize swing-time components
         self.timing_manager = AdvancedTimingManager()
         self.quarter_manager = AdvancedQuarterManager()
         self.crt_detector = AdvancedCRTDetector(self.timing_manager)
-        self.psp_detector = AdvancedPSPDetector()
-        self.smt_detector = IntelligentSMTDetector(pair_config)
-        self.signal_builder = IntelligentSignalBuilder(pair_group)
+        self.smt_detector = SwingTimeSMTDetector(pair_config)
+        self.signal_builder = SwingTimeSignalBuilder(pair_group)
         
         # Data storage
         self.market_data = {self.pair1: {}, self.pair2: {}}
         
-        logger.info(f"🎯 Initialized INTELLIGENT trading system for {self.pair1}/{self.pair2}")
+        logger.info(f"🎯 Initialized SWING-TIME trading system for {self.pair1}/{self.pair2}")
     
-    async def run_intelligent_analysis(self, api_key):
-        """Run intelligent analysis with advanced decision making"""
+    async def run_swing_time_analysis(self, api_key):
+        """Run swing-time analysis with time-based descriptions"""
         try:
             current_status = self.signal_builder.get_progress_status()
             logger.info(f"📊 {self.pair_group}: Current status - {current_status}")
@@ -1323,7 +1317,7 @@ class IntelligentTradingSystem:
             if self.signal_builder.is_signal_ready():
                 signal = self.signal_builder.get_signal_details()
                 if signal:
-                    logger.info(f"🎯 {self.pair_group}: INTELLIGENT SIGNAL COMPLETE via {signal['path']}")
+                    logger.info(f"🎯 {self.pair_group}: SWING-TIME SIGNAL COMPLETE via {signal['path']}")
                     self.signal_builder.reset()
                     return signal
             
@@ -1331,11 +1325,11 @@ class IntelligentTradingSystem:
             if self.signal_builder.is_expired():
                 self.signal_builder.reset()
             
-            logger.info(f"✅ {self.pair_group}: Intelligent analysis complete - monitoring continues")
+            logger.info(f"✅ {self.pair_group}: Swing-time analysis complete - monitoring continues")
             return None
             
         except Exception as e:
-            logger.error(f"❌ Error in intelligent analysis for {self.pair_group}: {str(e)}")
+            logger.error(f"❌ Error in swing-time analysis for {self.pair_group}: {str(e)}")
             return None
     
     async def _check_smt_tracking(self):
@@ -1468,10 +1462,10 @@ class IntelligentTradingSystem:
             return sleep_time
 
 # ================================
-# INTELLIGENT MAIN MANAGER
+# MAIN MANAGER (Rest remains similar)
 # ================================
 
-class IntelligentTradingManager:
+class SwingTimeTradingManager:
     def __init__(self, api_key, telegram_token, chat_id):
         self.api_key = api_key
         self.telegram_token = telegram_token
@@ -1480,13 +1474,13 @@ class IntelligentTradingManager:
         self.trading_systems = {}
         
         for pair_group, pair_config in TRADING_PAIRS.items():
-            self.trading_systems[pair_group] = IntelligentTradingSystem(pair_group, pair_config)
+            self.trading_systems[pair_group] = SwingTimeTradingSystem(pair_group, pair_config)
         
-        logger.info(f"🎯 Initialized INTELLIGENT trading manager with {len(self.trading_systems)} pair groups")
+        logger.info(f"🎯 Initialized SWING-TIME trading manager with {len(self.trading_systems)} pair groups")
     
-    async def run_intelligent_systems(self):
-        """Run all trading systems with intelligent decision making"""
-        logger.info("🎯 Starting INTELLIGENT Multi-Pair Trading System...")
+    async def run_swing_time_systems(self):
+        """Run all trading systems with swing-time decision making"""
+        logger.info("🎯 Starting SWING-TIME Multi-Pair Trading System...")
         
         while True:
             try:
@@ -1495,8 +1489,8 @@ class IntelligentTradingManager:
                 
                 for pair_group, system in self.trading_systems.items():
                     task = asyncio.create_task(
-                        system.run_intelligent_analysis(self.api_key),
-                        name=f"intelligent_analysis_{pair_group}"
+                        system.run_swing_time_analysis(self.api_key),
+                        name=f"swing_time_analysis_{pair_group}"
                     )
                     tasks.append(task)
                     sleep_times.append(system.get_sleep_time())
@@ -1507,39 +1501,39 @@ class IntelligentTradingManager:
                 for i, result in enumerate(results):
                     pair_group = list(self.trading_systems.keys())[i]
                     if isinstance(result, Exception):
-                        logger.error(f"❌ Intelligent analysis task failed for {pair_group}: {str(result)}")
+                        logger.error(f"❌ Swing-time analysis task failed for {pair_group}: {str(result)}")
                     elif result is not None:
                         signals.append(result)
-                        logger.info(f"🎯 INTELLIGENT SIGNAL FOUND for {pair_group}")
+                        logger.info(f"🎯 SWING-TIME SIGNAL FOUND for {pair_group}")
                 
                 if signals:
-                    await self._process_intelligent_signals(signals)
+                    await self._process_swing_time_signals(signals)
                 
                 sleep_time = min(sleep_times) if sleep_times else BASE_INTERVAL
-                logger.info(f"⏰ Intelligent cycle complete. Sleeping for {sleep_time:.1f} seconds")
+                logger.info(f"⏰ Swing-time cycle complete. Sleeping for {sleep_time:.1f} seconds")
                 await asyncio.sleep(sleep_time)
                 
             except Exception as e:
-                logger.error(f"❌ Error in intelligent main loop: {str(e)}")
+                logger.error(f"❌ Error in swing-time main loop: {str(e)}")
                 await asyncio.sleep(60)
     
-    async def _process_intelligent_signals(self, signals):
-        """Process and send intelligent signals to Telegram"""
+    async def _process_swing_time_signals(self, signals):
+        """Process and send swing-time signals to Telegram"""
         for signal in signals:
             try:
-                message = self._format_intelligent_signal_message(signal)
+                message = self._format_swing_time_signal_message(signal)
                 success = send_telegram(message, self.telegram_token, self.chat_id)
                 
                 if success:
-                    logger.info(f"📤 Intelligent signal sent to Telegram for {signal['pair_group']}")
+                    logger.info(f"📤 Swing-time signal sent to Telegram for {signal['pair_group']}")
                 else:
-                    logger.error(f"❌ Failed to send intelligent signal for {signal['pair_group']}")
+                    logger.error(f"❌ Failed to send swing-time signal for {signal['pair_group']}")
                     
             except Exception as e:
-                logger.error(f"❌ Error processing intelligent signal: {str(e)}")
+                logger.error(f"❌ Error processing swing-time signal: {str(e)}")
     
-    def _format_intelligent_signal_message(self, signal):
-        """Format intelligent signal for Telegram"""
+    def _format_swing_time_signal_message(self, signal):
+        """Format swing-time signal for Telegram"""
         pair_group = signal.get('pair_group', 'Unknown')
         direction = signal.get('direction', 'UNKNOWN').upper()
         strength = signal.get('strength', 0)
@@ -1548,7 +1542,7 @@ class IntelligentTradingManager:
         bull_strength = signal.get('bullish_strength', 0)
         bear_strength = signal.get('bearish_strength', 0)
         
-        message = f"🧠 *INTELLIGENT TRADING SIGNAL* 🧠\n\n"
+        message = f"⏰ *SWING-TIME TRADING SIGNAL* ⏰\n\n"
         message += f"*Pair Group:* {pair_group.replace('_', ' ').title()}\n"
         message += f"*Direction:* {direction}\n"
         message += f"*Strength:* {strength}/9\n"
@@ -1563,13 +1557,15 @@ class IntelligentTradingManager:
                 message += f"• {criterion}\n"
         
         if 'all_smts' in signal and signal['all_smts']:
-            message += f"\n*SMT Details:*\n"
+            message += f"\n*SMT Swing Details:*\n"
             for cycle, smt in signal['all_smts'].items():
                 psp_status = "✅ WITH PSP" if cycle in signal.get('psp_smts', {}) else "⏳ Waiting PSP"
                 message += f"• {cycle}: {smt['direction']} {smt['quarters']} {psp_status}\n"
+                message += f"  📍 {smt['asset1_action']}\n"
+                message += f"  📍 {smt['asset2_action']}\n"
         
         message += f"\n*Detection Time:* {signal['timestamp'].strftime('%Y-%m-%d %H:%M:%S %Z')}\n"
-        message += f"\n#IntelligentSignal #{pair_group} #{path}"
+        message += f"\n#SwingTimeSignal #{pair_group} #{path}"
         
         return message
 
@@ -1579,7 +1575,7 @@ class IntelligentTradingManager:
 
 async def main():
     """Main entry point"""
-    logger.info("🧠 Starting INTELLIGENT Multi-Pair SMT Trading System")
+    logger.info("⏰ Starting SWING-TIME Multi-Pair SMT Trading System")
     
     api_key = os.getenv('OANDA_API_KEY')
     telegram_token = os.getenv('TELEGRAM_BOT_TOKEN')
@@ -1591,8 +1587,8 @@ async def main():
         return
     
     try:
-        manager = IntelligentTradingManager(api_key, telegram_token, telegram_chat_id)
-        await manager.run_intelligent_systems()
+        manager = SwingTimeTradingManager(api_key, telegram_token, telegram_chat_id)
+        await manager.run_swing_time_systems()
         
     except KeyboardInterrupt:
         logger.info("🛑 System stopped by user")
