@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-ROBUST SMT TRADING SYSTEM WITH CONFLICT RESOLUTION
-- Resolves conflicting SMT directions
-- Enhanced PSP tracking with timeframe
-- Prevents duplicate signals
-- Chronological swing time validation
+ROBUST SMT TRADING SYSTEM - CLEANED VERSION
+- Removes duplicate criteria
+- Only shows contributing SMT details
+- Better chronological validation
+- Cleaner signal formatting
 """
 
 import asyncio
@@ -278,7 +278,11 @@ class RobustTimingManager:
     def validate_chronological_order(self, prev_time, curr_time):
         """Validate that swing times are in correct chronological order"""
         if prev_time and curr_time:
-            return prev_time < curr_time
+            time_diff = (curr_time - prev_time).total_seconds()
+            is_valid = time_diff > 0
+            if not is_valid:
+                logger.warning(f"⚠️ NON-CHRONOLOGICAL SWINGS: {prev_time.strftime('%H:%M')} → {curr_time.strftime('%H:%M')} (diff: {time_diff/60:.1f} min)")
+            return is_valid
         return True
     
     def calculate_next_candle_time(self, timeframe):
@@ -1000,6 +1004,15 @@ class RobustSignalBuilder:
         cycle = smt_data['cycle']
         direction = smt_data['direction']
         
+        # PREVENT DUPLICATE CRITERIA - Check if we already have this exact SMT
+        existing_criteria = f"SMT {cycle}: {direction} {smt_data['quarters']}"
+        if psp_signal:
+            psp_time = psp_signal['formation_time'].strftime('%H:%M')
+            existing_criteria = f"SMT {cycle} with PSP {psp_signal['timeframe']} at {psp_time}: {direction} {smt_data['quarters']}"
+        
+        # Remove any existing duplicate criteria for this cycle
+        self.criteria = [c for c in self.criteria if not c.startswith(f"SMT {cycle}:")]
+        
         # Check for conflicts with existing SMTs
         if self.active_smts:
             existing_directions = set(smt['direction'] for smt in self.active_smts.values())
@@ -1070,11 +1083,9 @@ class RobustSignalBuilder:
             formation_time = psp_signal['formation_time'].strftime('%H:%M')
             logger.info(f"🎯 {self.pair_group}: PSP CONFIRMED for {cycle} {smt['direction']} SMT on {psp_signal['timeframe']} at {formation_time}!")
             
-            # Update criteria
-            for i, criterion in enumerate(self.criteria):
-                if criterion.startswith(f"SMT {cycle}:"):
-                    self.criteria[i] = f"SMT {cycle} with PSP {psp_signal['timeframe']} at {formation_time}: {smt['direction']} {smt['quarters']}"
-                    break
+            # Update criteria - remove old and add new
+            self.criteria = [c for c in self.criteria if not c.startswith(f"SMT {cycle}:")]
+            self.criteria.append(f"SMT {cycle} with PSP {psp_signal['timeframe']} at {formation_time}: {smt['direction']} {smt['quarters']}")
             
             self._check_signal_readiness()
             return True
@@ -1136,6 +1147,10 @@ class RobustSignalBuilder:
             self.active_crt = crt_data
             self.crt_timeframe = timeframe
             self.signal_strength += 3
+            
+            # Remove any existing CRT criteria
+            self.criteria = [c for c in self.criteria if not c.startswith("CRT ")]
+            
             formation_time = crt_data['timestamp'].strftime('%H:%M')
             self.criteria.append(f"CRT {timeframe}: {crt_data['direction']} at {formation_time}")
             
@@ -1216,7 +1231,7 @@ class RobustSignalBuilder:
         return self.status
     
     def get_signal_details(self):
-        """Get complete signal details with conflict analysis"""
+        """Get complete signal details with conflict analysis - ONLY CONTRIBUTING SMTs"""
         if not self.is_signal_ready() or self.has_serious_conflict():
             return None
             
@@ -1236,6 +1251,10 @@ class RobustSignalBuilder:
         # Generate unique signal key for duplicate prevention
         signal_key = f"{self.pair_group}_{direction}_{self.status}_{datetime.now().strftime('%H%M')}"
         
+        # FILTER: Only include SMTs that match the signal direction
+        contributing_smts = {cycle: smt for cycle, smt in self.active_smts.items() if smt['direction'] == direction}
+        contributing_psps = {cycle: psp for cycle, psp in self.psp_for_smts.items() if cycle in contributing_smts}
+        
         # Build signal details
         signal_data = {
             'pair_group': self.pair_group,
@@ -1248,8 +1267,8 @@ class RobustSignalBuilder:
             'has_conflict': self.has_conflict,
             'criteria': self.criteria.copy(),
             'crt': self.active_crt,
-            'psp_smts': self.psp_for_smts.copy(),
-            'all_smts': self.active_smts.copy(),
+            'psp_smts': contributing_psps,  # Only contributing PSPs
+            'all_smts': contributing_smts,  # Only contributing SMTs
             'timestamp': datetime.now(NY_TZ),
             'signal_key': signal_key
         }
@@ -1268,6 +1287,7 @@ class RobustSignalBuilder:
         
         logger.info(f"🎯 ROBUST SIGNAL: {self.pair_group} {direction} via {self.status}")
         logger.info(f"📋 Description: {signal_data['description']}")
+        logger.info(f"📊 Contributing SMTs: {len(contributing_smts)} {direction}, Conflicting SMTs: {len(self.active_smts) - len(contributing_smts)}")
         
         return signal_data
     
@@ -1622,7 +1642,7 @@ class RobustTradingManager:
                 logger.error(f"❌ Error processing robust signal: {str(e)}")
     
     def _format_robust_signal_message(self, signal):
-        """Format robust signal for Telegram"""
+        """Format robust signal for Telegram - ONLY SHOW CONTRIBUTING SMTs"""
         pair_group = signal.get('pair_group', 'Unknown')
         direction = signal.get('direction', 'UNKNOWN').upper()
         strength = signal.get('strength', 0)
@@ -1644,8 +1664,12 @@ class RobustTradingManager:
         
         if 'criteria' in signal:
             message += "*Signal Criteria:*\n"
+            # Remove duplicate criteria before displaying
+            unique_criteria = []
             for criterion in signal['criteria']:
-                message += f"• {criterion}\n"
+                if criterion not in unique_criteria:
+                    unique_criteria.append(criterion)
+                    message += f"• {criterion}\n"
         
         if 'all_smts' in signal and signal['all_smts']:
             message += f"\n*SMT Swing Details:*\n"
