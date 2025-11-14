@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
 """
-ROBUST SMT TRADING SYSTEM - ULTRA FIXED VERSION
-- Fixed duplicate signal prevention
-- PSP timing validation (within 3 quarters)
-- Swing time alignment validation
-- Cycle hierarchy dominance
-- Added JPY pairs
+ROBUST SMT TRADING SYSTEM - PROPER SWING ALIGNMENT
+- First swings same time for both assets
+- Second swings same time for both assets
+- Proper quarter-based timing
 """
 
 import asyncio
@@ -592,11 +590,11 @@ class RobustQuarterManager:
             return 'unknown'
 
 # ================================
-# ROBUST SWING DETECTOR
+# ROBUST SWING DETECTOR WITH PROPER ALIGNMENT
 # ================================
 
 class RobustSwingDetector:
-    """Robust swing detection with chronological validation"""
+    """Robust swing detection with proper time alignment"""
     
     @staticmethod
     def find_swing_highs_lows(df, lookback=3):
@@ -643,16 +641,21 @@ class RobustSwingDetector:
         return swing_highs, swing_lows
     
     @staticmethod
-    def get_highest_swing_high(swing_highs):
-        if not swing_highs:
+    def get_swing_at_time(swings, target_time, max_time_diff_minutes=30):
+        """Get swing closest to target time"""
+        if not swings:
             return None
-        return max(swing_highs, key=lambda x: x['price'])
-    
-    @staticmethod
-    def get_lowest_swing_low(swing_lows):
-        if not swing_lows:
-            return None
-        return min(swing_lows, key=lambda x: x['price'])
+            
+        closest_swing = None
+        min_time_diff = float('inf')
+        
+        for swing in swings:
+            time_diff = abs((swing['time'] - target_time).total_seconds() / 60)  # minutes
+            if time_diff < min_time_diff and time_diff <= max_time_diff_minutes:
+                min_time_diff = time_diff
+                closest_swing = swing
+        
+        return closest_swing
     
     @staticmethod
     def format_swing_time_description(prev_swing, curr_swing, swing_type="low", timing_manager=None):
@@ -695,11 +698,11 @@ class RobustSwingDetector:
                     return f"⚠️ NON-CHRONOLOGICAL: first low at {prev_time_str} and higher low at {curr_time_str}"
 
 # ================================
-# ROBUST SMT DETECTOR WITH CONFLICT RESOLUTION
+# ROBUST SMT DETECTOR WITH PROPER SWING ALIGNMENT
 # ================================
 
 class RobustSMTDetector:
-    """Robust SMT detector with conflict resolution"""
+    """Robust SMT detector with proper swing alignment"""
     
     def __init__(self, pair_config, timing_manager):
         self.smt_history = []
@@ -715,7 +718,7 @@ class RobustSMTDetector:
         self.smt_psp_tracking = {}
         
     def detect_smt_all_cycles(self, asset1_data, asset2_data, cycle_type):
-        """Detect SMT for a specific cycle with conflict detection"""
+        """Detect SMT for a specific cycle with proper swing alignment"""
         try:
             if (asset1_data is None or not isinstance(asset1_data, pd.DataFrame) or asset1_data.empty or
                 asset2_data is None or not isinstance(asset2_data, pd.DataFrame) or asset2_data.empty):
@@ -744,7 +747,7 @@ class RobustSMTDetector:
                 if prev_q not in asset2_quarters or curr_q not in asset2_quarters:
                     continue
                 
-                smt_result = self._compare_quarters_swing_based(
+                smt_result = self._compare_quarters_with_proper_alignment(
                     asset1_quarters[prev_q], asset1_quarters[curr_q],
                     asset2_quarters[prev_q], asset2_quarters[curr_q],
                     cycle_type, prev_q, curr_q
@@ -770,38 +773,30 @@ class RobustSMTDetector:
             logger.error(f"Error in SMT detection for {cycle_type}: {str(e)}")
             return None
     
-    def _compare_quarters_swing_based(self, asset1_prev, asset1_curr, asset2_prev, asset2_curr, cycle_type, prev_q, curr_q):
-        """Compare two consecutive quarters using swing highs/lows - WITH SWING TIME ALIGNMENT"""
+    def _compare_quarters_with_proper_alignment(self, asset1_prev, asset1_curr, asset2_prev, asset2_curr, cycle_type, prev_q, curr_q):
+        """Compare two consecutive quarters with PROPER swing time alignment"""
         try:
             if (asset1_prev.empty or asset1_curr.empty or 
                 asset2_prev.empty or asset2_curr.empty):
                 return None
             
+            # Find swings for both assets in both quarters
             asset1_prev_swing_highs, asset1_prev_swing_lows = self.swing_detector.find_swing_highs_lows(asset1_prev)
             asset1_curr_swing_highs, asset1_curr_swing_lows = self.swing_detector.find_swing_highs_lows(asset1_curr)
             
             asset2_prev_swing_highs, asset2_prev_swing_lows = self.swing_detector.find_swing_highs_lows(asset2_prev)
             asset2_curr_swing_highs, asset2_curr_swing_lows = self.swing_detector.find_swing_highs_lows(asset2_curr)
             
-            asset1_prev_highest = self.swing_detector.get_highest_swing_high(asset1_prev_swing_highs)
-            asset1_curr_highest = self.swing_detector.get_highest_swing_high(asset1_curr_swing_highs)
-            asset1_prev_lowest = self.swing_detector.get_lowest_swing_low(asset1_prev_swing_lows)
-            asset1_curr_lowest = self.swing_detector.get_lowest_swing_low(asset1_curr_swing_lows)
-            
-            asset2_prev_highest = self.swing_detector.get_highest_swing_high(asset2_prev_swing_highs)
-            asset2_curr_highest = self.swing_detector.get_highest_swing_high(asset2_curr_swing_highs)
-            asset2_prev_lowest = self.swing_detector.get_lowest_swing_low(asset2_prev_swing_lows)
-            asset2_curr_lowest = self.swing_detector.get_lowest_swing_low(asset2_curr_swing_lows)
-            
-            # VALIDATE SWING TIME ALIGNMENT
-            bearish_smt = self._check_bearish_smt(
-                asset1_prev_highest, asset1_curr_highest,
-                asset2_prev_highest, asset2_curr_highest
+            # For bearish SMT: Find aligned swing highs
+            bearish_smt = self._check_aligned_bearish_smt(
+                asset1_prev_swing_highs, asset1_curr_swing_highs,
+                asset2_prev_swing_highs, asset2_curr_swing_highs
             )
             
-            bullish_smt = self._check_bullish_smt(
-                asset1_prev_lowest, asset1_curr_lowest,
-                asset2_prev_lowest, asset2_curr_lowest
+            # For bullish SMT: Find aligned swing lows  
+            bullish_smt = self._check_aligned_bullish_smt(
+                asset1_prev_swing_lows, asset1_curr_swing_lows,
+                asset2_prev_swing_lows, asset2_curr_swing_lows
             )
             
             current_time = datetime.now(NY_TZ)
@@ -809,34 +804,28 @@ class RobustSMTDetector:
             if bearish_smt:
                 direction = 'bearish'
                 smt_type = 'Higher Swing High'
-                # VALIDATE SWING TIME ALIGNMENT FOR BOTH ASSETS
-                if not self._validate_swing_time_alignment(asset1_prev_highest, asset1_curr_highest, asset2_prev_highest, asset2_curr_highest):
-                    logger.warning(f"⚠️ SWING TIME MISALIGNMENT for {cycle_type} {prev_q}→{curr_q} bearish SMT")
-                    return None
-                    
+                asset1_prev_high, asset1_curr_high, asset2_prev_high, asset2_curr_high = bearish_smt
+                
                 asset1_action = self.swing_detector.format_swing_time_description(
-                    asset1_prev_highest, asset1_curr_highest, "high", self.timing_manager
+                    asset1_prev_high, asset1_curr_high, "high", self.timing_manager
                 )
                 asset2_action = self.swing_detector.format_swing_time_description(
-                    asset2_prev_highest, asset2_curr_highest, "high", self.timing_manager
+                    asset2_prev_high, asset2_curr_high, "high", self.timing_manager
                 )
-                critical_level = asset1_curr_highest['price']
+                critical_level = asset1_curr_high['price']
                 
             elif bullish_smt:
                 direction = 'bullish'
                 smt_type = 'Lower Swing Low'
-                # VALIDATE SWING TIME ALIGNMENT FOR BOTH ASSETS
-                if not self._validate_swing_time_alignment(asset1_prev_lowest, asset1_curr_lowest, asset2_prev_lowest, asset2_curr_lowest, swing_type="low"):
-                    logger.warning(f"⚠️ SWING TIME MISALIGNMENT for {cycle_type} {prev_q}→{curr_q} bullish SMT")
-                    return None
-                    
+                asset1_prev_low, asset1_curr_low, asset2_prev_low, asset2_curr_low = bullish_smt
+                
                 asset1_action = self.swing_detector.format_swing_time_description(
-                    asset1_prev_lowest, asset1_curr_lowest, "low", self.timing_manager
+                    asset1_prev_low, asset1_curr_low, "low", self.timing_manager
                 )
                 asset2_action = self.swing_detector.format_swing_time_description(
-                    asset2_prev_lowest, asset2_curr_lowest, "low", self.timing_manager
+                    asset2_prev_low, asset2_curr_low, "low", self.timing_manager
                 )
-                critical_level = asset1_curr_lowest['price']
+                critical_level = asset1_curr_low['price']
                 
             else:
                 return None
@@ -856,17 +845,17 @@ class RobustSMTDetector:
                 'critical_level': critical_level,
                 'timeframe': self.pair_config['timeframe_mapping'][cycle_type],
                 'swing_times': {
-                    'asset1_prev': asset1_prev_highest['time'] if bearish_smt else asset1_prev_lowest['time'],
-                    'asset1_curr': asset1_curr_highest['time'] if bearish_smt else asset1_curr_lowest['time'],
-                    'asset2_prev': asset2_prev_highest['time'] if bearish_smt else asset2_prev_lowest['time'],
-                    'asset2_curr': asset2_curr_highest['time'] if bearish_smt else asset2_curr_lowest['time']
+                    'asset1_prev': asset1_prev_high['time'] if bearish_smt else asset1_prev_low['time'],
+                    'asset1_curr': asset1_curr_high['time'] if bearish_smt else asset1_curr_low['time'],
+                    'asset2_prev': asset2_prev_high['time'] if bearish_smt else asset2_prev_low['time'],
+                    'asset2_curr': asset2_curr_high['time'] if bearish_smt else asset2_curr_low['time']
                 }
             }
             
             self.smt_history.append(smt_data)
             self._update_signal_count(smt_data['signal_key'])
             
-            logger.info(f"🎯 ROBUST SMT: {direction} {cycle_type} {prev_q}→{curr_q}")
+            logger.info(f"🎯 PROPERLY ALIGNED SMT: {direction} {cycle_type} {prev_q}→{curr_q}")
             logger.info(f"   Signal ID: {smt_data['signal_key']}")
             logger.info(f"   Asset1: {asset1_action}")
             logger.info(f"   Asset2: {asset2_action}")
@@ -877,43 +866,81 @@ class RobustSMTDetector:
             logger.error(f"Error comparing quarters {prev_q}→{curr_q}: {str(e)}")
             return None
     
-    def _validate_swing_time_alignment(self, asset1_prev, asset1_curr, asset2_prev, asset2_curr, swing_type="high"):
-        """Validate that both assets' swings occur at the same time periods"""
-        if not all([asset1_prev, asset1_curr, asset2_prev, asset2_curr]):
-            return False
+    def _check_aligned_bearish_smt(self, asset1_prev_highs, asset1_curr_highs, asset2_prev_highs, asset2_curr_highs):
+        """Check for bearish SMT with proper time alignment"""
+        # Try to find aligned swings where:
+        # - Asset1 makes HH (higher high)
+        # - Asset2 doesn't make HH
+        # - Both assets' previous swings are at same time
+        # - Both assets' current swings are at same time
         
-        # Check that previous swings are within 2 hours of each other
-        prev_time_diff = abs((asset1_prev['time'] - asset2_prev['time']).total_seconds() / 3600)
-        curr_time_diff = abs((asset1_curr['time'] - asset2_curr['time']).total_seconds() / 3600)
+        for asset1_prev_high in asset1_prev_highs:
+            for asset1_curr_high in asset1_curr_highs:
+                # Asset1 must make higher high
+                if asset1_curr_high['price'] <= asset1_prev_high['price']:
+                    continue
+                
+                # Find asset2 swings at same times
+                asset2_prev_high = self.swing_detector.get_swing_at_time(
+                    asset2_prev_highs, asset1_prev_high['time']
+                )
+                asset2_curr_high = self.swing_detector.get_swing_at_time(
+                    asset2_curr_highs, asset1_curr_high['time']
+                )
+                
+                if not asset2_prev_high or not asset2_curr_high:
+                    continue
+                
+                # Asset2 must NOT make higher high
+                if asset2_curr_high['price'] > asset2_prev_high['price']:
+                    continue
+                
+                # Valid bearish SMT found with proper alignment
+                logger.info(f"✅ BEARISH SMT WITH PROPER ALIGNMENT:")
+                logger.info(f"   Asset1: {asset1_prev_high['time'].strftime('%H:%M')} → {asset1_curr_high['time'].strftime('%H:%M')}")
+                logger.info(f"   Asset2: {asset2_prev_high['time'].strftime('%H:%M')} → {asset2_curr_high['time'].strftime('%H:%M')}")
+                
+                return (asset1_prev_high, asset1_curr_high, asset2_prev_high, asset2_curr_high)
         
-        max_time_diff = 2.0  # 2 hours maximum difference
-        
-        is_aligned = prev_time_diff <= max_time_diff and curr_time_diff <= max_time_diff
-        
-        if not is_aligned:
-            logger.warning(f"⚠️ SWING TIME MISALIGNMENT: Prev diff {prev_time_diff:.1f}h, Curr diff {curr_time_diff:.1f}h > {max_time_diff}h")
-            
-        return is_aligned
+        return None
     
-    def _check_bearish_smt(self, asset1_prev_high, asset1_curr_high, asset2_prev_high, asset2_curr_high):
-        """Check for bearish SMT: Asset1 makes HH, Asset2 doesn't"""
-        if not all([asset1_prev_high, asset1_curr_high, asset2_prev_high, asset2_curr_high]):
-            return False
+    def _check_aligned_bullish_smt(self, asset1_prev_lows, asset1_curr_lows, asset2_prev_lows, asset2_curr_lows):
+        """Check for bullish SMT with proper time alignment"""
+        # Try to find aligned swings where:
+        # - Asset1 makes LL (lower low)
+        # - Asset2 doesn't make LL
+        # - Both assets' previous swings are at same time
+        # - Both assets' current swings are at same time
         
-        asset1_hh = asset1_curr_high['price'] > asset1_prev_high['price']
-        asset2_no_hh = asset2_curr_high['price'] <= asset2_prev_high['price']
+        for asset1_prev_low in asset1_prev_lows:
+            for asset1_curr_low in asset1_curr_lows:
+                # Asset1 must make lower low
+                if asset1_curr_low['price'] >= asset1_prev_low['price']:
+                    continue
+                
+                # Find asset2 swings at same times
+                asset2_prev_low = self.swing_detector.get_swing_at_time(
+                    asset2_prev_lows, asset1_prev_low['time']
+                )
+                asset2_curr_low = self.swing_detector.get_swing_at_time(
+                    asset2_curr_lows, asset1_curr_low['time']
+                )
+                
+                if not asset2_prev_low or not asset2_curr_low:
+                    continue
+                
+                # Asset2 must NOT make lower low
+                if asset2_curr_low['price'] < asset2_prev_low['price']:
+                    continue
+                
+                # Valid bullish SMT found with proper alignment
+                logger.info(f"✅ BULLISH SMT WITH PROPER ALIGNMENT:")
+                logger.info(f"   Asset1: {asset1_prev_low['time'].strftime('%H:%M')} → {asset1_curr_low['time'].strftime('%H:%M')}")
+                logger.info(f"   Asset2: {asset2_prev_low['time'].strftime('%H:%M')} → {asset2_curr_low['time'].strftime('%H:%M')}")
+                
+                return (asset1_prev_low, asset1_curr_low, asset2_prev_low, asset2_curr_low)
         
-        return asset1_hh and asset2_no_hh
-    
-    def _check_bullish_smt(self, asset1_prev_low, asset1_curr_low, asset2_prev_low, asset2_curr_low):
-        """Check for bullish SMT: Asset1 makes LL, Asset2 doesn't"""
-        if not all([asset1_prev_low, asset1_curr_low, asset2_prev_low, asset2_curr_low]):
-            return False
-        
-        asset1_ll = asset1_curr_low['price'] < asset1_prev_low['price']
-        asset2_no_ll = asset2_curr_low['price'] >= asset2_prev_low['price']
-        
-        return asset1_ll and asset2_no_ll
+        return None
     
     def check_psp_for_smt(self, smt_data, asset1_data, asset2_data):
         """Check for PSP in past 5 candles for a specific SMT - WITH TIMING VALIDATION"""
