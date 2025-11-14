@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-ROBUST SMT TRADING SYSTEM - CLEANED VERSION
-- Removes duplicate criteria
-- Only shows contributing SMT details
-- Better chronological validation
-- Cleaner signal formatting
+ROBUST SMT TRADING SYSTEM - ULTRA FIXED VERSION
+- Fixed duplicate signal prevention
+- PSP timing validation (within 3 quarters)
+- Swing time alignment validation
+- Cycle hierarchy dominance
+- Added JPY pairs
 """
 
 import asyncio
@@ -67,6 +68,16 @@ TRADING_PAIRS = {
             'daily': 'M15',
             '90min': 'M5'
         }
+    },
+    'jpy_pairs': {
+        'pair1': 'EUR_JPY',
+        'pair2': 'GBP_JPY',
+        'timeframe_mapping': {
+            'monthly': 'H4',
+            'weekly': 'H1',
+            'daily': 'M15',
+            '90min': 'M5'
+        }
     }
 }
 
@@ -77,6 +88,14 @@ CYCLE_SLEEP_TIMEFRAMES = {
     'weekly': 'H1',  
     'daily': 'M15',
     '90min': 'M5'
+}
+
+# CYCLE HIERARCHY - Bigger cycles dominate smaller ones
+CYCLE_HIERARCHY = {
+    'monthly': 4,
+    'weekly': 3, 
+    'daily': 2,
+    '90min': 1
 }
 
 NY_TZ = pytz.timezone('America/New_York')
@@ -248,23 +267,46 @@ class RobustTimingManager:
         self.sent_signals = {}  # Track sent signals to prevent duplicates
         
     def is_duplicate_signal(self, signal_key, pair_group, cooldown_minutes=30):
-        """Check if signal was already sent recently"""
+        """Check if signal was already sent recently - IMPROVED DUPLICATE PREVENTION"""
         current_time = datetime.now(self.ny_tz)
         
         if pair_group not in self.sent_signals:
             self.sent_signals[pair_group] = {}
             
-        if signal_key in self.sent_signals[pair_group]:
-            last_sent = self.sent_signals[pair_group][signal_key]
+        # Check all signals for this pair group for similarity
+        for existing_key, last_sent in list(self.sent_signals[pair_group].items()):
             time_diff = (current_time - last_sent).total_seconds() / 60
-            if time_diff < cooldown_minutes:
-                logger.info(f"⏳ Skipping duplicate signal: {signal_key} (sent {time_diff:.1f} min ago)")
+            
+            # If same signal key or very similar (same direction and cycle pattern)
+            if (signal_key == existing_key or 
+                (self._signals_are_similar(signal_key, existing_key) and time_diff < cooldown_minutes)):
+                logger.info(f"⏳ Skipping duplicate/similar signal: {signal_key} (similar to {existing_key}, sent {time_diff:.1f} min ago)")
                 return True
                 
         self.sent_signals[pair_group][signal_key] = current_time
         
         # Clean old entries
         self._clean_old_entries()
+        return False
+    
+    def _signals_are_similar(self, signal1, signal2):
+        """Check if two signals are similar enough to be considered duplicates"""
+        # Extract direction and cycle pattern
+        dir1 = "BULLISH" if "BULLISH" in signal1.upper() else "BEARISH" if "BEARISH" in signal1.upper() else None
+        dir2 = "BULLISH" if "BULLISH" in signal2.upper() else "BEARISH" if "BEARISH" in signal2.upper() else None
+        
+        # If different directions, not similar
+        if dir1 != dir2:
+            return False
+            
+        # Check if same cycle pattern (monthly, weekly, etc)
+        cycles1 = [cycle for cycle in ['MONTHLY', 'WEEKLY', 'DAILY', '90MIN'] if cycle in signal1.upper()]
+        cycles2 = [cycle for cycle in ['MONTHLY', 'WEEKLY', 'DAILY', '90MIN'] if cycle in signal2.upper()]
+        
+        # If similar cycle composition, consider similar
+        if cycles1 and cycles2 and set(cycles1) == set(cycles2):
+            return True
+            
         return False
     
     def _clean_old_entries(self):
@@ -284,6 +326,29 @@ class RobustTimingManager:
                 logger.warning(f"⚠️ NON-CHRONOLOGICAL SWINGS: {prev_time.strftime('%H:%M')} → {curr_time.strftime('%H:%M')} (diff: {time_diff/60:.1f} min)")
             return is_valid
         return True
+    
+    def is_psp_within_bounds(self, smt_formation_time, psp_formation_time, cycle_type):
+        """Check if PSP is within 3 quarters of SMT formation"""
+        if not smt_formation_time or not psp_formation_time:
+            return False
+            
+        time_diff = abs((psp_formation_time - smt_formation_time).total_seconds() / 3600)  # hours
+        
+        # Maximum allowed time difference based on cycle
+        max_hours = {
+            'monthly': 24 * 7,  # 1 week
+            'weekly': 24 * 2,   # 2 days  
+            'daily': 6,         # 6 hours
+            '90min': 3          # 3 hours
+        }
+        
+        max_allowed = max_hours.get(cycle_type, 3)
+        is_within = time_diff <= max_allowed
+        
+        if not is_within:
+            logger.warning(f"⚠️ PSP TOO FAR FROM SMT: {time_diff:.1f}h > {max_allowed}h for {cycle_type}")
+            
+        return is_within
     
     def calculate_next_candle_time(self, timeframe):
         """Calculate when the next candle will open for any timeframe"""
@@ -693,7 +758,8 @@ class RobustSMTDetector:
                             'psp_found': False,
                             'check_count': 0,
                             'max_checks': 20,
-                            'last_check': datetime.now(NY_TZ)
+                            'last_check': datetime.now(NY_TZ),
+                            'formation_time': smt_result['formation_time']
                         }
                     
                     return smt_result
@@ -705,7 +771,7 @@ class RobustSMTDetector:
             return None
     
     def _compare_quarters_swing_based(self, asset1_prev, asset1_curr, asset2_prev, asset2_curr, cycle_type, prev_q, curr_q):
-        """Compare two consecutive quarters using swing highs/lows"""
+        """Compare two consecutive quarters using swing highs/lows - WITH SWING TIME ALIGNMENT"""
         try:
             if (asset1_prev.empty or asset1_curr.empty or 
                 asset2_prev.empty or asset2_curr.empty):
@@ -727,6 +793,7 @@ class RobustSMTDetector:
             asset2_prev_lowest = self.swing_detector.get_lowest_swing_low(asset2_prev_swing_lows)
             asset2_curr_lowest = self.swing_detector.get_lowest_swing_low(asset2_curr_swing_lows)
             
+            # VALIDATE SWING TIME ALIGNMENT
             bearish_smt = self._check_bearish_smt(
                 asset1_prev_highest, asset1_curr_highest,
                 asset2_prev_highest, asset2_curr_highest
@@ -742,6 +809,11 @@ class RobustSMTDetector:
             if bearish_smt:
                 direction = 'bearish'
                 smt_type = 'Higher Swing High'
+                # VALIDATE SWING TIME ALIGNMENT FOR BOTH ASSETS
+                if not self._validate_swing_time_alignment(asset1_prev_highest, asset1_curr_highest, asset2_prev_highest, asset2_curr_highest):
+                    logger.warning(f"⚠️ SWING TIME MISALIGNMENT for {cycle_type} {prev_q}→{curr_q} bearish SMT")
+                    return None
+                    
                 asset1_action = self.swing_detector.format_swing_time_description(
                     asset1_prev_highest, asset1_curr_highest, "high", self.timing_manager
                 )
@@ -753,6 +825,11 @@ class RobustSMTDetector:
             elif bullish_smt:
                 direction = 'bullish'
                 smt_type = 'Lower Swing Low'
+                # VALIDATE SWING TIME ALIGNMENT FOR BOTH ASSETS
+                if not self._validate_swing_time_alignment(asset1_prev_lowest, asset1_curr_lowest, asset2_prev_lowest, asset2_curr_lowest, swing_type="low"):
+                    logger.warning(f"⚠️ SWING TIME MISALIGNMENT for {cycle_type} {prev_q}→{curr_q} bullish SMT")
+                    return None
+                    
                 asset1_action = self.swing_detector.format_swing_time_description(
                     asset1_prev_lowest, asset1_curr_lowest, "low", self.timing_manager
                 )
@@ -800,6 +877,24 @@ class RobustSMTDetector:
             logger.error(f"Error comparing quarters {prev_q}→{curr_q}: {str(e)}")
             return None
     
+    def _validate_swing_time_alignment(self, asset1_prev, asset1_curr, asset2_prev, asset2_curr, swing_type="high"):
+        """Validate that both assets' swings occur at the same time periods"""
+        if not all([asset1_prev, asset1_curr, asset2_prev, asset2_curr]):
+            return False
+        
+        # Check that previous swings are within 2 hours of each other
+        prev_time_diff = abs((asset1_prev['time'] - asset2_prev['time']).total_seconds() / 3600)
+        curr_time_diff = abs((asset1_curr['time'] - asset2_curr['time']).total_seconds() / 3600)
+        
+        max_time_diff = 2.0  # 2 hours maximum difference
+        
+        is_aligned = prev_time_diff <= max_time_diff and curr_time_diff <= max_time_diff
+        
+        if not is_aligned:
+            logger.warning(f"⚠️ SWING TIME MISALIGNMENT: Prev diff {prev_time_diff:.1f}h, Curr diff {curr_time_diff:.1f}h > {max_time_diff}h")
+            
+        return is_aligned
+    
     def _check_bearish_smt(self, asset1_prev_high, asset1_curr_high, asset2_prev_high, asset2_curr_high):
         """Check for bearish SMT: Asset1 makes HH, Asset2 doesn't"""
         if not all([asset1_prev_high, asset1_curr_high, asset2_prev_high, asset2_curr_high]):
@@ -821,12 +916,13 @@ class RobustSMTDetector:
         return asset1_ll and asset2_no_ll
     
     def check_psp_for_smt(self, smt_data, asset1_data, asset2_data):
-        """Check for PSP in past 5 candles for a specific SMT"""
+        """Check for PSP in past 5 candles for a specific SMT - WITH TIMING VALIDATION"""
         if not smt_data:
             return None
             
         signal_key = smt_data['signal_key']
         timeframe = smt_data['timeframe']
+        cycle_type = smt_data['cycle']
         
         # Update tracking
         if signal_key in self.smt_psp_tracking:
@@ -838,6 +934,14 @@ class RobustSMTDetector:
         psp_signal = self._detect_psp_last_n_candles(asset1_data, asset2_data, timeframe, n=5)
         
         if psp_signal:
+            # VALIDATE PSP TIMING - Must be within 3 quarters of SMT formation
+            smt_formation_time = tracking.get('formation_time', smt_data['formation_time'])
+            psp_formation_time = psp_signal['formation_time']
+            
+            if not self.timing_manager.is_psp_within_bounds(smt_formation_time, psp_formation_time, cycle_type):
+                logger.warning(f"⚠️ PSP TOO FAR FROM SMT: {cycle_type} SMT at {smt_formation_time.strftime('%H:%M')}, PSP at {psp_formation_time.strftime('%H:%M')}")
+                return None
+            
             logger.info(f"🎯 PSP FOUND for SMT {smt_data['cycle']} {smt_data['quarters']} - {psp_signal['candles_ago']} candles ago")
             
             # Mark PSP as found for this SMT
@@ -972,11 +1076,11 @@ class RobustSMTDetector:
                 del self.signal_counts[key]
 
 # ================================
-# ROBUST SIGNAL BUILDER WITH CONFLICT RESOLUTION
+# ROBUST SIGNAL BUILDER WITH CYCLE HIERARCHY
 # ================================
 
 class RobustSignalBuilder:
-    """Robust signal builder with conflict resolution"""
+    """Robust signal builder with cycle hierarchy dominance"""
     
     def __init__(self, pair_group, timing_manager):
         self.pair_group = pair_group
@@ -996,13 +1100,22 @@ class RobustSignalBuilder:
         self.dominant_direction = None
         self.has_conflict = False
         
+        # Cycle hierarchy tracking
+        self.cycle_strength = {'monthly': 0, 'weekly': 0, 'daily': 0, '90min': 0}
+        
     def add_smt_signal(self, smt_data, psp_signal=None):
-        """Add SMT signal with conflict detection"""
+        """Add SMT signal with cycle hierarchy validation"""
         if not smt_data:
             return False
             
         cycle = smt_data['cycle']
         direction = smt_data['direction']
+        
+        # CHECK CYCLE HIERARCHY - Bigger cycles dominate smaller ones
+        hierarchy_issue = self._check_cycle_hierarchy_conflict(cycle, direction)
+        if hierarchy_issue:
+            logger.warning(f"🔄 CYCLE HIERARCHY: {cycle} {direction} SMT rejected due to {hierarchy_issue}")
+            return False
         
         # PREVENT DUPLICATE CRITERIA - Check if we already have this exact SMT
         existing_criteria = f"SMT {cycle}: {direction} {smt_data['quarters']}"
@@ -1028,6 +1141,9 @@ class RobustSignalBuilder:
         # Store SMT
         self.active_smts[cycle] = smt_data
         self.signal_strength += 2
+        
+        # Update cycle strength
+        self.cycle_strength[cycle] = CYCLE_HIERARCHY[cycle]
         
         # Update strength counters
         if direction == 'bullish':
@@ -1057,6 +1173,25 @@ class RobustSignalBuilder:
         self._check_signal_readiness()
         
         return True
+    
+    def _check_cycle_hierarchy_conflict(self, new_cycle, new_direction):
+        """Check if new SMT conflicts with higher cycle SMTs"""
+        new_cycle_level = CYCLE_HIERARCHY[new_cycle]
+        
+        for existing_cycle, existing_smt in self.active_smts.items():
+            existing_cycle_level = CYCLE_HIERARCHY[existing_cycle]
+            existing_direction = existing_smt['direction']
+            
+            # If existing cycle is higher and direction conflicts
+            if existing_cycle_level > new_cycle_level and existing_direction != new_direction:
+                return f"higher {existing_cycle} {existing_direction} SMT"
+            
+            # If new cycle is higher and direction conflicts, invalidate existing smaller cycle
+            if new_cycle_level > existing_cycle_level and existing_direction != new_direction:
+                logger.info(f"🔄 CYCLE HIERARCHY: Invalidating {existing_cycle} {existing_direction} due to higher {new_cycle} {new_direction}")
+                self._remove_smt(existing_cycle)
+        
+        return None
     
     def _update_direction_strength(self):
         """Update direction strength and detect conflicts"""
@@ -1196,6 +1331,9 @@ class RobustSignalBuilder:
             del self.active_smts[cycle]
             self.signal_strength = max(0, self.signal_strength - 2)
             
+            # Remove cycle strength
+            self.cycle_strength[cycle] = 0
+            
             # Remove PSP if exists
             if cycle in self.psp_for_smts:
                 del self.psp_for_smts[cycle]
@@ -1233,6 +1371,7 @@ class RobustSignalBuilder:
     def get_signal_details(self):
         """Get complete signal details with conflict analysis - ONLY CONTRIBUTING SMTs"""
         if not self.is_signal_ready() or self.has_serious_conflict():
+            logger.info(f"❌ Signal not ready: ready={self.is_signal_ready()}, conflict={self.has_serious_conflict()}")
             return None
             
         # Determine primary direction
@@ -1246,6 +1385,7 @@ class RobustSignalBuilder:
             direction = first_smt['direction']
         
         if not direction:
+            logger.info("❌ No direction determined")
             return None
         
         # Generate unique signal key for duplicate prevention
@@ -1311,6 +1451,7 @@ class RobustSignalBuilder:
         self.bearish_strength = 0
         self.dominant_direction = None
         self.has_conflict = False
+        self.cycle_strength = {'monthly': 0, 'weekly': 0, 'daily': 0, '90min': 0}
         logger.info(f"🔄 {self.pair_group}: Robust signal builder reset")
 
 # ================================
