@@ -4,6 +4,7 @@ ROBUST SMT TRADING SYSTEM - PROPER SWING ALIGNMENT
 - First swings same time for both assets
 - Second swings same time for both assets
 - Proper quarter-based timing
+- Enhanced SMT invalidation and duplicate prevention
 """
 
 import asyncio
@@ -254,66 +255,52 @@ def fetch_candles(instrument, timeframe, count=100, api_key=None):
     return pd.DataFrame()
 
 # ================================
-# ENHANCED TIMING MANAGER
+# ENHANCED TIMING MANAGER WITH PROPER DUPLICATE PREVENTION
 # ================================
 
 class RobustTimingManager:
-    """Enhanced timing manager with chronological validation"""
+    """Enhanced timing manager with chronological validation and proper duplicate prevention"""
     
     def __init__(self):
         self.ny_tz = pytz.timezone('America/New_York')
         self.sent_signals = {}  # Track sent signals to prevent duplicates
         
     def is_duplicate_signal(self, signal_key, pair_group, cooldown_minutes=30):
-        """Check if signal was already sent recently - IMPROVED DUPLICATE PREVENTION"""
+        """PROPER DUPLICATE PREVENTION - Check if signal was already sent recently"""
         current_time = datetime.now(self.ny_tz)
         
         if pair_group not in self.sent_signals:
             self.sent_signals[pair_group] = {}
             
-        # Check all signals for this pair group for similarity
-        for existing_key, last_sent in list(self.sent_signals[pair_group].items()):
+        # Clean old entries first
+        self._clean_old_entries()
+        
+        # Check if exact signal key exists and is within cooldown
+        if signal_key in self.sent_signals[pair_group]:
+            last_sent = self.sent_signals[pair_group][signal_key]
             time_diff = (current_time - last_sent).total_seconds() / 60
             
-            # If same signal key or very similar (same direction and cycle pattern)
-            if (signal_key == existing_key or 
-                (self._signals_are_similar(signal_key, existing_key) and time_diff < cooldown_minutes)):
-                logger.info(f"⏳ Skipping duplicate/similar signal: {signal_key} (similar to {existing_key}, sent {time_diff:.1f} min ago)")
+            if time_diff < cooldown_minutes:
+                logger.info(f"⏳ Skipping duplicate signal: {signal_key} (sent {time_diff:.1f} min ago)")
                 return True
-                
+        
+        # Store the signal with current time
         self.sent_signals[pair_group][signal_key] = current_time
-        
-        # Clean old entries
-        self._clean_old_entries()
-        return False
-    
-    def _signals_are_similar(self, signal1, signal2):
-        """Check if two signals are similar enough to be considered duplicates"""
-        # Extract direction and cycle pattern
-        dir1 = "BULLISH" if "BULLISH" in signal1.upper() else "BEARISH" if "BEARISH" in signal1.upper() else None
-        dir2 = "BULLISH" if "BULLISH" in signal2.upper() else "BEARISH" if "BEARISH" in signal2.upper() else None
-        
-        # If different directions, not similar
-        if dir1 != dir2:
-            return False
-            
-        # Check if same cycle pattern (monthly, weekly, etc)
-        cycles1 = [cycle for cycle in ['MONTHLY', 'WEEKLY', 'DAILY', '90MIN'] if cycle in signal1.upper()]
-        cycles2 = [cycle for cycle in ['MONTHLY', 'WEEKLY', 'DAILY', '90MIN'] if cycle in signal2.upper()]
-        
-        # If similar cycle composition, consider similar
-        if cycles1 and cycles2 and set(cycles1) == set(cycles2):
-            return True
-            
+        logger.info(f"📝 Stored signal in sent_signals: {signal_key}")
         return False
     
     def _clean_old_entries(self):
         """Clean entries older than 24 hours"""
         current_time = datetime.now(self.ny_tz)
         for pair_group in list(self.sent_signals.keys()):
-            for signal_key in list(self.sent_signals[pair_group].keys()):
-                if (current_time - self.sent_signals[pair_group][signal_key]).total_seconds() > 86400:  # 24 hours
-                    del self.sent_signals[pair_group][signal_key]
+            signals_to_remove = []
+            for signal_key, last_sent in self.sent_signals[pair_group].items():
+                if (current_time - last_sent).total_seconds() > 86400:  # 24 hours
+                    signals_to_remove.append(signal_key)
+            
+            for signal_key in signals_to_remove:
+                del self.sent_signals[pair_group][signal_key]
+                logger.debug(f"🧹 Cleaned old signal: {signal_key}")
     
     def validate_chronological_order(self, prev_time, curr_time):
         """Validate that swing times are in correct chronological order"""
@@ -698,11 +685,11 @@ class RobustSwingDetector:
                     return f"⚠️ NON-CHRONOLOGICAL: first low at {prev_time_str} and higher low at {curr_time_str}"
 
 # ================================
-# ROBUST SMT DETECTOR WITH PROPER SWING ALIGNMENT
+# ROBUST SMT DETECTOR WITH PROPER SWING ALIGNMENT AND ENHANCED INVALIDATION
 # ================================
 
 class RobustSMTDetector:
-    """Robust SMT detector with proper swing alignment"""
+    """Robust SMT detector with proper swing alignment and enhanced invalidation"""
     
     def __init__(self, pair_config, timing_manager):
         self.smt_history = []
@@ -762,7 +749,9 @@ class RobustSMTDetector:
                             'check_count': 0,
                             'max_checks': 20,
                             'last_check': datetime.now(NY_TZ),
-                            'formation_time': smt_result['formation_time']
+                            'formation_time': smt_result['formation_time'],
+                            'lowest_low': smt_result['lowest_low'],  # Store for invalidation
+                            'highest_high': smt_result['highest_high']  # Store for invalidation
                         }
                     
                     return smt_result
@@ -813,6 +802,11 @@ class RobustSMTDetector:
                     asset2_prev_high, asset2_curr_high, "high", self.timing_manager
                 )
                 critical_level = asset1_curr_high['price']
+                highest_high = max(asset1_prev_high['price'], asset1_curr_high['price'], 
+                                 asset2_prev_high['price'], asset2_curr_high['price'])
+                lowest_low = min(asset1_prev_high['price'], asset1_curr_high['price'], 
+                               asset2_prev_high['price'], asset2_curr_high['price'])
+                formation_time = asset1_curr_high['time']
                 
             elif bullish_smt:
                 direction = 'bullish'
@@ -826,6 +820,11 @@ class RobustSMTDetector:
                     asset2_prev_low, asset2_curr_low, "low", self.timing_manager
                 )
                 critical_level = asset1_curr_low['price']
+                highest_high = max(asset1_prev_low['price'], asset1_curr_low['price'], 
+                                 asset2_prev_low['price'], asset2_curr_low['price'])
+                lowest_low = min(asset1_prev_low['price'], asset1_curr_low['price'], 
+                               asset2_prev_low['price'], asset2_curr_low['price'])
+                formation_time = asset1_curr_low['time']
                 
             else:
                 return None
@@ -837,12 +836,14 @@ class RobustSMTDetector:
                 'cycle': cycle_type,
                 'quarters': f"{prev_q}→{curr_q}",
                 'timestamp': current_time,
-                'formation_time': current_time,
+                'formation_time': formation_time,
                 'asset1_action': asset1_action,
                 'asset2_action': asset2_action,
                 'details': f"Asset1 {asset1_action}, Asset2 {asset2_action}",
-                'signal_key': f"SMT_{cycle_type}_{prev_q}_{curr_q}_{direction}_{current_time.strftime('%m%d_%H%M')}",
+                'signal_key': f"SMT_{cycle_type}_{prev_q}_{curr_q}_{direction}_{formation_time.strftime('%m%d_%H%M')}",
                 'critical_level': critical_level,
+                'highest_high': highest_high,
+                'lowest_low': lowest_low,
                 'timeframe': self.pair_config['timeframe_mapping'][cycle_type],
                 'swing_times': {
                     'asset1_prev': asset1_prev_high['time'] if bearish_smt else asset1_prev_low['time'],
@@ -859,6 +860,9 @@ class RobustSMTDetector:
             logger.info(f"   Signal ID: {smt_data['signal_key']}")
             logger.info(f"   Asset1: {asset1_action}")
             logger.info(f"   Asset2: {asset2_action}")
+            logger.info(f"   Critical Level: {critical_level:.4f}")
+            logger.info(f"   Highest High: {highest_high:.4f}")
+            logger.info(f"   Lowest Low: {lowest_low:.4f}")
             
             return smt_data
             
@@ -1051,29 +1055,52 @@ class RobustSMTDetector:
         return True
     
     def check_smt_invalidation(self, smt_data, asset1_data, asset2_data):
+        """ENHANCED SMT INVALIDATION - Check if price has invalidated the SMT"""
         if not smt_data or smt_data['signal_key'] in self.invalidated_smts:
             return True
             
         direction = smt_data['direction']
         critical_level = smt_data['critical_level']
+        lowest_low = smt_data.get('lowest_low')
+        highest_high = smt_data.get('highest_high')
         
         if direction == 'bearish':
-            asset1_current_high = asset1_data['high'].max() if not asset1_data.empty else None
-            asset2_current_high = asset2_data['high'].max() if not asset2_data.empty else None
+            # Get current prices from both assets
+            asset1_current_low = asset1_data['low'].min() if not asset1_data.empty else None
+            asset2_current_low = asset2_data['low'].min() if not asset2_data.empty else None
             
-            if (asset1_current_high and asset1_current_high > critical_level) or \
-               (asset2_current_high and asset2_current_high > critical_level):
-                logger.info(f"❌ BEARISH SMT INVALIDATED: Price above critical level {critical_level:.4f}")
+            # ENHANCED INVALIDATION: If price goes below the lowest low of the SMT formation
+            if lowest_low:
+                if (asset1_current_low and asset1_current_low < lowest_low) or \
+                   (asset2_current_low and asset2_current_low < lowest_low):
+                    logger.info(f"❌ BEARISH SMT INVALIDATED: Price below lowest low {lowest_low:.4f}")
+                    self.invalidated_smts.add(smt_data['signal_key'])
+                    return True
+            
+            # Original critical level check
+            if (asset1_current_low and asset1_current_low < critical_level) or \
+               (asset2_current_low and asset2_current_low < critical_level):
+                logger.info(f"❌ BEARISH SMT INVALIDATED: Price below critical level {critical_level:.4f}")
                 self.invalidated_smts.add(smt_data['signal_key'])
                 return True
                 
         elif direction == 'bullish':
-            asset1_current_low = asset1_data['low'].min() if not asset1_data.empty else None
-            asset2_current_low = asset2_data['low'].min() if not asset2_data.empty else None
+            # Get current prices from both assets
+            asset1_current_high = asset1_data['high'].max() if not asset1_data.empty else None
+            asset2_current_high = asset2_data['high'].max() if not asset2_data.empty else None
             
-            if (asset1_current_low and asset1_current_low < critical_level) or \
-               (asset2_current_low and asset2_current_low < critical_level):
-                logger.info(f"❌ BULLISH SMT INVALIDATED: Price below critical level {critical_level:.4f}")
+            # ENHANCED INVALIDATION: If price goes above the highest high of the SMT formation
+            if highest_high:
+                if (asset1_current_high and asset1_current_high > highest_high) or \
+                   (asset2_current_high and asset2_current_high > highest_high):
+                    logger.info(f"❌ BULLISH SMT INVALIDATED: Price above highest high {highest_high:.4f}")
+                    self.invalidated_smts.add(smt_data['signal_key'])
+                    return True
+            
+            # Original critical level check
+            if (asset1_current_high and asset1_current_high > critical_level) or \
+               (asset2_current_high and asset2_current_high > critical_level):
+                logger.info(f"❌ BULLISH SMT INVALIDATED: Price above critical level {critical_level:.4f}")
                 self.invalidated_smts.add(smt_data['signal_key'])
                 return True
         
@@ -1611,7 +1638,7 @@ class RobustTradingSystem:
             return None
     
     async def _check_smt_tracking(self):
-        """Check SMT invalidations and update PSP tracking"""
+        """Check SMT invalidations and update PSP tracking - ENHANCED WITH PROPER INVALIDATION"""
         if not self.signal_builder.active_smts:
             return
             
@@ -1620,7 +1647,7 @@ class RobustTradingSystem:
             asset1_data = self.market_data[self.pair1].get(timeframe)
             asset2_data = self.market_data[self.pair2].get(timeframe)
             
-            # Check invalidation
+            # Check invalidation with enhanced logic
             if self.smt_detector.check_smt_invalidation(smt, asset1_data, asset2_data):
                 self.signal_builder._remove_smt(cycle)
                 logger.info(f"🔄 Removed invalidated SMT: {cycle}")
@@ -1846,6 +1873,11 @@ class RobustTradingManager:
                 message += f"• {cycle}: {smt['direction']} {smt['quarters']} {psp_status}\n"
                 message += f"  📍 {smt['asset1_action']}\n"
                 message += f"  📍 {smt['asset2_action']}\n"
+                
+                # Add critical levels for reference
+                message += f"  🎯 Critical Level: {smt['critical_level']:.4f}\n"
+                message += f"  📊 Highest High: {smt['highest_high']:.4f}\n"
+                message += f"  📊 Lowest Low: {smt['lowest_low']:.4f}\n"
                 
                 # Add PSP timeframe and time if available
                 if cycle in signal.get('psp_smts', {}):
