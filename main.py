@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
 ROBUST SMT TRADING SYSTEM - ULTIMATE FIXED VERSION
-- Proper swing time alignment (first swings same time, second swings same time)
+- Proper swing time alignment (3 candle tolerance)
 - Strong duplicate prevention
 - Fixed cycle hierarchy (2 smaller cycles can override 1 higher cycle)
 - Interim price validation for SMT signals
 - UTC-4 timezone enforcement
+- Enhanced CRT detection
 """
 
 import asyncio
@@ -446,8 +447,8 @@ class RobustTimingManager:
         logger.debug(f"CRT sleep calculation: calculated={sleep_seconds:.1f}s, max={max_sleep}s, final={final_sleep:.1f}s")
         return final_sleep
     
-    def is_crt_fresh(self, crt_timestamp, max_age_minutes=1):
-        """Check if CRT signal is fresh"""
+    def is_crt_fresh(self, crt_timestamp, max_age_minutes=5):  # Increased from 1 to 5 minutes
+        """Check if CRT signal is fresh - MORE LENIENT"""
         if not crt_timestamp:
             return False
             
@@ -600,11 +601,11 @@ class RobustQuarterManager:
             return 'unknown'
 
 # ================================
-# ULTIMATE SWING DETECTOR WITH PERFECT ALIGNMENT AND INTERIM VALIDATION
+# ULTIMATE SWING DETECTOR WITH 3-CANDLE TOLERANCE
 # ================================
 
 class UltimateSwingDetector:
-    """Ultimate swing detection with PERFECT time alignment and interim price validation"""
+    """Ultimate swing detection with 3-CANDLE TOLERANCE and interim price validation"""
     
     @staticmethod
     def find_swing_highs_lows(df, lookback=3):
@@ -651,9 +652,12 @@ class UltimateSwingDetector:
         return swing_highs, swing_lows
     
     @staticmethod
-    def find_aligned_swings(asset1_swings, asset2_swings, max_time_diff_minutes=15):
-        """Find swings that occur at the EXACT SAME TIME (within tolerance)"""
+    def find_aligned_swings(asset1_swings, asset2_swings, max_candle_diff=3, timeframe_minutes=5):
+        """Find swings that occur within 3 CANDLES of each other"""
         aligned_pairs = []
+        
+        # Calculate time tolerance based on timeframe and max_candle_diff
+        max_time_diff_minutes = max_candle_diff * timeframe_minutes
         
         for swing1 in asset1_swings:
             for swing2 in asset2_swings:
@@ -747,11 +751,11 @@ class UltimateSwingDetector:
                 return True
 
 # ================================
-# ULTIMATE SMT DETECTOR WITH PERFECT ALIGNMENT AND INTERIM VALIDATION
+# ULTIMATE SMT DETECTOR WITH 3-CANDLE TOLERANCE
 # ================================
 
 class UltimateSMTDetector:
-    """Ultimate SMT detector with PERFECT swing alignment and interim price validation"""
+    """Ultimate SMT detector with 3-CANDLE TOLERANCE and interim price validation"""
     
     def __init__(self, pair_config, timing_manager):
         self.smt_history = []
@@ -762,11 +766,18 @@ class UltimateSMTDetector:
         self.invalidated_smts = set()
         self.pair_config = pair_config
         
+        # Timeframe to minutes mapping for tolerance calculation
+        self.timeframe_minutes = {
+            'M1': 1, 'M5': 5, 'M15': 15, 'M30': 30,
+            'H1': 60, 'H2': 120, 'H3': 180, 'H4': 240,
+            'H6': 360, 'H8': 480, 'H12': 720
+        }
+        
         # PSP tracking for each SMT
         self.smt_psp_tracking = {}
         
     def detect_smt_all_cycles(self, asset1_data, asset2_data, cycle_type):
-        """Detect SMT for a specific cycle with PERFECT alignment and interim validation"""
+        """Detect SMT for a specific cycle with 3-CANDLE TOLERANCE"""
         try:
             if (asset1_data is None or not isinstance(asset1_data, pd.DataFrame) or asset1_data.empty or
                 asset2_data is None or not isinstance(asset2_data, pd.DataFrame) or asset2_data.empty):
@@ -795,7 +806,7 @@ class UltimateSMTDetector:
                 if prev_q not in asset2_quarters or curr_q not in asset2_quarters:
                     continue
                 
-                smt_result = self._compare_quarters_with_perfect_alignment(
+                smt_result = self._compare_quarters_with_3_candle_tolerance(
                     asset1_quarters[prev_q], asset1_quarters[curr_q],
                     asset2_quarters[prev_q], asset2_quarters[curr_q],
                     cycle_type, prev_q, curr_q
@@ -821,12 +832,16 @@ class UltimateSMTDetector:
             logger.error(f"Error in SMT detection for {cycle_type}: {str(e)}")
             return None
     
-    def _compare_quarters_with_perfect_alignment(self, asset1_prev, asset1_curr, asset2_prev, asset2_curr, cycle_type, prev_q, curr_q):
-        """Compare two consecutive quarters with PERFECT swing time alignment and interim validation"""
+    def _compare_quarters_with_3_candle_tolerance(self, asset1_prev, asset1_curr, asset2_prev, asset2_curr, cycle_type, prev_q, curr_q):
+        """Compare two consecutive quarters with 3-CANDLE TOLERANCE"""
         try:
             if (asset1_prev.empty or asset1_curr.empty or 
                 asset2_prev.empty or asset2_curr.empty):
                 return None
+            
+            # Get timeframe for tolerance calculation
+            timeframe = self.pair_config['timeframe_mapping'][cycle_type]
+            timeframe_minutes = self.timeframe_minutes.get(timeframe, 5)  # Default to 5 minutes
             
             # Combine previous and current quarters for interim validation
             asset1_combined = pd.concat([asset1_prev, asset1_curr]).sort_values('time').reset_index(drop=True)
@@ -839,18 +854,18 @@ class UltimateSMTDetector:
             asset2_prev_swing_highs, asset2_prev_swing_lows = self.swing_detector.find_swing_highs_lows(asset2_prev)
             asset2_curr_swing_highs, asset2_curr_swing_lows = self.swing_detector.find_swing_highs_lows(asset2_curr)
             
-            # Find PERFECTLY ALIGNED bearish SMT with interim validation
-            bearish_smt = self._find_perfect_bearish_smt(
+            # Find bearish SMT with 3-candle tolerance
+            bearish_smt = self._find_bearish_smt_with_tolerance(
                 asset1_prev_swing_highs, asset1_curr_swing_highs,
                 asset2_prev_swing_highs, asset2_curr_swing_highs,
-                asset1_combined
+                asset1_combined, timeframe_minutes
             )
             
-            # Find PERFECTLY ALIGNED bullish SMT with interim validation
-            bullish_smt = self._find_perfect_bullish_smt(
+            # Find bullish SMT with 3-candle tolerance
+            bullish_smt = self._find_bullish_smt_with_tolerance(
                 asset1_prev_swing_lows, asset1_curr_swing_lows,
                 asset2_prev_swing_lows, asset2_curr_swing_lows,
-                asset1_combined
+                asset1_combined, timeframe_minutes
             )
             
             current_time = datetime.now(NY_TZ)
@@ -916,7 +931,7 @@ class UltimateSMTDetector:
             self.smt_history.append(smt_data)
             self._update_signal_count(smt_data['signal_key'])
             
-            logger.info(f"🎯 PERFECTLY ALIGNED SMT: {direction} {cycle_type} {prev_q}→{curr_q}")
+            logger.info(f"🎯 SMT DETECTED with 3-candle tolerance: {direction} {cycle_type} {prev_q}→{curr_q}")
             logger.info(f"   Signal ID: {smt_data['signal_key']}")
             logger.info(f"   Asset1: {asset1_action}")
             logger.info(f"   Asset2: {asset2_action}")
@@ -927,13 +942,19 @@ class UltimateSMTDetector:
             logger.error(f"Error comparing quarters {prev_q}→{curr_q}: {str(e)}")
             return None
     
-    def _find_perfect_bearish_smt(self, asset1_prev_highs, asset1_curr_highs, asset2_prev_highs, asset2_curr_highs, asset1_combined_data):
-        """Find PERFECTLY aligned bearish SMT - both swings at same times WITH INTERIM VALIDATION"""
-        # Find aligned previous swings
-        aligned_prev_highs = self.swing_detector.find_aligned_swings(asset1_prev_highs, asset2_prev_highs)
+    def _find_bearish_smt_with_tolerance(self, asset1_prev_highs, asset1_curr_highs, asset2_prev_highs, asset2_curr_highs, asset1_combined_data, timeframe_minutes):
+        """Find bearish SMT with 3-CANDLE TOLERANCE"""
+        # Find aligned previous swings with tolerance
+        aligned_prev_highs = self.swing_detector.find_aligned_swings(
+            asset1_prev_highs, asset2_prev_highs, 
+            max_candle_diff=3, timeframe_minutes=timeframe_minutes
+        )
         
-        # Find aligned current swings  
-        aligned_curr_highs = self.swing_detector.find_aligned_swings(asset1_curr_highs, asset2_curr_highs)
+        # Find aligned current swings with tolerance
+        aligned_curr_highs = self.swing_detector.find_aligned_swings(
+            asset1_curr_highs, asset2_curr_highs,
+            max_candle_diff=3, timeframe_minutes=timeframe_minutes
+        )
         
         for prev_pair in aligned_prev_highs:
             asset1_prev, asset2_prev, prev_time_diff = prev_pair
@@ -941,35 +962,45 @@ class UltimateSMTDetector:
             for curr_pair in aligned_curr_highs:
                 asset1_curr, asset2_curr, curr_time_diff = curr_pair
                 
-                # Check SMT conditions
+                # Check SMT conditions - FIXED LOGIC FOR YOUR SCENARIO
+                # Asset1 makes HIGHER high (price goes above and closes above)
                 asset1_hh = asset1_curr['price'] > asset1_prev['price']
-                asset2_no_hh = asset2_curr['price'] <= asset2_prev['price']
+                
+                # Asset2 makes LOWER high (price may go above but fails to close above, OR doesn't go above at all)
+                # This matches your scenario: GBPJPY goes above but closes below
+                asset2_lh = asset2_curr['price'] <= asset2_prev['price']  # Lower high
                 
                 # CRITICAL: Check interim price validation for bearish SMT
                 interim_valid = self.swing_detector.validate_interim_price_action(
                     asset1_combined_data, asset1_prev, asset1_curr, "bearish"
                 )
                 
-                if asset1_hh and asset2_no_hh and interim_valid:
-                    logger.info(f"✅ PERFECT BEARISH SMT FOUND:")
+                if asset1_hh and asset2_lh and interim_valid:
+                    logger.info(f"✅ BEARISH SMT FOUND with 3-candle tolerance:")
                     logger.info(f"   Prev swings: {asset1_prev['time'].strftime('%H:%M')} & {asset2_prev['time'].strftime('%H:%M')} (diff: {prev_time_diff:.1f}min)")
                     logger.info(f"   Curr swings: {asset1_curr['time'].strftime('%H:%M')} & {asset2_curr['time'].strftime('%H:%M')} (diff: {curr_time_diff:.1f}min)")
+                    logger.info(f"   Asset1: Higher High ({asset1_prev['price']:.4f} → {asset1_curr['price']:.4f})")
+                    logger.info(f"   Asset2: Lower High ({asset2_prev['price']:.4f} → {asset2_curr['price']:.4f})")
                     logger.info(f"   Interim validation: ✅ PASSED")
                     return (asset1_prev, asset1_curr, asset2_prev, asset2_curr)
-                elif asset1_hh and asset2_no_hh and not interim_valid:
+                elif asset1_hh and asset2_lh and not interim_valid:
                     logger.warning(f"❌ BEARISH SMT REJECTED - Interim price invalid")
-                    logger.info(f"   Prev swings: {asset1_prev['time'].strftime('%H:%M')} & {asset2_prev['time'].strftime('%H:%M')}")
-                    logger.info(f"   Curr swings: {asset1_curr['time'].strftime('%H:%M')} & {asset2_curr['time'].strftime('%H:%M')}")
         
         return None
     
-    def _find_perfect_bullish_smt(self, asset1_prev_lows, asset1_curr_lows, asset2_prev_lows, asset2_curr_lows, asset1_combined_data):
-        """Find PERFECTLY aligned bullish SMT - both swings at same times WITH INTERIM VALIDATION"""
-        # Find aligned previous swings
-        aligned_prev_lows = self.swing_detector.find_aligned_swings(asset1_prev_lows, asset2_prev_lows)
+    def _find_bullish_smt_with_tolerance(self, asset1_prev_lows, asset1_curr_lows, asset2_prev_lows, asset2_curr_lows, asset1_combined_data, timeframe_minutes):
+        """Find bullish SMT with 3-CANDLE TOLERANCE"""
+        # Find aligned previous swings with tolerance
+        aligned_prev_lows = self.swing_detector.find_aligned_swings(
+            asset1_prev_lows, asset2_prev_lows,
+            max_candle_diff=3, timeframe_minutes=timeframe_minutes
+        )
         
-        # Find aligned current swings  
-        aligned_curr_lows = self.swing_detector.find_aligned_swings(asset1_curr_lows, asset2_curr_lows)
+        # Find aligned current swings with tolerance
+        aligned_curr_lows = self.swing_detector.find_aligned_swings(
+            asset1_curr_lows, asset2_curr_lows,
+            max_candle_diff=3, timeframe_minutes=timeframe_minutes
+        )
         
         for prev_pair in aligned_prev_lows:
             asset1_prev, asset2_prev, prev_time_diff = prev_pair
@@ -978,24 +1009,24 @@ class UltimateSMTDetector:
                 asset1_curr, asset2_curr, curr_time_diff = curr_pair
                 
                 # Check SMT conditions
-                asset1_ll = asset1_curr['price'] < asset1_prev['price']
-                asset2_no_ll = asset2_curr['price'] >= asset2_prev['price']
+                asset1_ll = asset1_curr['price'] < asset1_prev['price']  # Lower low
+                asset2_hl = asset2_curr['price'] >= asset2_prev['price']  # Higher low
                 
                 # CRITICAL: Check interim price validation for bullish SMT
                 interim_valid = self.swing_detector.validate_interim_price_action(
                     asset1_combined_data, asset1_prev, asset1_curr, "bullish"
                 )
                 
-                if asset1_ll and asset2_no_ll and interim_valid:
-                    logger.info(f"✅ PERFECT BULLISH SMT FOUND:")
+                if asset1_ll and asset2_hl and interim_valid:
+                    logger.info(f"✅ BULLISH SMT FOUND with 3-candle tolerance:")
                     logger.info(f"   Prev swings: {asset1_prev['time'].strftime('%H:%M')} & {asset2_prev['time'].strftime('%H:%M')} (diff: {prev_time_diff:.1f}min)")
                     logger.info(f"   Curr swings: {asset1_curr['time'].strftime('%H:%M')} & {asset2_curr['time'].strftime('%H:%M')} (diff: {curr_time_diff:.1f}min)")
+                    logger.info(f"   Asset1: Lower Low ({asset1_prev['price']:.4f} → {asset1_curr['price']:.4f})")
+                    logger.info(f"   Asset2: Higher Low ({asset2_prev['price']:.4f} → {asset2_curr['price']:.4f})")
                     logger.info(f"   Interim validation: ✅ PASSED")
                     return (asset1_prev, asset1_curr, asset2_prev, asset2_curr)
-                elif asset1_ll and asset2_no_ll and not interim_valid:
+                elif asset1_ll and asset2_hl and not interim_valid:
                     logger.warning(f"❌ BULLISH SMT REJECTED - Interim price invalid")
-                    logger.info(f"   Prev swings: {asset1_prev['time'].strftime('%H:%M')} & {asset2_prev['time'].strftime('%H:%M')}")
-                    logger.info(f"   Curr swings: {asset1_curr['time'].strftime('%H:%M')} & {asset2_curr['time'].strftime('%H:%M')}")
         
         return None
     
@@ -1158,6 +1189,71 @@ class UltimateSMTDetector:
             keys_to_remove = list(self.signal_counts.keys())[:50]
             for key in keys_to_remove:
                 del self.signal_counts[key]
+
+# ================================
+# ENHANCED CRT DETECTOR
+# ================================
+
+class RobustCRTDetector:
+    """Enhanced CRT detector with better validation and logging"""
+    
+    def __init__(self, timing_manager):
+        self.timing_manager = timing_manager
+    
+    def calculate_crt_current_candle(self, df):
+        """Calculate CRT only on the current (incomplete) candle - ENHANCED"""
+        if df is None or not isinstance(df, pd.DataFrame) or df.empty or len(df) < 3:
+            return None
+        
+        current_candle = df[df['is_current'] == True]
+        if current_candle.empty:
+            return None
+            
+        current_candle = current_candle.iloc[0]
+        
+        if not self.timing_manager.is_crt_fresh(current_candle['time']):
+            logger.debug("CRT candle too old, skipping")
+            return None
+        
+        complete_candles = df[df['complete'] == True].tail(2)
+        if len(complete_candles) < 2:
+            return None
+            
+        c1 = complete_candles.iloc[0]
+        c2 = complete_candles.iloc[1]
+        c3 = current_candle
+        
+        try:
+            c2_range = float(c2['high']) - float(c2['low'])
+            c2_mid = float(c2['low']) + 0.5 * c2_range
+            
+            buy_crt = (float(c2['low']) < float(c1['low']) and 
+                      float(c2['close']) > float(c1['low']) and 
+                      float(c3['open']) > c2_mid)
+            
+            sell_crt = (float(c2['high']) > float(c1['high']) and 
+                       float(c2['close']) < float(c1['high']) and 
+                       float(c3['open']) < c2_mid)
+            
+            if buy_crt:
+                logger.info(f"🔷 BULLISH CRT DETECTED: Candle at {c3['time'].strftime('%H:%M')}")
+                return {
+                    'direction': 'bullish', 
+                    'timestamp': c3['time'],
+                    'signal_key': f"CRT_{c3['time'].strftime('%m%d_%H%M')}_bullish"
+                }
+            elif sell_crt:
+                logger.info(f"🔷 BEARISH CRT DETECTED: Candle at {c3['time'].strftime('%H:%M')}")
+                return {
+                    'direction': 'bearish', 
+                    'timestamp': c3['time'],
+                    'signal_key': f"CRT_{c3['time'].strftime('%m%d_%H%M')}_bearish"
+                }
+        except (ValueError, TypeError) as e:
+            logger.error(f"Error in CRT calculation: {e}")
+            return None
+        
+        return None
 
 # ================================
 # ULTIMATE SIGNAL BUILDER WITH FIXED CYCLE HIERARCHY
@@ -1549,69 +1645,6 @@ class UltimateSignalBuilder:
         logger.info(f"🔄 {self.pair_group}: Signal builder reset")
 
 # ================================
-# PATTERN DETECTORS
-# ================================
-
-class RobustCRTDetector:
-    """Enhanced CRT detector with better validation"""
-    
-    def __init__(self, timing_manager):
-        self.timing_manager = timing_manager
-    
-    def calculate_crt_current_candle(self, df):
-        """Calculate CRT only on the current (incomplete) candle"""
-        if df is None or not isinstance(df, pd.DataFrame) or df.empty or len(df) < 3:
-            return None
-        
-        current_candle = df[df['is_current'] == True]
-        if current_candle.empty:
-            return None
-            
-        current_candle = current_candle.iloc[0]
-        
-        if not self.timing_manager.is_crt_fresh(current_candle['time']):
-            logger.debug("CRT candle too old, skipping")
-            return None
-        
-        complete_candles = df[df['complete'] == True].tail(2)
-        if len(complete_candles) < 2:
-            return None
-            
-        c1 = complete_candles.iloc[0]
-        c2 = complete_candles.iloc[1]
-        c3 = current_candle
-        
-        try:
-            c2_range = float(c2['high']) - float(c2['low'])
-            c2_mid = float(c2['low']) + 0.5 * c2_range
-            
-            buy_crt = (float(c2['low']) < float(c1['low']) and 
-                      float(c2['close']) > float(c1['low']) and 
-                      float(c3['open']) > c2_mid)
-            
-            sell_crt = (float(c2['high']) > float(c1['high']) and 
-                       float(c2['close']) < float(c1['high']) and 
-                       float(c3['open']) < c2_mid)
-            
-            if buy_crt:
-                return {
-                    'direction': 'bullish', 
-                    'timestamp': c3['time'],
-                    'signal_key': f"CRT_{c3['time'].strftime('%m%d_%H%M')}_bullish"
-                }
-            elif sell_crt:
-                return {
-                    'direction': 'bearish', 
-                    'timestamp': c3['time'],
-                    'signal_key': f"CRT_{c3['time'].strftime('%m%d_%H%M')}_bearish"
-                }
-        except (ValueError, TypeError) as e:
-            logger.error(f"Error in CRT calculation: {e}")
-            return None
-        
-        return None
-
-# ================================
 # ULTIMATE TRADING SYSTEM
 # ================================
 
@@ -1652,9 +1685,8 @@ class UltimateTradingSystem:
             # Step 3: Check for PSP for existing SMTs
             await self._check_psp_for_existing_smts()
             
-            # Step 4: Scan for CRT signals (if no strong signals yet)
-            if not self.signal_builder.is_signal_ready():
-                await self._scan_crt_signals()
+            # Step 4: Scan for CRT signals (ALWAYS scan for CRT)
+            await self._scan_crt_signals()
             
             # Check if signal is complete and not conflicted
             if self.signal_builder.is_signal_ready() and not self.signal_builder.has_serious_conflict():
@@ -1728,10 +1760,10 @@ class UltimateTradingSystem:
         """Fetch ALL data needed for complete analysis"""
         required_timeframes = list(self.pair_config['timeframe_mapping'].values())
         
-        if not self.signal_builder.is_signal_ready():
-            for tf in CRT_TIMEFRAMES:
-                if tf not in required_timeframes:
-                    required_timeframes.append(tf)
+        # ALWAYS include CRT timeframes for better detection
+        for tf in CRT_TIMEFRAMES:
+            if tf not in required_timeframes:
+                required_timeframes.append(tf)
         
         for pair in [self.pair1, self.pair2]:
             for tf in required_timeframes:
@@ -1770,7 +1802,9 @@ class UltimateTradingSystem:
                 self.signal_builder.add_smt_signal(smt_signal, psp_signal)
     
     async def _scan_crt_signals(self):
-        """Scan for CRT signals on all timeframes"""
+        """Scan for CRT signals on all timeframes - ENHANCED"""
+        crt_detected = False
+        
         for timeframe in CRT_TIMEFRAMES:
             pair1_data = self.market_data[self.pair1].get(timeframe)
             pair2_data = self.market_data[self.pair2].get(timeframe)
@@ -1782,11 +1816,16 @@ class UltimateTradingSystem:
             crt_asset1 = self.crt_detector.calculate_crt_current_candle(pair1_data)
             crt_asset2 = self.crt_detector.calculate_crt_current_candle(pair2_data)
             
+            # Use either asset's CRT signal
             crt_signal = crt_asset1 if crt_asset1 else crt_asset2
             
             if crt_signal and self.signal_builder.set_crt_signal(crt_signal, timeframe):
                 logger.info(f"🔷 {self.pair_group}: Fresh CRT detected on {timeframe}")
+                crt_detected = True
                 break
+        
+        if not crt_detected:
+            logger.debug(f"🔍 {self.pair_group}: No CRT signals detected this cycle")
     
     def get_sleep_time(self):
         """Calculate sleep time until next relevant candle"""
