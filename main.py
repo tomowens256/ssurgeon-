@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-ROBUST SMT TRADING SYSTEM - FIXED QUARTER PAIRS VERSION
-- Fixed quarter pair detection to include ALL possible pairs
+ROBUST SMT TRADING SYSTEM - CRT+PSP+SMT CONFLUENCE VERSION
+- Detects CRT + PSP + SMT triple confluence
+- ALL possible quarter pairs
 - 3-candle tolerance for swing alignment
-- Enhanced CRT detection
-- Better logging for debugging
+- Enhanced timing validation
 """
 
 import asyncio
@@ -283,7 +283,7 @@ class RobustTimingManager:
                 return True
         
         # Check for similar signals (same direction and cycles)
-        for existing_key, last_sent in list(self.sent_signals[pair_group].items()):
+        for existing_key, last_sent in list(self.sent_signals[pair_group].keys()):
             time_diff = (current_time - last_sent).total_seconds() / 60
             
             if self._signals_are_very_similar(signal_key, existing_key) and time_diff < cooldown_minutes:
@@ -749,6 +749,127 @@ class UltimateSwingDetector:
                 return True
 
 # ================================
+# ENHANCED CRT DETECTOR WITH PSP TRACKING
+# ================================
+
+class RobustCRTDetector:
+    """Enhanced CRT detector with PSP tracking for triple confluence"""
+    
+    def __init__(self, timing_manager):
+        self.timing_manager = timing_manager
+        self.psp_cache = {}  # Cache PSP signals by timeframe
+    
+    def calculate_crt_current_candle(self, df, asset1_data, asset2_data, timeframe):
+        """Calculate CRT on current candle AND check for PSP on same timeframe"""
+        if df is None or not isinstance(df, pd.DataFrame) or df.empty or len(df) < 3:
+            return None
+        
+        current_candle = df[df['is_current'] == True]
+        if current_candle.empty:
+            return None
+            
+        current_candle = current_candle.iloc[0]
+        
+        if not self.timing_manager.is_crt_fresh(current_candle['time']):
+            logger.debug("CRT candle too old, skipping")
+            return None
+        
+        complete_candles = df[df['complete'] == True].tail(2)
+        if len(complete_candles) < 2:
+            return None
+            
+        c1 = complete_candles.iloc[0]
+        c2 = complete_candles.iloc[1]
+        c3 = current_candle
+        
+        try:
+            c2_range = float(c2['high']) - float(c2['low'])
+            c2_mid = float(c2['low']) + 0.5 * c2_range
+            
+            buy_crt = (float(c2['low']) < float(c1['low']) and 
+                      float(c2['close']) > float(c1['low']) and 
+                      float(c3['open']) > c2_mid)
+            
+            sell_crt = (float(c2['high']) > float(c1['high']) and 
+                       float(c2['close']) < float(c1['high']) and 
+                       float(c3['open']) < c2_mid)
+            
+            if buy_crt or sell_crt:
+                direction = 'bullish' if buy_crt else 'bearish'
+                
+                # CHECK FOR PSP ON SAME TIMEFRAME
+                psp_signal = self._detect_psp_for_crt(asset1_data, asset2_data, timeframe, current_candle['time'])
+                
+                logger.info(f"🔷 {direction.upper()} CRT DETECTED: {timeframe} candle at {c3['time'].strftime('%H:%M')}")
+                if psp_signal:
+                    logger.info(f"🎯 PSP FOUND for CRT: {psp_signal['asset1_color']}/{psp_signal['asset2_color']} at {psp_signal['formation_time'].strftime('%H:%M')}")
+                
+                return {
+                    'direction': direction, 
+                    'timestamp': c3['time'],
+                    'timeframe': timeframe,
+                    'signal_key': f"CRT_{timeframe}_{c3['time'].strftime('%m%d_%H%M')}_{direction}",
+                    'psp_signal': psp_signal  # Include PSP if found
+                }
+                
+        except (ValueError, TypeError) as e:
+            logger.error(f"Error in CRT calculation: {e}")
+            return None
+        
+        return None
+    
+    def _detect_psp_for_crt(self, asset1_data, asset2_data, timeframe, crt_time):
+        """Detect PSP on the same timeframe as CRT (look at recent completed candles)"""
+        if (asset1_data is None or not isinstance(asset1_data, pd.DataFrame) or asset1_data.empty or
+            asset2_data is None or not isinstance(asset2_data, pd.DataFrame) or asset2_data.empty):
+            return None
+        
+        # Look at last 3 completed candles before CRT
+        asset1_complete = asset1_data[asset1_data['complete'] == True]
+        asset2_complete = asset2_data[asset2_data['complete'] == True]
+        
+        if asset1_complete.empty or asset2_complete.empty:
+            return None
+        
+        # Get candles that completed BEFORE the CRT candle
+        asset1_before_crt = asset1_complete[asset1_complete['time'] < crt_time].tail(3)
+        asset2_before_crt = asset2_complete[asset2_complete['time'] < crt_time].tail(3)
+        
+        # Look for PSP in these candles (most recent first)
+        for i in range(len(asset1_before_crt)-1, -1, -1):
+            if i >= len(asset2_before_crt):
+                continue
+                
+            asset1_candle = asset1_before_crt.iloc[i]
+            asset2_candle = asset2_before_crt.iloc[i]
+            
+            if asset1_candle['time'] != asset2_candle['time']:
+                continue
+            
+            try:
+                asset1_color = 'green' if float(asset1_candle['close']) > float(asset1_candle['open']) else 'red'
+                asset2_color = 'green' if float(asset2_candle['close']) > float(asset2_candle['open']) else 'red'
+                
+                if asset1_color != asset2_color:
+                    formation_time = asset1_candle['time']
+                    logger.info(f"🎯 PSP DETECTED for CRT: {timeframe} candle at {formation_time.strftime('%H:%M')} - Asset1: {asset1_color}, Asset2: {asset2_color}")
+                    return {
+                        'timeframe': timeframe,
+                        'asset1_color': asset1_color,
+                        'asset2_color': asset2_color,
+                        'timestamp': datetime.now(NY_TZ),
+                        'formation_time': formation_time,
+                        'candle_time': formation_time,
+                        'candles_ago': len(asset1_before_crt) - i - 1,
+                        'signal_key': f"PSP_CRT_{timeframe}_{asset1_color}_{asset2_color}_{formation_time.strftime('%m%d_%H%M')}"
+                    }
+            except (ValueError, TypeError) as e:
+                logger.error(f"Error in PSP calculation: {e}")
+                continue
+        
+        return None
+
+# ================================
 # ULTIMATE SMT DETECTOR WITH ALL QUARTER PAIRS
 # ================================
 
@@ -1205,76 +1326,11 @@ class UltimateSMTDetector:
                 del self.signal_counts[key]
 
 # ================================
-# ENHANCED CRT DETECTOR
-# ================================
-
-class RobustCRTDetector:
-    """Enhanced CRT detector with better validation and logging"""
-    
-    def __init__(self, timing_manager):
-        self.timing_manager = timing_manager
-    
-    def calculate_crt_current_candle(self, df):
-        """Calculate CRT only on the current (incomplete) candle - ENHANCED"""
-        if df is None or not isinstance(df, pd.DataFrame) or df.empty or len(df) < 3:
-            return None
-        
-        current_candle = df[df['is_current'] == True]
-        if current_candle.empty:
-            return None
-            
-        current_candle = current_candle.iloc[0]
-        
-        if not self.timing_manager.is_crt_fresh(current_candle['time']):
-            logger.debug("CRT candle too old, skipping")
-            return None
-        
-        complete_candles = df[df['complete'] == True].tail(2)
-        if len(complete_candles) < 2:
-            return None
-            
-        c1 = complete_candles.iloc[0]
-        c2 = complete_candles.iloc[1]
-        c3 = current_candle
-        
-        try:
-            c2_range = float(c2['high']) - float(c2['low'])
-            c2_mid = float(c2['low']) + 0.5 * c2_range
-            
-            buy_crt = (float(c2['low']) < float(c1['low']) and 
-                      float(c2['close']) > float(c1['low']) and 
-                      float(c3['open']) > c2_mid)
-            
-            sell_crt = (float(c2['high']) > float(c1['high']) and 
-                       float(c2['close']) < float(c1['high']) and 
-                       float(c3['open']) < c2_mid)
-            
-            if buy_crt:
-                logger.info(f"🔷 BULLISH CRT DETECTED: Candle at {c3['time'].strftime('%H:%M')}")
-                return {
-                    'direction': 'bullish', 
-                    'timestamp': c3['time'],
-                    'signal_key': f"CRT_{c3['time'].strftime('%m%d_%H%M')}_bullish"
-                }
-            elif sell_crt:
-                logger.info(f"🔷 BEARISH CRT DETECTED: Candle at {c3['time'].strftime('%H:%M')}")
-                return {
-                    'direction': 'bearish', 
-                    'timestamp': c3['time'],
-                    'signal_key': f"CRT_{c3['time'].strftime('%m%d_%H%M')}_bearish"
-                }
-        except (ValueError, TypeError) as e:
-            logger.error(f"Error in CRT calculation: {e}")
-            return None
-        
-        return None
-
-# ================================
-# ULTIMATE SIGNAL BUILDER WITH FIXED CYCLE HIERARCHY
+# ULTIMATE SIGNAL BUILDER WITH CRT+PSP+SMT TRIPLE CONFLUENCE
 # ================================
 
 class UltimateSignalBuilder:
-    """Ultimate signal builder with FIXED cycle hierarchy"""
+    """Ultimate signal builder with CRT+PSP+SMT triple confluence"""
     
     def __init__(self, pair_group, timing_manager):
         self.pair_group = pair_group
@@ -1282,6 +1338,7 @@ class UltimateSignalBuilder:
         self.active_crt = None
         self.active_smts = {}
         self.psp_for_smts = {}
+        self.psp_for_crt = None  # NEW: PSP specifically for CRT
         self.signal_strength = 0
         self.criteria = []
         self.creation_time = datetime.now(NY_TZ)
@@ -1448,14 +1505,21 @@ class UltimateSignalBuilder:
         return False
     
     def _check_signal_readiness_fixed(self):
-        """Check signal readiness with FIXED cycle hierarchy"""
+        """Check signal readiness with FIXED cycle hierarchy - NOW INCLUDES CRT+PSP+SMT"""
         # Count SMTs with PSP
         smts_with_psp = len(self.psp_for_smts)
         total_smts = len(self.active_smts)
         
-        logger.info(f"📊 {self.pair_group}: SMTs: {total_smts}, With PSP: {smts_with_psp}, Dominant: {self.dominant_direction}, Conflict: {self.has_conflict}")
+        logger.info(f"📊 {self.pair_group}: SMTs: {total_smts}, With PSP: {smts_with_psp}, CRT: {self.active_crt is not None}, CRT-PSP: {self.psp_for_crt is not None}")
         
-        # FIXED RULE 1: Multiple SMTs in same direction (2+ SMTs) - ALLOW CONFLICTS if we have cycle override
+        # NEW RULE 1: CRT + PSP + SMT TRIPLE CONFLUENCE (HIGHEST PRIORITY)
+        if (self.active_crt and self.psp_for_crt and total_smts >= 1 and 
+            not self.has_conflict and self.dominant_direction == self.active_crt['direction']):
+            self.status = f"CRT_PSP_SMT_{self.active_crt['direction'].upper()}_TRIPLE"
+            logger.info(f"🎯 {self.pair_group}: ULTIMATE TRIPLE CONFLUENCE! CRT + PSP + SMT {self.active_crt['direction']}")
+            return
+        
+        # FIXED RULE 2: Multiple SMTs in same direction (2+ SMTs) - ALLOW CONFLICTS if we have cycle override
         if total_smts >= 2 and self.dominant_direction:
             smts_in_direction = self.bullish_strength if self.dominant_direction == 'bullish' else self.bearish_strength
             if smts_in_direction >= 2:
@@ -1469,7 +1533,7 @@ class UltimateSignalBuilder:
                     logger.info(f"🎯 {self.pair_group}: Multiple {self.dominant_direction} SMTs confirmed!")
                     return
         
-        # FIXED RULE 2: SMT + PSP with dominant direction - ALLOW CONFLICTS if cycle override
+        # FIXED RULE 3: SMT + PSP with dominant direction - ALLOW CONFLICTS if cycle override
         if smts_with_psp >= 1 and self.dominant_direction:
             # Check if PSP SMTs are in dominant direction
             psp_in_dominant = any(
@@ -1487,7 +1551,7 @@ class UltimateSignalBuilder:
                     logger.info(f"🎯 {self.pair_group}: SMT + PSP {self.dominant_direction} signal ready!")
                     return
         
-        # FIXED RULE 3: CRT + SMT (direction already matched)
+        # FIXED RULE 4: CRT + SMT (direction already matched)
         if self.active_crt and total_smts >= 1:
             direction = self.active_crt['direction']
             if self._has_cycle_override(direction) or not self.has_conflict:
@@ -1495,13 +1559,12 @@ class UltimateSignalBuilder:
                 logger.info(f"🎯 {self.pair_group}: CRT + SMT {direction} signal ready!")
                 return
         
-        # FIXED RULE 4: CRT + PSP + SMT
-        if self.active_crt and smts_with_psp >= 1:
+        # FIXED RULE 5: CRT + PSP (without SMT) - lower priority but still valid
+        if self.active_crt and self.psp_for_crt and not self.has_conflict:
             direction = self.active_crt['direction']
-            if self._has_cycle_override(direction) or not self.has_conflict:
-                self.status = f"CRT_PSP_SMT_{direction.upper()}"
-                logger.info(f"🎯 {self.pair_group}: CRT + PSP + SMT {direction} signal ready!")
-                return
+            self.status = f"CRT_PSP_{direction.upper()}"
+            logger.info(f"🎯 {self.pair_group}: CRT + PSP {direction} signal ready!")
+            return
     
     def _has_cycle_override(self, direction):
         """Check if we have cycle override situation"""
@@ -1528,18 +1591,28 @@ class UltimateSignalBuilder:
             higher_bullish = bullish_by_level[3] + bullish_by_level[4]
             return smaller_bearish >= 2 and higher_bullish <= 1
     
-    def set_crt_signal(self, crt_data, timeframe):
-        """Set CRT signal from specific timeframe"""
+    def set_crt_signal(self, crt_data, timeframe, psp_signal=None):
+        """Set CRT signal from specific timeframe - NOW INCLUDES PSP"""
         if crt_data and not self.active_crt:
             self.active_crt = crt_data
             self.crt_timeframe = timeframe
             self.signal_strength += 3
             
+            # Store PSP for CRT if provided
+            if psp_signal:
+                self.psp_for_crt = psp_signal
+                self.signal_strength += 1
+                logger.info(f"🎯 {self.pair_group}: CRT with PSP detected on {timeframe}")
+            
             # Remove any existing CRT criteria
             self.criteria = [c for c in self.criteria if not c.startswith("CRT ")]
             
             formation_time = crt_data['timestamp'].strftime('%H:%M')
-            self.criteria.append(f"CRT {timeframe}: {crt_data['direction']} at {formation_time}")
+            if self.psp_for_crt:
+                psp_time = self.psp_for_crt['formation_time'].strftime('%H:%M')
+                self.criteria.append(f"CRT {timeframe} with PSP at {psp_time}: {crt_data['direction']} at {formation_time}")
+            else:
+                self.criteria.append(f"CRT {timeframe}: {crt_data['direction']} at {formation_time}")
             
             direction = crt_data['direction']
             self.status = f"CRT_{direction.upper()}_WAITING_SMT"
@@ -1551,7 +1624,7 @@ class UltimateSignalBuilder:
     
     def is_signal_ready(self):
         """Check if we have complete signal"""
-        return self.status.startswith(('MULTIPLE_', 'SMT_PSP_', 'CRT_SMT_', 'CRT_PSP_SMT_'))
+        return self.status.startswith(('CRT_PSP_SMT_', 'MULTIPLE_', 'SMT_PSP_', 'CRT_SMT_', 'CRT_PSP_'))
     
     def has_serious_conflict(self):
         """Check if there's a serious conflict that should block signals"""
@@ -1578,7 +1651,7 @@ class UltimateSignalBuilder:
         return self.status
     
     def get_signal_details(self):
-        """Get complete signal details"""
+        """Get complete signal details - NOW INCLUDES CRT+PSP+SMT"""
         if not self.is_signal_ready() or self.has_serious_conflict():
             return None
             
@@ -1614,6 +1687,7 @@ class UltimateSignalBuilder:
             'has_conflict': self.has_conflict,
             'criteria': self.criteria.copy(),
             'crt': self.active_crt,
+            'psp_for_crt': self.psp_for_crt,  # NEW: Include PSP for CRT
             'psp_smts': contributing_psps,
             'all_smts': contributing_smts,
             'timestamp': datetime.now(NY_TZ),
@@ -1621,7 +1695,9 @@ class UltimateSignalBuilder:
         }
         
         # Add description
-        if 'OVERRIDE' in self.status:
+        if 'TRIPLE' in self.status:
+            signal_data['description'] = f"ULTIMATE TRIPLE CONFLUENCE: CRT + PSP + SMT {direction}"
+        elif 'OVERRIDE' in self.status:
             signal_data['description'] = f"Multiple {direction} SMTs with cycle hierarchy override"
         elif self.status.startswith('MULTIPLE_'):
             signal_data['description'] = f"Multiple {direction} SMTs across different cycles"
@@ -1629,8 +1705,8 @@ class UltimateSignalBuilder:
             signal_data['description'] = f"SMT confirmed by PSP on same timeframe"
         elif self.status.startswith('CRT_SMT_'):
             signal_data['description'] = f"CRT momentum with SMT confirmation"
-        elif self.status.startswith('CRT_PSP_SMT_'):
-            signal_data['description'] = f"CRT + PSP + SMT confluence"
+        elif self.status.startswith('CRT_PSP_'):
+            signal_data['description'] = f"CRT + PSP confluence"
         
         logger.info(f"🎯 ULTIMATE SIGNAL: {self.pair_group} {direction} via {self.status}")
         
@@ -1647,6 +1723,7 @@ class UltimateSignalBuilder:
         self.active_crt = None
         self.active_smts = {}
         self.psp_for_smts = {}
+        self.psp_for_crt = None  # NEW: Reset PSP for CRT
         self.signal_strength = 0
         self.criteria = []
         self.crt_timeframe = None
@@ -1659,7 +1736,7 @@ class UltimateSignalBuilder:
         logger.info(f"🔄 {self.pair_group}: Signal builder reset")
 
 # ================================
-# ULTIMATE TRADING SYSTEM
+# ULTIMATE TRADING SYSTEM WITH TRIPLE CONFLUENCE
 # ================================
 
 class UltimateTradingSystem:
@@ -1672,7 +1749,7 @@ class UltimateTradingSystem:
         # Initialize ultimate components
         self.timing_manager = RobustTimingManager()
         self.quarter_manager = RobustQuarterManager()
-        self.crt_detector = RobustCRTDetector(self.timing_manager)
+        self.crt_detector = RobustCRTDetector(self.timing_manager)  # UPDATED: Enhanced CRT detector
         self.smt_detector = UltimateSMTDetector(pair_config, self.timing_manager)
         self.signal_builder = UltimateSignalBuilder(pair_group, self.timing_manager)
         
@@ -1699,7 +1776,7 @@ class UltimateTradingSystem:
             # Step 3: Check for PSP for existing SMTs
             await self._check_psp_for_existing_smts()
             
-            # Step 4: Scan for CRT signals (ALWAYS scan for CRT)
+            # Step 4: Scan for CRT signals (ALWAYS scan for CRT) - NOW WITH PSP DETECTION
             await self._scan_crt_signals()
             
             # Check if signal is complete and not conflicted
@@ -1818,7 +1895,7 @@ class UltimateTradingSystem:
                 self.signal_builder.add_smt_signal(smt_signal, psp_signal)
     
     async def _scan_crt_signals(self):
-        """Scan for CRT signals on all timeframes - ENHANCED"""
+        """Scan for CRT signals on all timeframes - ENHANCED WITH PSP DETECTION"""
         crt_detected = False
         
         for timeframe in CRT_TIMEFRAMES:
@@ -1829,14 +1906,15 @@ class UltimateTradingSystem:
                 pair2_data is None or not isinstance(pair2_data, pd.DataFrame) or pair2_data.empty):
                 continue
             
-            crt_asset1 = self.crt_detector.calculate_crt_current_candle(pair1_data)
-            crt_asset2 = self.crt_detector.calculate_crt_current_candle(pair2_data)
+            # UPDATED: CRT detection now includes PSP checking
+            crt_signal = self.crt_detector.calculate_crt_current_candle(
+                pair1_data, pair1_data, pair2_data, timeframe
+            )
             
-            # Use either asset's CRT signal
-            crt_signal = crt_asset1 if crt_asset1 else crt_asset2
-            
-            if crt_signal and self.signal_builder.set_crt_signal(crt_signal, timeframe):
+            if crt_signal and self.signal_builder.set_crt_signal(crt_signal, timeframe, crt_signal.get('psp_signal')):
                 logger.info(f"🔷 {self.pair_group}: Fresh CRT detected on {timeframe}")
+                if crt_signal.get('psp_signal'):
+                    logger.info(f"🎯 {self.pair_group}: CRT with PSP confluence detected!")
                 crt_detected = True
                 break
         
@@ -1934,7 +2012,7 @@ class UltimateTradingManager:
                 logger.error(f"❌ Error processing ultimate signal: {str(e)}")
     
     def _format_ultimate_signal_message(self, signal):
-        """Format ultimate signal for Telegram"""
+        """Format ultimate signal for Telegram - NOW INCLUDES TRIPLE CONFLUENCE"""
         pair_group = signal.get('pair_group', 'Unknown')
         direction = signal.get('direction', 'UNKNOWN').upper()
         strength = signal.get('strength', 0)
@@ -1963,6 +2041,12 @@ class UltimateTradingManager:
                     unique_criteria.append(criterion)
                     message += f"• {criterion}\n"
         
+        # NEW: Show CRT+PSP confluence if present
+        if signal.get('psp_for_crt'):
+            psp = signal['psp_for_crt']
+            psp_time = psp['formation_time'].strftime('%H:%M')
+            message += f"• CRT with PSP on {psp['timeframe']} at {psp_time}\n"
+        
         if 'all_smts' in signal and signal['all_smts']:
             message += f"\n*SMT Swing Details:*\n"
             for cycle, smt in signal['all_smts'].items():
@@ -1979,7 +2063,9 @@ class UltimateTradingManager:
         
         message += f"\n*Detection Time:* {signal['timestamp'].strftime('%Y-%m-%d %H:%M:%S %Z')}\n"
         
-        if 'OVERRIDE' in path:
+        if 'TRIPLE' in path:
+            message += f"\n*🎯 ULTIMATE TRIPLE CONFLUENCE: CRT + PSP + SMT - HIGHEST PROBABILITY*\n"
+        elif 'OVERRIDE' in path:
             message += f"\n*🎯 CYCLE OVERRIDE: Multiple smaller cycles overriding higher timeframes*\n"
         elif has_conflict:
             message += f"\n*⚠️ NOTE: Trading with caution due to conflicting signals*\n"
