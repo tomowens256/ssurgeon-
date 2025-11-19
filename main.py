@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
 """
-ROBUST SMT TRADING SYSTEM - ULTIMATE FIXED VERSION
-- Proper swing time alignment (3 candle tolerance)
-- Strong duplicate prevention
-- Fixed cycle hierarchy (2 smaller cycles can override 1 higher cycle)
-- Interim price validation for SMT signals
-- UTC-4 timezone enforcement
+ROBUST SMT TRADING SYSTEM - FIXED QUARTER PAIRS VERSION
+- Fixed quarter pair detection to include ALL possible pairs
+- 3-candle tolerance for swing alignment
 - Enhanced CRT detection
+- Better logging for debugging
 """
 
 import asyncio
@@ -458,11 +456,11 @@ class RobustTimingManager:
         return age_seconds <= (max_age_minutes * 60)
 
 # ================================
-# ENHANCED QUARTER MANAGER
+# FIXED QUARTER MANAGER - ALL POSSIBLE PAIRS
 # ================================
 
 class RobustQuarterManager:
-    """Enhanced quarter manager with better validation"""
+    """Enhanced quarter manager with ALL possible quarter pairs"""
     
     def __init__(self):
         self.ny_tz = pytz.timezone('America/New_York')  # UTC-4
@@ -546,29 +544,25 @@ class RobustQuarterManager:
         
         return 'q_less'
     
-    def get_valid_quarter_pairs(self, current_quarter, cycle_type):
-        """Get valid consecutive quarter pairs to check"""
+    def get_all_possible_quarter_pairs(self, cycle_type):
+        """Get ALL possible consecutive quarter pairs regardless of current quarter"""
         quarter_sequence = ['q1', 'q2', 'q3', 'q4']
         
-        try:
-            current_idx = quarter_sequence.index(current_quarter)
-        except ValueError:
-            return []
+        # ALL possible consecutive pairs
+        all_pairs = [
+            ('q1', 'q2'),
+            ('q2', 'q3'), 
+            ('q3', 'q4'),
+            ('q4', 'q1')  # Also check q4→q1 transition
+        ]
         
-        valid_pairs = []
-        
-        if current_idx >= 2:
-            valid_pairs.append((quarter_sequence[current_idx-2], quarter_sequence[current_idx-1]))
-        
-        if current_idx >= 1:
-            valid_pairs.append((quarter_sequence[current_idx-1], quarter_sequence[current_idx]))
-        
-        logger.debug(f"Current {cycle_type} quarter: {current_quarter}, Valid pairs: {valid_pairs}")
-        return valid_pairs
+        logger.info(f"🔍 {cycle_type}: Checking ALL quarter pairs: {all_pairs}")
+        return all_pairs
     
     def group_candles_by_quarters(self, df, cycle_type, num_quarters=4):
         """Group candles into exact quarters based on their timestamps"""
         if df is None or not isinstance(df, pd.DataFrame) or df.empty:
+            logger.warning(f"⚠️ No data to group for {cycle_type}")
             return {}
         
         quarters_data = {}
@@ -585,6 +579,7 @@ class RobustQuarterManager:
             quarters_data[quarter] = pd.DataFrame(quarters_data[quarter])
             quarters_data[quarter] = quarters_data[quarter].sort_values('time')
         
+        logger.debug(f"📊 {cycle_type}: Quarters found: {list(quarters_data.keys())}")
         return quarters_data
     
     def _get_candle_quarter(self, candle_time, cycle_type):
@@ -649,6 +644,7 @@ class UltimateSwingDetector:
                     'index': i
                 })
         
+        logger.debug(f"📈 Found {len(swing_highs)} swing highs and {len(swing_lows)} swing lows")
         return swing_highs, swing_lows
     
     @staticmethod
@@ -667,6 +663,7 @@ class UltimateSwingDetector:
         
         # Sort by time difference (closest first)
         aligned_pairs.sort(key=lambda x: x[2])
+        logger.debug(f"🕒 Found {len(aligned_pairs)} aligned swings within {max_time_diff_minutes} minutes")
         return aligned_pairs
     
     @staticmethod
@@ -728,6 +725,7 @@ class UltimateSwingDetector:
         interim_candles = df[(df['time'] > first_time) & (df['time'] < second_time)]
         
         if interim_candles.empty:
+            logger.debug("✅ No interim candles to validate")
             return True  # No interim candles to check
         
         if direction == "bearish":
@@ -751,11 +749,11 @@ class UltimateSwingDetector:
                 return True
 
 # ================================
-# ULTIMATE SMT DETECTOR WITH 3-CANDLE TOLERANCE
+# ULTIMATE SMT DETECTOR WITH ALL QUARTER PAIRS
 # ================================
 
 class UltimateSMTDetector:
-    """Ultimate SMT detector with 3-CANDLE TOLERANCE and interim price validation"""
+    """Ultimate SMT detector checking ALL quarter pairs"""
     
     def __init__(self, pair_config, timing_manager):
         self.smt_history = []
@@ -777,33 +775,39 @@ class UltimateSMTDetector:
         self.smt_psp_tracking = {}
         
     def detect_smt_all_cycles(self, asset1_data, asset2_data, cycle_type):
-        """Detect SMT for a specific cycle with 3-CANDLE TOLERANCE"""
+        """Detect SMT for a specific cycle checking ALL quarter pairs"""
         try:
+            logger.info(f"🔍 Scanning {cycle_type} for SMT signals...")
+            
             if (asset1_data is None or not isinstance(asset1_data, pd.DataFrame) or asset1_data.empty or
                 asset2_data is None or not isinstance(asset2_data, pd.DataFrame) or asset2_data.empty):
+                logger.warning(f"⚠️ No data for {cycle_type} SMT detection")
                 return None
             
-            current_quarters = self.quarter_manager.detect_current_quarters()
-            current_quarter = current_quarters.get(cycle_type)
+            # Get ALL possible quarter pairs (not just based on current quarter)
+            all_pairs = self.quarter_manager.get_all_possible_quarter_pairs(cycle_type)
             
-            if not current_quarter:
-                return None
-            
-            valid_pairs = self.quarter_manager.get_valid_quarter_pairs(current_quarter, cycle_type)
-            
-            if not valid_pairs:
+            if not all_pairs:
                 return None
             
             asset1_quarters = self.quarter_manager.group_candles_by_quarters(asset1_data, cycle_type)
             asset2_quarters = self.quarter_manager.group_candles_by_quarters(asset2_data, cycle_type)
             
             if not asset1_quarters or not asset2_quarters:
+                logger.warning(f"⚠️ No quarter data for {cycle_type}")
                 return None
             
-            for prev_q, curr_q in valid_pairs:
+            logger.info(f"📊 {cycle_type}: Asset1 quarters: {list(asset1_quarters.keys())}")
+            logger.info(f"📊 {cycle_type}: Asset2 quarters: {list(asset2_quarters.keys())}")
+            
+            for prev_q, curr_q in all_pairs:
+                logger.debug(f"🔍 Checking {cycle_type} {prev_q}→{curr_q}")
+                
                 if prev_q not in asset1_quarters or curr_q not in asset1_quarters:
+                    logger.debug(f"⚠️ Missing quarters in Asset1: {prev_q} or {curr_q}")
                     continue
                 if prev_q not in asset2_quarters or curr_q not in asset2_quarters:
+                    logger.debug(f"⚠️ Missing quarters in Asset2: {prev_q} or {curr_q}")
                     continue
                 
                 smt_result = self._compare_quarters_with_3_candle_tolerance(
@@ -824,12 +828,14 @@ class UltimateSMTDetector:
                             'formation_time': smt_result['formation_time']
                         }
                     
+                    logger.info(f"🎯 SMT DETECTED: {cycle_type} {prev_q}→{curr_q} {smt_result['direction']}")
                     return smt_result
             
+            logger.debug(f"🔍 No SMT found for {cycle_type}")
             return None
             
         except Exception as e:
-            logger.error(f"Error in SMT detection for {cycle_type}: {str(e)}")
+            logger.error(f"❌ Error in SMT detection for {cycle_type}: {str(e)}")
             return None
     
     def _compare_quarters_with_3_candle_tolerance(self, asset1_prev, asset1_curr, asset2_prev, asset2_curr, cycle_type, prev_q, curr_q):
@@ -853,6 +859,9 @@ class UltimateSMTDetector:
             
             asset2_prev_swing_highs, asset2_prev_swing_lows = self.swing_detector.find_swing_highs_lows(asset2_prev)
             asset2_curr_swing_highs, asset2_curr_swing_lows = self.swing_detector.find_swing_highs_lows(asset2_curr)
+            
+            logger.debug(f"🔍 {cycle_type} {prev_q}→{curr_q}: Asset1 swings - Prev: {len(asset1_prev_swing_highs)}H/{len(asset1_prev_swing_lows)}L, Curr: {len(asset1_curr_swing_highs)}H/{len(asset1_curr_swing_lows)}L")
+            logger.debug(f"🔍 {cycle_type} {prev_q}→{curr_q}: Asset2 swings - Prev: {len(asset2_prev_swing_highs)}H/{len(asset2_prev_swing_lows)}L, Curr: {len(asset2_curr_swing_highs)}H/{len(asset2_curr_swing_lows)}L")
             
             # Find bearish SMT with 3-candle tolerance
             bearish_smt = self._find_bearish_smt_with_tolerance(
@@ -956,6 +965,8 @@ class UltimateSMTDetector:
             max_candle_diff=3, timeframe_minutes=timeframe_minutes
         )
         
+        logger.debug(f"🔍 Bearish SMT: {len(aligned_prev_highs)} aligned prev highs, {len(aligned_curr_highs)} aligned curr highs")
+        
         for prev_pair in aligned_prev_highs:
             asset1_prev, asset2_prev, prev_time_diff = prev_pair
             
@@ -1001,6 +1012,8 @@ class UltimateSMTDetector:
             asset1_curr_lows, asset2_curr_lows,
             max_candle_diff=3, timeframe_minutes=timeframe_minutes
         )
+        
+        logger.debug(f"🔍 Bullish SMT: {len(aligned_prev_lows)} aligned prev lows, {len(aligned_curr_lows)} aligned curr lows")
         
         for prev_pair in aligned_prev_lows:
             asset1_prev, asset2_prev, prev_time_diff = prev_pair
@@ -1100,6 +1113,7 @@ class UltimateSMTDetector:
                 
                 if asset1_color != asset2_color:
                     formation_time = asset1_candle['time']
+                    logger.info(f"🎯 PSP DETECTED: {timeframe} candle at {formation_time.strftime('%H:%M')} - Asset1: {asset1_color}, Asset2: {asset2_color}")
                     return {
                         'timeframe': timeframe,
                         'asset1_color': asset1_color,
@@ -1790,8 +1804,10 @@ class UltimateTradingSystem:
             
             if (pair1_data is None or not isinstance(pair1_data, pd.DataFrame) or pair1_data.empty or
                 pair2_data is None or not isinstance(pair2_data, pd.DataFrame) or pair2_data.empty):
+                logger.warning(f"⚠️ No data for {cycle} ({timeframe})")
                 continue
             
+            logger.info(f"🔍 Scanning {cycle} cycle ({timeframe}) for SMT...")
             smt_signal = self.smt_detector.detect_smt_all_cycles(pair1_data, pair2_data, cycle)
             
             if smt_signal:
