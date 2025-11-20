@@ -343,10 +343,10 @@ class RobustTimingManager:
         
         # Maximum allowed time difference based on cycle
         max_hours = {
-            'monthly': 24 * 7,  # 1 week
-            'weekly': 24 * 2,   # 2 days  
-            'daily': 6,         # 6 hours
-            '90min': 3          # 3 hours
+            'monthly': 24 * 3,  # 3 days
+            'weekly': 24 * 1,   # 1 day  
+            'daily': 1,         # 1hour
+            '90min': 0.3          # 30 minutes
         }
         
         max_allowed = max_hours.get(cycle_type, 3)
@@ -445,7 +445,7 @@ class RobustTimingManager:
         logger.debug(f"CRT sleep calculation: calculated={sleep_seconds:.1f}s, max={max_sleep}s, final={final_sleep:.1f}s")
         return final_sleep
     
-    def is_crt_fresh(self, crt_timestamp, max_age_minutes=5):  # Increased from 1 to 5 minutes
+    def is_crt_fresh(self, crt_timestamp, max_age_minutes=50000):  # Increased increased to infinity since we seed more confluences
         """Check if CRT signal is fresh - MORE LENIENT"""
         if not crt_timestamp:
             return False
@@ -605,49 +605,78 @@ class UltimateSwingDetector:
     """Ultimate swing detection with 5-CANDLE TOLERANCE and interim price validation"""
     
     @staticmethod
-    def find_swing_highs_lows(df, lookback=5):
-        """Find swing highs and swing lows in a DataFrame"""
-        if df is None or not isinstance(df, pd.DataFrame) or len(df) < lookback + 1:
+    def find_swing_highs_lows(df):
+        """
+        Detect swing highs & lows based on your logic:
+    
+        CLASSIC FRACTAL SWING:
+            swing high: high[i] > high[i-1] and high[i] > high[i+1]
+            swing low:  low[i] < low[i-1] and low[i] < low[i+1]
+    
+        REAL-TIME LATEST SWING:
+            last closed candle (i = len(df)-2) can be swing if:
+                high[i] > high[i-1]
+                low[i] < low[i-1]
+        """
+    
+        if df is None or len(df) < 3:
             return [], []
-        
+    
         swing_highs = []
         swing_lows = []
-        
-        for i in range(lookback, len(df) - lookback):
-            is_swing_high = True
-            current_high = float(df.iloc[i]['high'])
-            
-            for j in range(1, lookback + 1):
-                if (float(df.iloc[i - j]['high']) >= current_high or 
-                    float(df.iloc[i + j]['high']) >= current_high):
-                    is_swing_high = False
-                    break
-            
-            if is_swing_high:
+    
+        # -------------------------
+        # CLASSIC FRACTAL SWINGS
+        # -------------------------
+        for i in range(1, len(df) - 1):
+            prev = df.iloc[i - 1]
+            curr = df.iloc[i]
+            nxt  = df.iloc[i + 1]
+    
+            # swing high: middle candle strictly higher than neighbors
+            if float(curr['high']) > float(prev['high']) and float(curr['high']) > float(nxt['high']):
                 swing_highs.append({
-                    'time': df.iloc[i]['time'],
-                    'price': current_high,
+                    'time': curr['time'],
+                    'price': float(curr['high']),
                     'index': i
                 })
-            
-            is_swing_low = True
-            current_low = float(df.iloc[i]['low'])
-            
-            for j in range(1, lookback + 1):
-                if (float(df.iloc[i - j]['low']) <= current_low or 
-                    float(df.iloc[i + j]['low']) <= current_low):
-                    is_swing_low = False
-                    break
-            
-            if is_swing_low:
+    
+            # swing low: middle candle strictly lower than neighbors
+            if float(curr['low']) < float(prev['low']) and float(curr['low']) < float(nxt['low']):
                 swing_lows.append({
-                    'time': df.iloc[i]['time'],
-                    'price': current_low,
+                    'time': curr['time'],
+                    'price': float(curr['low']),
                     'index': i
                 })
-        
-        logger.debug(f"📈 Found {len(swing_highs)} swing highs and {len(swing_lows)} swing lows")
+    
+        # -------------------------
+        # REAL-TIME LATEST SWING DETECTION
+        # -------------------------
+        # last closed candle index = len(df) - 2
+        last_idx = len(df) - 2  
+    
+        if last_idx > 0:
+            prev = df.iloc[last_idx - 1]
+            last = df.iloc[last_idx]
+    
+            # Real-time swing high: last > previous high
+            if float(last['high']) > float(prev['high']):
+                swing_highs.append({
+                    'time': last['time'],
+                    'price': float(last['high']),
+                    'index': last_idx
+                })
+    
+            # Real-time swing low: last < previous low
+            if float(last['low']) < float(prev['low']):
+                swing_lows.append({
+                    'time': last['time'],
+                    'price': float(last['low']),
+                    'index': last_idx
+                })
+    
         return swing_highs, swing_lows
+
     
     @staticmethod
     def find_aligned_swings(asset1_swings, asset2_swings, max_candle_diff=3, timeframe_minutes=5):
