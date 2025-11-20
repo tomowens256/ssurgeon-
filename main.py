@@ -710,39 +710,33 @@ class UltimateSwingDetector:
 
     @staticmethod
     def validate_interim_price_action(df, first_swing, second_swing, direction="bearish"):
-        
-        """
-        Updated validation:
-    
-        For bearish: identify which swing has the *highest high*.
-                     That becomes the protected high. If interim price breaks above it → invalid.
-    
-        For bullish: identify which swing has the *lowest low*.
-                     That becomes the protected low. If interim price breaks below it → invalid.
-        """
-    
         if df is None or first_swing is None or second_swing is None:
             return False
     
         first_time = first_swing['time']
         second_time = second_swing['time']
     
-        # Get candles strictly between the swings
+        # FIX 1: ensure correct ordering (first_swing must be before second_swing)
+        if first_time >= second_time:
+            logger.warning("⚠️ Swing times out of order — swapping them.")
+            first_swing, second_swing = second_swing, first_swing
+            first_time, second_time = second_time, first_time
+    
+        # Interim candles
         interim_candles = df[(df['time'] > first_time) & (df['time'] < second_time)]
     
         if interim_candles.empty:
             logger.debug("✅ No interim candles to validate")
             return True
     
-        # -------------------------
-        # BEARISH CASE
-        # -------------------------
         if direction == "bearish":
-            # determine protected high
-            protected_high = max(first_swing['price'], second_swing['price'])
     
-            # highest interim candle high
-            max_interim_high = interim_candles['high'].max()
+            protected_high = max(
+                float(first_swing['price']),
+                float(second_swing['price'])
+            )
+    
+            max_interim_high = float(interim_candles['high'].max())
     
             if max_interim_high > protected_high:
                 logger.warning(
@@ -755,15 +749,14 @@ class UltimateSwingDetector:
             )
             return True
     
-        # -------------------------
-        # BULLISH CASE
-        # -------------------------
-        else:
-            # determine protected low
-            protected_low = min(first_swing['price'], second_swing['price'])
+        else:  # bullish
     
-            # lowest interim candle low
-            min_interim_low = interim_candles['low'].min()
+            protected_low = min(
+                float(first_swing['price']),
+                float(second_swing['price'])
+            )
+    
+            min_interim_low = float(interim_candles['low'].min())
     
             if min_interim_low < protected_low:
                 logger.warning(
@@ -775,6 +768,7 @@ class UltimateSwingDetector:
                 f"✅ Valid interim price action (Bullish): Min interim low {min_interim_low:.4f} >= protected low {protected_low:.4f}"
             )
             return True
+
 
 
 # ================================
