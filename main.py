@@ -755,7 +755,7 @@ class UltimateSwingDetector:
         interim_candles = df[(df['time'] > first_time) & (df['time'] < second_time)]
     
         if interim_candles.empty:
-            logger.debug("✅ No interim candles to validate")
+            #logger.debug("✅ No interim candles to validate")
             return True
     
         if direction == "bearish":
@@ -768,14 +768,14 @@ class UltimateSwingDetector:
             max_interim_high = float(interim_candles['high'].max())
     
             if max_interim_high > protected_high:
-                logger.warning(
-                    f"❌ INTERIM PRICE INVALIDATION (Bearish): Interim high {max_interim_high:.4f} > protected high {protected_high:.4f}"
-                )
+                #logger.warning(
+                    #f"❌ INTERIM PRICE INVALIDATION (Bearish): Interim high {max_interim_high:.4f} > protected high {protected_high:.4f}"
+                #)
                 return False
     
-            logger.info(
-                f"✅ Valid interim price action (Bearish): Max interim high {max_interim_high:.4f} <= protected high {protected_high:.4f}"
-            )
+            #logger.info(
+                #f"✅ Valid interim price action (Bearish): Max interim high {max_interim_high:.4f} <= protected high {protected_high:.4f}"
+            #)
             return True
     
         else:  # bullish
@@ -788,14 +788,14 @@ class UltimateSwingDetector:
             min_interim_low = float(interim_candles['low'].min())
     
             if min_interim_low < protected_low:
-                logger.warning(
-                    f"❌ INTERIM PRICE INVALIDATION (Bullish): Interim low {min_interim_low:.4f} < protected low {protected_low:.4f}"
-                )
+                #logger.warning(
+                    #f"❌ INTERIM PRICE INVALIDATION (Bullish): Interim low {min_interim_low:.4f} < protected low {protected_low:.4f}"
+                #)
                 return False
     
-            logger.info(
-                f"✅ Valid interim price action (Bullish): Min interim low {min_interim_low:.4f} >= protected low {protected_low:.4f}"
-            )
+            #logger.info(
+                #f"✅ Valid interim price action (Bullish): Min interim low {min_interim_low:.4f} >= protected low {protected_low:.4f}"
+            #)
             return True
 
 
@@ -948,68 +948,75 @@ class UltimateSMTDetector:
         self.smt_psp_tracking = {}
         
     def detect_smt_all_cycles(self, asset1_data, asset2_data, cycle_type):
-        """Detect SMT for a specific cycle checking ALL quarter pairs"""
+        """Detect SMT using ONLY adjacent quarters, scanning last 3 quarters."""
         try:
             logger.info(f"🔍 Scanning {cycle_type} for SMT signals...")
-            
+    
             if (asset1_data is None or not isinstance(asset1_data, pd.DataFrame) or asset1_data.empty or
                 asset2_data is None or not isinstance(asset2_data, pd.DataFrame) or asset2_data.empty):
                 logger.warning(f"⚠️ No data for {cycle_type} SMT detection")
                 return None
-            
-            # Get ALL possible quarter pairs (not just based on current quarter)
-            all_pairs = self.quarter_manager.get_all_possible_quarter_pairs(cycle_type)
-            
-            if not all_pairs:
-                return None
-            
+    
+            # Get adjacent quarter pairs only
+            adjacent_pairs = self.quarter_manager.get_adjacent_quarter_pairs(cycle_type)
+    
+            # Determine last 3 quarters (current + previous 2)
+            last_3_quarters = self.quarter_manager.get_last_three_quarters(cycle_type)
+    
             asset1_quarters = self.quarter_manager.group_candles_by_quarters(asset1_data, cycle_type)
             asset2_quarters = self.quarter_manager.group_candles_by_quarters(asset2_data, cycle_type)
-            
+    
             if not asset1_quarters or not asset2_quarters:
-                logger.warning(f"⚠️ No quarter data for {cycle_type}")
+                logger.warning(f"⚠️ No quarter grouped data for {cycle_type}")
                 return None
-            
-            logger.info(f"📊 {cycle_type}: Asset1 quarters: {list(asset1_quarters.keys())}")
-            logger.info(f"📊 {cycle_type}: Asset2 quarters: {list(asset2_quarters.keys())}")
-            
-            for prev_q, curr_q in all_pairs:
-                logger.debug(f"🔍 Checking {cycle_type} {prev_q}→{curr_q}")
-                
+    
+            results = []
+    
+            # Scan ONLY adjacent pairs *within* the last 3 quarters
+            for prev_q, curr_q in adjacent_pairs:
+                if prev_q not in last_3_quarters or curr_q not in last_3_quarters:
+                    continue
+    
                 if prev_q not in asset1_quarters or curr_q not in asset1_quarters:
-                    logger.debug(f"⚠️ Missing quarters in Asset1: {prev_q} or {curr_q}")
                     continue
                 if prev_q not in asset2_quarters or curr_q not in asset2_quarters:
-                    logger.debug(f"⚠️ Missing quarters in Asset2: {prev_q} or {curr_q}")
                     continue
-                
+    
                 smt_result = self._compare_quarters_with_3_candle_tolerance(
                     asset1_quarters[prev_q], asset1_quarters[curr_q],
                     asset2_quarters[prev_q], asset2_quarters[curr_q],
                     cycle_type, prev_q, curr_q
                 )
-                
+    
                 if smt_result and not self._is_duplicate_signal(smt_result):
-                    # Initialize PSP tracking for this SMT
-                    signal_key = smt_result['signal_key']
-                    if signal_key not in self.smt_psp_tracking:
-                        self.smt_psp_tracking[signal_key] = {
-                            'psp_found': False,
-                            'check_count': 0,
-                            'max_checks': 15,
-                            'last_check': datetime.now(NY_TZ),
-                            'formation_time': smt_result['formation_time']
-                        }
-                    
-                    logger.info(f"🎯 SMT DETECTED: {cycle_type} {prev_q}→{curr_q} {smt_result['direction']}")
-                    return smt_result
-            
-            logger.debug(f"🔍 No SMT found for {cycle_type}")
+                    results.append(smt_result)
+    
+            if not results:
+                logger.debug(f"🔍 No SMT found for {cycle_type}")
+                return None
+    
+            # Process all SMTs → Check PSP on last 5 *closed* candles
+            for smt_result in results:
+                signal_key = smt_result['signal_key']
+    
+                if signal_key not in self.smt_psp_tracking:
+                    self.smt_psp_tracking[signal_key] = {
+                        'psp_found': False,
+                        'check_count': 0,
+                        'max_checks': 15,
+                        'last_check': datetime.now(NY_TZ),
+                        'formation_time': smt_result['formation_time']
+                    }
+    
+                logger.info(f"🎯 SMT DETECTED: {cycle_type} {smt_result['prev_q']}→{smt_result['curr_q']} {smt_result['direction']}")
+                return smt_result
+    
             return None
-            
+    
         except Exception as e:
             logger.error(f"❌ Error in SMT detection for {cycle_type}: {str(e)}")
             return None
+
     
     def _compare_quarters_with_3_candle_tolerance(self, asset1_prev, asset1_curr, asset2_prev, asset2_curr, cycle_type, prev_q, curr_q):
         """Compare two consecutive quarters with 3-CANDLE TOLERANCE"""
