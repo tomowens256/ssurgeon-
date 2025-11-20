@@ -491,30 +491,81 @@ class RobustQuarterManager:
         else: return 'q_less'
 
     def get_adjacent_quarter_pairs(self, cycle_type):
-        """Return only the valid adjacent quarter pairs."""
         return [
-            ("Q1", "Q2"),
-            ("Q2", "Q3"),
-            ("Q3", "Q4"),
-            ("Q4", "Q1")
-            #("Q4", "Q1")
+            ("q1", "q2"),
+            ("q2", "q3"),
+            ("q3", "q4"),
+            ("q4", "q1"),
+            ("q_less","q1"),
+            ("q4","q_less")
         ]
+
+
+    def get_current_quarter(self, cycle_type):
+        """
+        Determine the current quarter based on cycle type and current time.
+        """
+    
+        now = datetime.now(self.timezone)
+    
+        # Daily cycle → quarters of the day
+        if cycle_type == "daily":
+            hour = now.hour
+            if 0 <= hour < 6:
+                return "Q1"
+            elif 6 <= hour < 12:
+                return "Q2"
+            elif 12 <= hour < 18:
+                return "Q3"
+            else:
+                return "Q4"
+    
+        # 90min cycle → use mod-6 logic (6 periods in 9 hours)
+        if cycle_type == "90min":
+            minute_block = (now.hour * 60 + now.minute) // 90
+            quarter_index = minute_block % 4
+            return ["Q1", "Q2", "Q3", "Q4"][quarter_index]
+    
+        # Weekly cycle → divide the week
+        if cycle_type == "weekly":
+            weekday = now.weekday()  # 0 Monday → 6 Sunday
+            if weekday < 2:
+                return "Q1"
+            elif weekday < 4:
+                return "Q2"
+            elif weekday == 4:
+                return "Q3"
+            else:
+                return "Q4"
+    
+        # Monthly cycle → divide month into 4 parts
+        if cycle_type == "monthly":
+            day = now.day
+            days_in_month = monthrange(now.year, now.month)[1]
+            quarter_size = days_in_month // 4
+    
+            if day <= quarter_size:
+                return "Q1"
+            elif day <= quarter_size * 2:
+                return "Q2"
+            elif day <= quarter_size * 3:
+                return "Q3"
+            else:
+                return "Q4"
+    
+        # fallback
+        return "Q1"
+
 
     def get_last_three_quarters(self, cycle_type):
-        """Return the current quarter and the two prior quarters."""
-    
-        current_q = self.get_current_quarter(cycle_type)  # You already have this method
-    
-        order = ["Q1", "Q2", "Q3", "Q4"]
+        order = ["q1", "q2", "q3", "q4"]
+        current_q = self.get_current_quarter(cycle_type)
         idx = order.index(current_q)
-    
-        last3 = [
-            order[idx],               # current quarter
-            order[(idx - 1) % 4],     # previous quarter
-            order[(idx - 2) % 4]      # previous 2 quarters
+        return [
+            order[idx],
+            order[(idx - 1) % 4],
+            order[(idx - 2) % 4]
         ]
-
-        return last3
 
 
     
@@ -624,6 +675,10 @@ class RobustQuarterManager:
             return self._get_90min_quarter_fixed(candle_time)
         else:
             return 'unknown'
+    def get_current_quarter(self, cycle_type, timestamp=None):
+        """Return current quarter using the existing quarter detection logic."""
+        quarters = self.detect_current_quarters(timestamp)
+        return quarters.get(cycle_type, None)
 
 # ================================
 # ULTIMATE SWING DETECTOR WITH 3-CANDLE TOLERANCE
