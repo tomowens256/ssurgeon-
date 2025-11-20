@@ -1019,6 +1019,8 @@ class UltimateSMTDetector:
         self.signal_counts = {}
         self.invalidated_smts = set()
         self.pair_config = pair_config
+        self.last_smt_candle = None
+
         
         # Timeframe to minutes mapping for tolerance calculation
         self.timeframe_minutes = {
