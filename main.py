@@ -554,7 +554,7 @@ class RobustQuarterManager:
             ('q2', 'q3'), 
             ('q3', 'q4'),
             ('q4', 'q1'),
-            ('q_less','q1')
+            ('q_less','q1'),
             ('q4','q_less')# Also check q4→q1 transition
         ]
         
