@@ -1453,14 +1453,14 @@ class UltimateSMTDetector:
             return True
             
         count = self.signal_counts.get(signal_key, 0)
+    
+        # Only block if SAME candle + already sent
         if count >= 1 and smt_data['candle_time'] == self.last_smt_candle:
             logger.info(f"⚠️ Skipping duplicate SMT signal: {signal_key} (count: {count})")
             return True
-
-            #logger.info(f"⚠️ Skipping duplicate SMT signal: {signal_key} (count: {count})")
-            #return True
             
         return False
+
     
     def _update_signal_count(self, signal_key):
         self.signal_counts[signal_key] = self.signal_counts.get(signal_key, 0) + 1
