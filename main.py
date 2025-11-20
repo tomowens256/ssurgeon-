@@ -553,10 +553,12 @@ class RobustQuarterManager:
             ('q1', 'q2'),
             ('q2', 'q3'), 
             ('q3', 'q4'),
-            ('q4', 'q1')  # Also check q4→q1 transition
+            ('q4', 'q1'),
+            ('q_less','q1')
+            ('q4','q_less')# Also check q4→q1 transition
         ]
         
-        logger.info(f"🔍 {cycle_type}: Checking ALL quarter pairs: {all_pairs}")
+        #logger.info(f"🔍 {cycle_type}: Checking ALL quarter pairs: {all_pairs}")
         return all_pairs
     
     def group_candles_by_quarters(self, df, cycle_type, num_quarters=4):
@@ -579,7 +581,7 @@ class RobustQuarterManager:
             quarters_data[quarter] = pd.DataFrame(quarters_data[quarter])
             quarters_data[quarter] = quarters_data[quarter].sort_values('time')
         
-        logger.debug(f"📊 {cycle_type}: Quarters found: {list(quarters_data.keys())}")
+        #logger.debug(f"📊 {cycle_type}: Quarters found: {list(quarters_data.keys())}")
         return quarters_data
     
     def _get_candle_quarter(self, candle_time, cycle_type):
@@ -600,10 +602,10 @@ class RobustQuarterManager:
 # ================================
 
 class UltimateSwingDetector:
-    """Ultimate swing detection with 3-CANDLE TOLERANCE and interim price validation"""
+    """Ultimate swing detection with 5-CANDLE TOLERANCE and interim price validation"""
     
     @staticmethod
-    def find_swing_highs_lows(df, lookback=3):
+    def find_swing_highs_lows(df, lookback=5):
         """Find swing highs and swing lows in a DataFrame"""
         if df is None or not isinstance(df, pd.DataFrame) or len(df) < lookback + 1:
             return [], []
@@ -663,7 +665,7 @@ class UltimateSwingDetector:
         
         # Sort by time difference (closest first)
         aligned_pairs.sort(key=lambda x: x[2])
-        logger.debug(f"🕒 Found {len(aligned_pairs)} aligned swings within {max_time_diff_minutes} minutes")
+        #logger.debug(f"🕒 Found {len(aligned_pairs)} aligned swings within {max_time_diff_minutes} minutes")
         return aligned_pairs
     
     @staticmethod
@@ -708,45 +710,71 @@ class UltimateSwingDetector:
 
     @staticmethod
     def validate_interim_price_action(df, first_swing, second_swing, direction="bearish"):
-        """
-        CRITICAL VALIDATION: For bearish SMT between first high and second high, 
-        price should NOT have gone above the second high. For bullish, price should 
-        NOT have gone below the second low.
-        
-        Returns True if interim price action is valid, False if invalid.
-        """
-        if df is None or first_swing is None or second_swing is None:
+    """
+    Updated validation:
+
+    For bearish: identify which swing has the *highest high*.
+                 That becomes the protected high. If interim price breaks above it → invalid.
+
+    For bullish: identify which swing has the *lowest low*.
+                 That becomes the protected low. If interim price breaks below it → invalid.
+    """
+
+    if df is None or first_swing is None or second_swing is None:
+        return False
+
+    first_time = first_swing['time']
+    second_time = second_swing['time']
+
+    # Get candles strictly between the swings
+    interim_candles = df[(df['time'] > first_time) & (df['time'] < second_time)]
+
+    if interim_candles.empty:
+        logger.debug("✅ No interim candles to validate")
+        return True
+
+    # -------------------------
+    # BEARISH CASE
+    # -------------------------
+    if direction == "bearish":
+        # determine protected high
+        protected_high = max(first_swing['price'], second_swing['price'])
+
+        # highest interim candle high
+        max_interim_high = interim_candles['high'].max()
+
+        if max_interim_high > protected_high:
+            logger.warning(
+                f"❌ INTERIM PRICE INVALIDATION (Bearish): Interim high {max_interim_high:.4f} > protected high {protected_high:.4f}"
+            )
             return False
-        
-        first_time = first_swing['time']
-        second_time = second_swing['time']
-        
-        # Find candles between first swing and second swing (exclusive)
-        interim_candles = df[(df['time'] > first_time) & (df['time'] < second_time)]
-        
-        if interim_candles.empty:
-            logger.debug("✅ No interim candles to validate")
-            return True  # No interim candles to check
-        
-        if direction == "bearish":
-            # For bearish: no interim candle should have high > second_swing price
-            max_interim_high = interim_candles['high'].max()
-            if max_interim_high > second_swing['price']:
-                logger.warning(f"❌ INTERIM PRICE INVALIDATION (Bearish): Interim high {max_interim_high:.4f} > second high {second_swing['price']:.4f}")
-                return False
-            else:
-                logger.info(f"✅ Valid interim price action (Bearish): Max interim high {max_interim_high:.4f} <= second high {second_swing['price']:.4f}")
-                return True
-                
-        else:  # bullish
-            # For bullish: no interim candle should have low < second_swing price
-            min_interim_low = interim_candles['low'].min()
-            if min_interim_low < second_swing['price']:
-                logger.warning(f"❌ INTERIM PRICE INVALIDATION (Bullish): Interim low {min_interim_low:.4f} < second low {second_swing['price']:.4f}")
-                return False
-            else:
-                logger.info(f"✅ Valid interim price action (Bullish): Min interim low {min_interim_low:.4f} >= second low {second_swing['price']:.4f}")
-                return True
+
+        logger.info(
+            f"✅ Valid interim price action (Bearish): Max interim high {max_interim_high:.4f} <= protected high {protected_high:.4f}"
+        )
+        return True
+
+    # -------------------------
+    # BULLISH CASE
+    # -------------------------
+    else:
+        # determine protected low
+        protected_low = min(first_swing['price'], second_swing['price'])
+
+        # lowest interim candle low
+        min_interim_low = interim_candles['low'].min()
+
+        if min_interim_low < protected_low:
+            logger.warning(
+                f"❌ INTERIM PRICE INVALIDATION (Bullish): Interim low {min_interim_low:.4f} < protected low {protected_low:.4f}"
+            )
+            return False
+
+        logger.info(
+            f"✅ Valid interim price action (Bullish): Min interim low {min_interim_low:.4f} >= protected low {protected_low:.4f}"
+        )
+        return True
+
 
 # ================================
 # ENHANCED CRT DETECTOR WITH PSP TRACKING
