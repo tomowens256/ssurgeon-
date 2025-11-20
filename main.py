@@ -514,7 +514,7 @@ class RobustQuarterManager:
             order[(idx - 2) % 4]      # previous 2 quarters
         ]
 
-    return last3
+        return last3
 
 
     
