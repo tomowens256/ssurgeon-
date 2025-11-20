@@ -1071,17 +1071,28 @@ class UltimateSMTDetector:
                     cycle_type, prev_q, curr_q
                 )
     
-                if smt_result and not self._is_duplicate_signal(smt_result):
+                if smt_result:
                     results.append(smt_result)
     
             if not results:
                 logger.debug(f"🔍 No SMT found for {cycle_type}")
                 return None
     
-            # Process all SMTs → Check PSP on last 5 *closed* candles
+            # --- PROCESS RESULTS: Find first valid non-duplicate SMT ---
             for smt_result in results:
-                signal_key = smt_result['signal_key']
     
+                # DUPLICATE PROTECTION
+                if self._is_duplicate_signal(smt_result):
+                    continue
+    
+                signal_key = smt_result['signal_key']
+                candle_time = smt_result['candle_time']
+    
+                # --- UPDATE SMT STATE (VERY IMPORTANT) ---
+                self.last_smt_candle = candle_time
+                self.signal_counts[signal_key] = self.signal_counts.get(signal_key, 0) + 1
+    
+                # --- INITIALIZE PSP TRACKING ---
                 if signal_key not in self.smt_psp_tracking:
                     self.smt_psp_tracking[signal_key] = {
                         'psp_found': False,
@@ -1091,14 +1102,21 @@ class UltimateSMTDetector:
                         'formation_time': smt_result['formation_time']
                     }
     
-                logger.info(f"🎯 SMT DETECTED: {cycle_type} {smt_result['prev_q']}→{smt_result['curr_q']} {smt_result['direction']}")
+                logger.info(
+                    f"🎯 SMT DETECTED: {cycle_type} "
+                    f"{smt_result['prev_q']}→{smt_result['curr_q']} "
+                    f"{smt_result['direction']}"
+                )
+    
                 return smt_result
     
+            # If all SMTs were duplicates
             return None
     
         except Exception as e:
             logger.error(f"❌ Error in SMT detection for {cycle_type}: {str(e)}")
             return None
+
 
     
     def _compare_quarters_with_3_candle_tolerance(self, asset1_prev, asset1_curr, asset2_prev, asset2_curr, cycle_type, prev_q, curr_q):
