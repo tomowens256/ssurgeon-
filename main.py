@@ -1206,6 +1206,8 @@ class UltimateSMTDetector:
                 'type': smt_type,
                 'cycle': cycle_type,
                 'quarters': f"{prev_q}→{curr_q}",
+                'prev_q': prev_q,       
+                'curr_q': curr_q,
                 'timestamp': current_time,
                 'formation_time': formation_time,
                 'asset1_action': asset1_action,
