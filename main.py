@@ -489,6 +489,34 @@ class RobustQuarterManager:
         elif 15 <= day <= 21: return 'q3'
         elif 22 <= day <= 28: return 'q4'
         else: return 'q_less'
+
+    def get_adjacent_quarter_pairs(self, cycle_type):
+        """Return only the valid adjacent quarter pairs."""
+        return [
+            ("Q1", "Q2"),
+            ("Q2", "Q3"),
+            ("Q3", "Q4"),
+            ("Q4", "Q1")
+            #("Q4", "Q1")
+        ]
+
+    def get_last_three_quarters(self, cycle_type):
+        """Return the current quarter and the two prior quarters."""
+    
+        current_q = self.get_current_quarter(cycle_type)  # You already have this method
+    
+        order = ["Q1", "Q2", "Q3", "Q4"]
+        idx = order.index(current_q)
+    
+        last3 = [
+            order[idx],               # current quarter
+            order[(idx - 1) % 4],     # previous quarter
+            order[(idx - 2) % 4]      # previous 2 quarters
+        ]
+
+    return last3
+
+
     
     def _get_weekly_quarter(self, timestamp):
         weekday = timestamp.weekday()
