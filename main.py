@@ -1101,6 +1101,8 @@ class UltimateSMTDetector:
                         'last_check': datetime.now(NY_TZ),
                         'formation_time': smt_result['formation_time']
                     }
+
+                
     
                 logger.info(
                     f"🎯 SMT DETECTED: {cycle_type} "
@@ -1217,6 +1219,7 @@ class UltimateSMTDetector:
                     'asset2_curr': asset2_curr_high['time'] if bearish_smt else asset2_curr_low['time']
                 }
             }
+            smt_data['candle_time'] = formation_time
             
             self.smt_history.append(smt_data)
             self._update_signal_count(smt_data['signal_key'])
