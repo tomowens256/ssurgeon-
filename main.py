@@ -1099,104 +1099,155 @@ class UltimateSMTDetector:
 
     
     def _compare_quarters_with_3_candle_tolerance(self, asset1_prev, asset1_curr, asset2_prev, asset2_curr, cycle_type, prev_q, curr_q):
-        """Compare two consecutive quarters with 3-CANDLE TOLERANCE"""
+        """Compare two consecutive quarters with 3-CANDLE TOLERANCE (robust: quarter bounds + chronology)"""
         try:
             if (asset1_prev.empty or asset1_curr.empty or 
                 asset2_prev.empty or asset2_curr.empty):
                 return None
-
-            
-            # Get timeframe for tolerance calculation
+    
+            # timeframe / tolerance
             timeframe = self.pair_config['timeframe_mapping'][cycle_type]
-            timeframe_minutes = self.timeframe_minutes.get(timeframe, 5)  # Default to 5 minutes
-            
-            # Combine previous and current quarters for interim validation
+            timeframe_minutes = self.timeframe_minutes.get(timeframe, 5)
+    
+            # combined (sorted) frames for interim validations
             asset1_combined = pd.concat([asset1_prev, asset1_curr]).sort_values('time').reset_index(drop=True)
             asset2_combined = pd.concat([asset2_prev, asset2_curr]).sort_values('time').reset_index(drop=True)
-            
-            # Find swings for both assets in both quarters
-            asset1_prev_swing_highs, asset1_prev_swing_lows = self.swing_detector.find_swing_highs_lows(asset1_prev)
-            asset1_curr_swing_highs, asset1_curr_swing_lows = self.swing_detector.find_swing_highs_lows(asset1_curr)
-            
-            asset2_prev_swing_highs, asset2_prev_swing_lows = self.swing_detector.find_swing_highs_lows(asset2_prev)
-            asset2_curr_swing_highs, asset2_curr_swing_lows = self.swing_detector.find_swing_highs_lows(asset2_curr)
-            # 🔥 SORT ALL SWING LISTS BY TIME (CRITICAL FIX)
+    
+            # --- find swings (original functions) ---
+            a1_prev_H, a1_prev_L = self.swing_detector.find_swing_highs_lows(asset1_prev)
+            a1_curr_H, a1_curr_L = self.swing_detector.find_swing_highs_lows(asset1_curr)
+            a2_prev_H, a2_prev_L = self.swing_detector.find_swing_highs_lows(asset2_prev)
+            a2_curr_H, a2_curr_L = self.swing_detector.find_swing_highs_lows(asset2_curr)
+    
+            # helper: sort swings by time
             def sort_swings(swings):
                 return sorted(swings, key=lambda x: x['time'])
-            
-            asset1_prev_swing_highs = sort_swings(asset1_prev_swing_highs)
-            asset1_prev_swing_lows  = sort_swings(asset1_prev_swing_lows)
-            asset1_curr_swing_highs = sort_swings(asset1_curr_swing_highs)
-            asset1_curr_swing_lows  = sort_swings(asset1_curr_swing_lows)
-            
-            asset2_prev_swing_highs = sort_swings(asset2_prev_swing_highs)
-            asset2_prev_swing_lows  = sort_swings(asset2_prev_swing_lows)
-            asset2_curr_swing_highs = sort_swings(asset2_curr_swing_highs)
-            asset2_curr_swing_lows  = sort_swings(asset2_curr_swing_lows)
-
-            
-            logger.debug(f"🔍 {cycle_type} {prev_q}→{curr_q}: Asset1 swings - Prev: {len(asset1_prev_swing_highs)}H/{len(asset1_prev_swing_lows)}L, Curr: {len(asset1_curr_swing_highs)}H/{len(asset1_curr_swing_lows)}L")
-            logger.debug(f"🔍 {cycle_type} {prev_q}→{curr_q}: Asset2 swings - Prev: {len(asset2_prev_swing_highs)}H/{len(asset2_prev_swing_lows)}L, Curr: {len(asset2_curr_swing_highs)}H/{len(asset2_curr_swing_lows)}L")
-            
-            # Find bearish SMT with 3-candle tolerance
+    
+            a1_prev_H = sort_swings(a1_prev_H); a1_prev_L = sort_swings(a1_prev_L)
+            a1_curr_H = sort_swings(a1_curr_H); a1_curr_L = sort_swings(a1_curr_L)
+            a2_prev_H = sort_swings(a2_prev_H); a2_prev_L = sort_swings(a2_prev_L)
+            a2_curr_H = sort_swings(a2_curr_H); a2_curr_L = sort_swings(a2_curr_L)
+    
+            # --- FILTER: keep only swings that fall INSIDE their quarter timeframe ---
+            def filter_by_quarter(swings, quarter_df):
+                if not swings:
+                    return []
+                q_start = quarter_df['time'].min()
+                q_end = quarter_df['time'].max()
+                filtered = [s for s in swings if (s['time'] >= q_start and s['time'] <= q_end)]
+                if not filtered:
+                    # fallback: keep nearest by time if none fall inside (rare)
+                    return sorted(swings, key=lambda s: min(abs((s['time'] - q_start).total_seconds()), abs((s['time'] - q_end).total_seconds())))
+                return filtered
+    
+            a1_prev_H = filter_by_quarter(a1_prev_H, asset1_prev)
+            a1_prev_L = filter_by_quarter(a1_prev_L, asset1_prev)
+            a1_curr_H = filter_by_quarter(a1_curr_H, asset1_curr)
+            a1_curr_L = filter_by_quarter(a1_curr_L, asset1_curr)
+    
+            a2_prev_H = filter_by_quarter(a2_prev_H, asset2_prev)
+            a2_prev_L = filter_by_quarter(a2_prev_L, asset2_prev)
+            a2_curr_H = filter_by_quarter(a2_curr_H, asset2_curr)
+            a2_curr_L = filter_by_quarter(a2_curr_L, asset2_curr)
+    
+            logger.debug(f"🔍 {cycle_type} {prev_q}→{curr_q}: After filtering -> A1 prev H:{len(a1_prev_H)} L:{len(a1_prev_L)} | A1 curr H:{len(a1_curr_H)} L:{len(a1_curr_L)}")
+            logger.debug(f"🔍 {cycle_type} {prev_q}→{curr_q}: After filtering -> A2 prev H:{len(a2_prev_H)} L:{len(a2_prev_L)} | A2 curr H:{len(a2_curr_H)} L:{len(a2_curr_L)}")
+    
+            # --- find bearish & bullish using your tolerance functions ---
             bearish_smt = self._find_bearish_smt_with_tolerance(
-                asset1_prev_swing_highs, asset1_curr_swing_highs,
-                asset2_prev_swing_highs, asset2_curr_swing_highs,
+                a1_prev_H, a1_curr_H,
+                a2_prev_H, a2_curr_H,
                 asset1_combined, timeframe_minutes
             )
-            
-            # Find bullish SMT with 3-candle tolerance
+    
             bullish_smt = self._find_bullish_smt_with_tolerance(
-                asset1_prev_swing_lows, asset1_curr_swing_lows,
-                asset2_prev_swing_lows, asset2_curr_swing_lows,
+                a1_prev_L, a1_curr_L,
+                a2_prev_L, a2_curr_L,
                 asset1_combined, timeframe_minutes
             )
-            
-            current_time = datetime.now(NY_TZ)
-            
+    
+            # No candidate
+            if not bearish_smt and not bullish_smt:
+                return None
+    
+            # Choose found result and unpack safely
             if bearish_smt:
                 direction = 'bearish'
                 smt_type = 'Higher Swing High'
                 asset1_prev_high, asset1_curr_high, asset2_prev_high, asset2_curr_high = bearish_smt
-                
+    
+                # Ensure chronological order for both assets; if reversed, swap
+                if asset1_curr_high['time'] <= asset1_prev_high['time']:
+                    logger.warning(f"⚠️ Fixing chronology A1: {asset1_prev_high['time']} -> {asset1_curr_high['time']}")
+                    asset1_prev_high, asset1_curr_high = asset1_curr_high, asset1_prev_high
+                if asset2_curr_high['time'] <= asset2_prev_high['time']:
+                    logger.warning(f"⚠️ Fixing chronology A2: {asset2_prev_high['time']} -> {asset2_curr_high['time']}")
+                    asset2_prev_high, asset2_curr_high = asset2_curr_high, asset2_prev_high
+    
                 formation_time = asset1_curr_high['time']
-                
-                asset1_action = self.swing_detector.format_swing_time_description(
-                    asset1_prev_high, asset1_curr_high, "high", self.timing_manager
-                )
-                asset2_action = self.swing_detector.format_swing_time_description(
-                    asset2_prev_high, asset2_curr_high, "high", self.timing_manager
-                )
+                asset1_action = self.swing_detector.format_swing_time_description(asset1_prev_high, asset1_curr_high, "high", self.timing_manager)
+                asset2_action = self.swing_detector.format_swing_time_description(asset2_prev_high, asset2_curr_high, "high", self.timing_manager)
                 critical_level = asset1_curr_high['price']
-                
-            elif bullish_smt:
+    
+                # Extra sanity: ensure prev < curr across both assets (otherwise reject)
+                if not (asset1_prev_high['time'] < asset1_curr_high['time'] and asset2_prev_high['time'] < asset2_curr_high['time']):
+                    logger.warning("⚠️ Rejected bearish SMT because swings are not chronological across both assets")
+                    return None
+    
+            else:  # bullish_smt
                 direction = 'bullish'
                 smt_type = 'Lower Swing Low'
                 asset1_prev_low, asset1_curr_low, asset2_prev_low, asset2_curr_low = bullish_smt
-                
+    
+                if asset1_curr_low['time'] <= asset1_prev_low['time']:
+                    logger.warning(f"⚠️ Fixing chronology A1 low: {asset1_prev_low['time']} -> {asset1_curr_low['time']}")
+                    asset1_prev_low, asset1_curr_low = asset1_curr_low, asset1_prev_low
+                if asset2_curr_low['time'] <= asset2_prev_low['time']:
+                    logger.warning(f"⚠️ Fixing chronology A2 low: {asset2_prev_low['time']} -> {asset2_curr_low['time']}")
+                    asset2_prev_low, asset2_curr_low = asset2_curr_low, asset2_prev_low
+    
                 formation_time = asset1_curr_low['time']
-                
-                asset1_action = self.swing_detector.format_swing_time_description(
-                    asset1_prev_low, asset1_curr_low, "low", self.timing_manager
-                )
-                asset2_action = self.swing_detector.format_swing_time_description(
-                    asset2_prev_low, asset2_curr_low, "low", self.timing_manager
-                )
+                asset1_action = self.swing_detector.format_swing_time_description(asset1_prev_low, asset1_curr_low, "low", self.timing_manager)
+                asset2_action = self.swing_detector.format_swing_time_description(asset2_prev_low, asset2_curr_low, "low", self.timing_manager)
                 critical_level = asset1_curr_low['price']
-                
+    
+                if not (asset1_prev_low['time'] < asset1_curr_low['time'] and asset2_prev_low['time'] < asset2_curr_low['time']):
+                    logger.warning("⚠️ Rejected bullish SMT because swings are not chronological across both assets")
+                    return None
+    
+            # Build signal_key time pieces from the actual chosen swings
+            if direction == 'bearish':
+                swing_time_key = f"{asset1_prev_high['time'].strftime('%H%M')}_{asset1_curr_high['time'].strftime('%H%M')}"
+                swing_times = {
+                    'asset1_prev': asset1_prev_high['time'],
+                    'asset1_curr': asset1_curr_high['time'],
+                    'asset2_prev': asset2_prev_high['time'],
+                    'asset2_curr': asset2_curr_high['time']
+                }
             else:
+                swing_time_key = f"{asset1_prev_low['time'].strftime('%H%M')}_{asset1_curr_low['time'].strftime('%H%M')}"
+                swing_times = {
+                    'asset1_prev': asset1_prev_low['time'],
+                    'asset1_curr': asset1_curr_low['time'],
+                    'asset2_prev': asset2_prev_low['time'],
+                    'asset2_curr': asset2_curr_low['time']
+                }
+    
+            # Final sanity: ensure formation_time is inside curr quarter bounds
+            curr_start = asset1_curr['time'].min()
+            curr_end = asset1_curr['time'].max()
+            if not (curr_start <= formation_time <= curr_end):
+                logger.warning(f"⚠️ Formation time {formation_time} outside curr quarter bounds ({curr_start} → {curr_end}). Rejecting.")
                 return None
-            
-            # Create unique signal key based on swing times (not current time)
-            swing_time_key = f"{asset1_prev_high['time'].strftime('%H%M')}_{asset1_curr_high['time'].strftime('%H%M')}" if bearish_smt else f"{asset1_prev_low['time'].strftime('%H%M')}_{asset1_curr_low['time'].strftime('%H%M')}"
-            
-            # TIME-BASED SIGNAL NAMING
+    
+            current_time = datetime.now(NY_TZ)
+    
             smt_data = {
                 'direction': direction,
                 'type': smt_type,
                 'cycle': cycle_type,
                 'quarters': f"{prev_q}→{curr_q}",
-                'prev_q': prev_q,       
+                'prev_q': prev_q,
                 'curr_q': curr_q,
                 'timestamp': current_time,
                 'formation_time': formation_time,
@@ -1206,28 +1257,24 @@ class UltimateSMTDetector:
                 'signal_key': f"SMT_{cycle_type}_{prev_q}_{curr_q}_{direction}_{swing_time_key}",
                 'critical_level': critical_level,
                 'timeframe': self.pair_config['timeframe_mapping'][cycle_type],
-                'swing_times': {
-                    'asset1_prev': asset1_prev_high['time'] if bearish_smt else asset1_prev_low['time'],
-                    'asset1_curr': asset1_curr_high['time'] if bearish_smt else asset1_curr_low['time'],
-                    'asset2_prev': asset2_prev_high['time'] if bearish_smt else asset2_prev_low['time'],
-                    'asset2_curr': asset2_curr_high['time'] if bearish_smt else asset2_curr_low['time']
-                }
+                'swing_times': swing_times,
+                'candle_time': formation_time
             }
-            smt_data['candle_time'] = formation_time
-            
+    
             self.smt_history.append(smt_data)
             self._update_signal_count(smt_data['signal_key'])
-            
+    
             logger.info(f"🎯 SMT DETECTED with 3-candle tolerance: {direction} {cycle_type} {prev_q}→{curr_q}")
             logger.info(f"   Signal ID: {smt_data['signal_key']}")
             logger.info(f"   Asset1: {asset1_action}")
             logger.info(f"   Asset2: {asset2_action}")
-            
+    
             return smt_data
-            
+    
         except Exception as e:
-            logger.error(f"Error comparing quarters {prev_q}→{curr_q}: {str(e)}")
+            logger.error(f"Error comparing quarters {prev_q}→{curr_q}: {str(e)}\n{traceback.format_exc()}")
             return None
+
     
     def _find_bearish_smt_with_tolerance(self, asset1_prev_highs, asset1_curr_highs, asset2_prev_highs, asset2_curr_highs, asset1_combined_data, timeframe_minutes):
         """Find bearish SMT with 3-CANDLE TOLERANCE"""
