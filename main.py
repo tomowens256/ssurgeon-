@@ -689,76 +689,47 @@ class UltimateSwingDetector:
     
     @staticmethod
     def find_swing_highs_lows(df):
-        """
-        Detect swing highs & lows based on your logic:
-    
-        CLASSIC FRACTAL SWING:
-            swing high: high[i] > high[i-1] and high[i] > high[i+1]
-            swing low:  low[i] < low[i-1] and low[i] < low[i+1]
-    
-        REAL-TIME LATEST SWING:
-            last closed candle (i = len(df)-2) can be swing if:
-                high[i] > high[i-1]
-                low[i] < low[i-1]
-        """
-    
+
         if df is None or len(df) < 3:
             return [], []
     
         swing_highs = []
         swing_lows = []
     
-        # -------------------------
-        # CLASSIC FRACTAL SWINGS
-        # -------------------------
+        MIN_SWING_DISTANCE = 3  # avoid fake swings
+    
         for i in range(1, len(df) - 1):
+    
             prev = df.iloc[i - 1]
             curr = df.iloc[i]
             nxt  = df.iloc[i + 1]
     
-            # swing high: middle candle strictly higher than neighbors
-            if float(curr['high']) > float(prev['high']) and float(curr['high']) > float(nxt['high']):
-                swing_highs.append({
-                    'time': curr['time'],
-                    'price': float(curr['high']),
-                    'index': i
-                })
+            # big enough move (avoid tiny wicks)
+            if abs(curr['high'] - prev['high']) < curr['high'] * 0.001:
+                continue
+            if abs(curr['low'] - prev['low']) < curr['low'] * 0.001:
+                continue
     
-            # swing low: middle candle strictly lower than neighbors
-            if float(curr['low']) < float(prev['low']) and float(curr['low']) < float(nxt['low']):
-                swing_lows.append({
-                    'time': curr['time'],
-                    'price': float(curr['low']),
-                    'index': i
-                })
+            # swing high
+            if curr['high'] > prev['high'] and curr['high'] > nxt['high']:
+                if not swing_highs or (i - swing_highs[-1]['index']) >= MIN_SWING_DISTANCE:
+                    swing_highs.append({
+                        'time': df.index[i],
+                        'price': float(curr['high']),
+                        'index': i
+                    })
     
-        # -------------------------
-        # REAL-TIME LATEST SWING DETECTION
-        # -------------------------
-        # last closed candle index = len(df) - 2
-        last_idx = len(df) - 2  
-    
-        if last_idx > 0:
-            prev = df.iloc[last_idx - 1]
-            last = df.iloc[last_idx]
-    
-            # Real-time swing high: last > previous high
-            if float(last['high']) > float(prev['high']):
-                swing_highs.append({
-                    'time': last['time'],
-                    'price': float(last['high']),
-                    'index': last_idx
-                })
-    
-            # Real-time swing low: last < previous low
-            if float(last['low']) < float(prev['low']):
-                swing_lows.append({
-                    'time': last['time'],
-                    'price': float(last['low']),
-                    'index': last_idx
-                })
+            # swing low
+            if curr['low'] < prev['low'] and curr['low'] < nxt['low']:
+                if not swing_lows or (i - swing_lows[-1]['index']) >= MIN_SWING_DISTANCE:
+                    swing_lows.append({
+                        'time': df.index[i],
+                        'price': float(curr['low']),
+                        'index': i
+                    })
     
         return swing_highs, swing_lows
+
 
     
     @staticmethod
