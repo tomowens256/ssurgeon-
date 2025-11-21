@@ -1133,6 +1133,7 @@ class UltimateSMTDetector:
             if (asset1_prev.empty or asset1_curr.empty or 
                 asset2_prev.empty or asset2_curr.empty):
                 return None
+
             
             # Get timeframe for tolerance calculation
             timeframe = self.pair_config['timeframe_mapping'][cycle_type]
@@ -1148,6 +1149,20 @@ class UltimateSMTDetector:
             
             asset2_prev_swing_highs, asset2_prev_swing_lows = self.swing_detector.find_swing_highs_lows(asset2_prev)
             asset2_curr_swing_highs, asset2_curr_swing_lows = self.swing_detector.find_swing_highs_lows(asset2_curr)
+            # 🔥 SORT ALL SWING LISTS BY TIME (CRITICAL FIX)
+            def sort_swings(swings):
+                return sorted(swings, key=lambda x: x['time'])
+            
+            asset1_prev_swing_highs = sort_swings(asset1_prev_swing_highs)
+            asset1_prev_swing_lows  = sort_swings(asset1_prev_swing_lows)
+            asset1_curr_swing_highs = sort_swings(asset1_curr_swing_highs)
+            asset1_curr_swing_lows  = sort_swings(asset1_curr_swing_lows)
+            
+            asset2_prev_swing_highs = sort_swings(asset2_prev_swing_highs)
+            asset2_prev_swing_lows  = sort_swings(asset2_prev_swing_lows)
+            asset2_curr_swing_highs = sort_swings(asset2_curr_swing_highs)
+            asset2_curr_swing_lows  = sort_swings(asset2_curr_swing_lows)
+
             
             logger.debug(f"🔍 {cycle_type} {prev_q}→{curr_q}: Asset1 swings - Prev: {len(asset1_prev_swing_highs)}H/{len(asset1_prev_swing_lows)}L, Curr: {len(asset1_curr_swing_highs)}H/{len(asset1_curr_swing_lows)}L")
             logger.debug(f"🔍 {cycle_type} {prev_q}→{curr_q}: Asset2 swings - Prev: {len(asset2_prev_swing_highs)}H/{len(asset2_prev_swing_lows)}L, Curr: {len(asset2_curr_swing_highs)}H/{len(asset2_curr_swing_lows)}L")
