@@ -1140,57 +1140,57 @@ class UltimateSMTDetector:
 
     
     def _compare_quarters_with_3_candle_tolerance(self, asset1_prev, asset1_curr, asset2_prev, asset2_curr, cycle_type, prev_q, curr_q):
-     """Compare quarters with debug info"""
-     try:
-         print(f"\n🔍 COMPARING QUARTERS: {cycle_type} {prev_q}→{curr_q}")
+         """Compare quarters with debug info"""
+         try:
+             print(f"\n🔍 COMPARING QUARTERS: {cycle_type} {prev_q}→{curr_q}")
+            
+             # Debug the input data
+             print(f"   Asset1 prev: {len(asset1_prev)} candles, time range: {asset1_prev['time'].min() if not asset1_prev.empty else 'empty'} to {asset1_prev['time'].max() if not asset1_prev.empty else 'empty'}")
+             print(f"   Asset1 curr: {len(asset1_curr)} candles, time range: {asset1_curr['time'].min() if not asset1_curr.empty else 'empty'} to {asset1_curr['time'].max() if not asset1_curr.empty else 'empty'}")
+            
+             if (asset1_prev.empty or asset1_curr.empty or 
+                 asset2_prev.empty or asset2_curr.empty):
+                 return None
         
-         # Debug the input data
-         print(f"   Asset1 prev: {len(asset1_prev)} candles, time range: {asset1_prev['time'].min() if not asset1_prev.empty else 'empty'} to {asset1_prev['time'].max() if not asset1_prev.empty else 'empty'}")
-         print(f"   Asset1 curr: {len(asset1_curr)} candles, time range: {asset1_curr['time'].min() if not asset1_curr.empty else 'empty'} to {asset1_curr['time'].max() if not asset1_curr.empty else 'empty'}")
+             # timeframe / tolerance
+             timeframe = self.pair_config['timeframe_mapping'][cycle_type]
+             timeframe_minutes = self.timeframe_minutes.get(timeframe, 5)
         
-         if (asset1_prev.empty or asset1_curr.empty or 
-             asset2_prev.empty or asset2_curr.empty):
-             return None
+             # combined (sorted) frames for interim validations
+             asset1_combined = pd.concat([asset1_prev, asset1_curr]).sort_values('time').reset_index(drop=True)
+             asset2_combined = pd.concat([asset2_prev, asset2_curr]).sort_values('time').reset_index(drop=True)
+        
+             # --- find swings (original functions) ---
+             a1_prev_H, a1_prev_L = self.swing_detector.find_swing_highs_lows(asset1_prev)
+             a1_curr_H, a1_curr_L = self.swing_detector.find_swing_highs_lows(asset1_curr)
+             a2_prev_H, a2_prev_L = self.swing_detector.find_swing_highs_lows(asset2_prev)
+             a2_curr_H, a2_curr_L = self.swing_detector.find_swing_highs_lows(asset2_curr)
+        
+             # --- FIX: ensure all swing times are real pandas Timestamps ---
+             def normalize_time(swings, tz=NY_TZ):
+                 for s in swings:
+                     # ensure timestamp
+                     if not isinstance(s['time'], pd.Timestamp):
+                         s['time'] = pd.to_datetime(s['time'])
+                     # make timezone aware if naive
+                     if s['time'].tzinfo is None:
+                         s['time'] = s['time'].tz_localize(tz)
+                     else:
+                         s['time'] = s['time'].tz_convert(tz)
+                 return swings
     
-         # timeframe / tolerance
-         timeframe = self.pair_config['timeframe_mapping'][cycle_type]
-         timeframe_minutes = self.timeframe_minutes.get(timeframe, 5)
-    
-         # combined (sorted) frames for interim validations
-         asset1_combined = pd.concat([asset1_prev, asset1_curr]).sort_values('time').reset_index(drop=True)
-         asset2_combined = pd.concat([asset2_prev, asset2_curr]).sort_values('time').reset_index(drop=True)
-    
-         # --- find swings (original functions) ---
-         a1_prev_H, a1_prev_L = self.swing_detector.find_swing_highs_lows(asset1_prev)
-         a1_curr_H, a1_curr_L = self.swing_detector.find_swing_highs_lows(asset1_curr)
-         a2_prev_H, a2_prev_L = self.swing_detector.find_swing_highs_lows(asset2_prev)
-         a2_curr_H, a2_curr_L = self.swing_detector.find_swing_highs_lows(asset2_curr)
-    
-         # --- FIX: ensure all swing times are real pandas Timestamps ---
-         def normalize_time(swings, tz=NY_TZ):
-             for s in swings:
-                 # ensure timestamp
-                 if not isinstance(s['time'], pd.Timestamp):
-                     s['time'] = pd.to_datetime(s['time'])
-                 # make timezone aware if naive
-                 if s['time'].tzinfo is None:
-                     s['time'] = s['time'].tz_localize(tz)
-                 else:
-                     s['time'] = s['time'].tz_convert(tz)
-             return swings
+        
+             a1_prev_H = normalize_time(a1_prev_H, NY_TZ)
+             a1_prev_L = normalize_time(a1_prev_L, NY_TZ)
+             a1_curr_H = normalize_time(a1_curr_H, NY_TZ)
+             a1_curr_L = normalize_time(a1_curr_L, NY_TZ)
+            
+             a2_prev_H = normalize_time(a2_prev_H, NY_TZ)
+             a2_prev_L = normalize_time(a2_prev_L, NY_TZ)
+             a2_curr_H = normalize_time(a2_curr_H, NY_TZ)
+             a2_curr_L = normalize_time(a2_curr_L, NY_TZ)
 
-    
-         a1_prev_H = normalize_time(a1_prev_H, NY_TZ)
-         a1_prev_L = normalize_time(a1_prev_L, NY_TZ)
-         a1_curr_H = normalize_time(a1_curr_H, NY_TZ)
-         a1_curr_L = normalize_time(a1_curr_L, NY_TZ)
-        
-         a2_prev_H = normalize_time(a2_prev_H, NY_TZ)
-         a2_prev_L = normalize_time(a2_prev_L, NY_TZ)
-         a2_curr_H = normalize_time(a2_curr_H, NY_TZ)
-         a2_curr_L = normalize_time(a2_curr_L, NY_TZ)
-
-         # ... rest of your existing method continues here ...
+             # ... rest of your existing method continues here ...
             # --------------------------------------------------------------
         
             # helper: sort swings by time
