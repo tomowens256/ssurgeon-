@@ -723,34 +723,32 @@ class RobustQuarterManager:
 class UltimateSwingDetector:
     """Ultimate swing detection with 5-CANDLE TOLERANCE and interim price validation"""
     
+    
     @staticmethod
     def find_swing_highs_lows(df):
-
+        """Fixed swing detection with proper time handling"""
         if df is None or len(df) < 3:
             return [], []
     
         swing_highs = []
         swing_lows = []
     
-        MIN_SWING_DISTANCE = 3  # avoid fake swings
+        MIN_SWING_DISTANCE = 3
     
         for i in range(1, len(df) - 1):
-    
             prev = df.iloc[i - 1]
             curr = df.iloc[i]
-            nxt  = df.iloc[i + 1]
+            nxt = df.iloc[i + 1]
     
-            # big enough move (avoid tiny wicks)
-            if abs(curr['high'] - prev['high']) < curr['high'] * 0.001:
-                continue
-            if abs(curr['low'] - prev['low']) < curr['low'] * 0.001:
+            # DEBUG: Check if we have proper time data
+            if pd.isna(curr['time']) or curr['time'] is None:
                 continue
     
             # swing high
             if curr['high'] > prev['high'] and curr['high'] > nxt['high']:
                 if not swing_highs or (i - swing_highs[-1]['index']) >= MIN_SWING_DISTANCE:
                     swing_highs.append({
-                        'time': df.index[i],
+                        'time': curr['time'],  # Use actual candle time
                         'price': float(curr['high']),
                         'index': i
                     })
@@ -759,7 +757,7 @@ class UltimateSwingDetector:
             if curr['low'] < prev['low'] and curr['low'] < nxt['low']:
                 if not swing_lows or (i - swing_lows[-1]['index']) >= MIN_SWING_DISTANCE:
                     swing_lows.append({
-                        'time': df.index[i],
+                        'time': curr['time'],  # Use actual candle time
                         'price': float(curr['low']),
                         'index': i
                     })
@@ -1140,9 +1138,16 @@ class UltimateSMTDetector:
 
 
     
-    def _compare_quarters_with_3_candle_tolerance(self, asset1_prev, asset1_curr, asset2_prev, asset2_curr, cycle_type, prev_q, curr_q):
-        """Compare two consecutive quarters with 3-CANDLE TOLERANCE (robust: quarter bounds + chronology)"""
+   def _compare_quarters_with_3_candle_tolerance(self, asset1_prev, asset1_curr, asset2_prev, asset2_curr, cycle_type, prev_q, curr_q):
+        """Compare quarters with debug info"""
         try:
+            print(f"\n🔍 COMPARING QUARTERS: {cycle_type} {prev_q}→{curr_q}")
+            
+            # Debug the input data
+            print(f"   Asset1 prev: {len(asset1_prev)} candles, time range: {asset1_prev['time'].min() if not asset1_prev.empty else 'empty'} to {asset1_prev['time'].max() if not asset1_prev.empty else 'empty'}")
+            print(f"   Asset1 curr: {len(asset1_curr)} candles, time range: {asset1_curr['time'].min() if not asset1_curr.empty else 'empty'} to {asset1_curr['time'].max() if not asset1_curr.empty else 'empty'}")
+            
+            # ... rest of your existing method ...
             if (asset1_prev.empty or asset1_curr.empty or 
                 asset2_prev.empty or asset2_curr.empty):
                 return None
