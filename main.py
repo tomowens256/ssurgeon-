@@ -8,6 +8,7 @@ ROBUST SMT TRADING SYSTEM - CRT+PSP+SMT CONFLUENCE VERSION
 """
 
 import asyncio
+import traceback
 import logging
 import os
 import sys
