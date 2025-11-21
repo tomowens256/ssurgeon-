@@ -495,12 +495,22 @@ class RobustQuarterManager:
         else: return 'q_less'
 
     def get_adjacent_quarter_pairs(self, cycle_type):
-        return [
-            ("q1", "q2"),
-            ("q2", "q3"),
-            ("q3", "q4"),
-            ("q4", "q1")
-        ]
+        """Get ALL possible consecutive quarter pairs including q_less"""
+        if cycle_type == 'weekly':
+            # For weekly, q_less (Friday) comes after q4 (Thursday)
+            quarter_sequence = ['q1', 'q2', 'q3', 'q4', 'q_less']
+        else:
+            quarter_sequence = ['q1', 'q2', 'q3', 'q4']
+        
+        # ALL possible consecutive pairs
+        all_pairs = []
+        for i in range(len(quarter_sequence)):
+            current = quarter_sequence[i]
+            next_q = quarter_sequence[(i + 1) % len(quarter_sequence)]
+            all_pairs.append((current, next_q))
+        
+        logger.debug(f"🔍 {cycle_type}: All quarter pairs: {all_pairs}")
+        return all_pairs
 
 
     def get_current_quarter(self, cycle_type):
@@ -560,14 +570,35 @@ class RobustQuarterManager:
 
 
     def get_last_three_quarters(self, cycle_type):
-        order = ["q1", "q2", "q3", "q4"]
+        """Get last three quarters - INCLUDING q_less"""
+        # Include 'q_less' in the quarter sequence
+        order = ["q1", "q2", "q3", "q4", "q_less"]
         current_q = self.get_current_quarter(cycle_type)
-        idx = order.index(current_q)
-        return [
-            order[idx],
-            order[(idx - 1) % 4],
-            order[(idx - 2) % 4]
-        ]
+        
+        logger.debug(f"🔍 {cycle_type}: Current quarter = '{current_q}'")
+        
+        # Ensure current_q is in order list
+        if current_q not in order:
+            logger.error(f"❌ {cycle_type}: Invalid quarter '{current_q}', using 'q_less'")
+            current_q = 'q_less'
+        
+        try:
+            idx = order.index(current_q)
+            # For q_less, we want to look at q4, q3, q2
+            if current_q == 'q_less':
+                last_three = ["q4", "q3", "q_less"]
+            else:
+                last_three = [
+                    order[idx],
+                    order[(idx - 1) % len(order)],
+                    order[(idx - 2) % len(order)]
+                ]
+            logger.debug(f"🔍 {cycle_type}: Last three quarters = {last_three}")
+            return last_three
+            
+        except ValueError as e:
+            logger.error(f"❌ {cycle_type}: Error finding index of '{current_q}': {e}")
+            return ["q2", "q3", "q4"]  # Emergency fallback
 
 
     
@@ -1017,11 +1048,14 @@ class UltimateSMTDetector:
                 logger.warning(f"⚠️ No data for {cycle_type} SMT detection")
                 return None
     
-            # Get adjacent quarter pairs only
+            # Get adjacent quarter pairs (now includes q_less for weekly)
             adjacent_pairs = self.quarter_manager.get_adjacent_quarter_pairs(cycle_type)
     
-            # Determine last 3 quarters (current + previous 2)
+            # Get last 3 quarters (now includes q_less if applicable)
             last_3_quarters = self.quarter_manager.get_last_three_quarters(cycle_type)
+    
+            logger.debug(f"🔍 {cycle_type}: Last 3 quarters: {last_3_quarters}")
+            logger.debug(f"🔍 {cycle_type}: Adjacent pairs: {adjacent_pairs}")
     
             asset1_quarters = self.quarter_manager.group_candles_by_quarters(asset1_data, cycle_type)
             asset2_quarters = self.quarter_manager.group_candles_by_quarters(asset2_data, cycle_type)
@@ -1037,9 +1071,12 @@ class UltimateSMTDetector:
                 if prev_q not in last_3_quarters or curr_q not in last_3_quarters:
                     continue
     
+                # Check if we have data for these quarters
                 if prev_q not in asset1_quarters or curr_q not in asset1_quarters:
+                    logger.debug(f"🔍 {cycle_type}: Missing asset1 data for {prev_q}→{curr_q}")
                     continue
                 if prev_q not in asset2_quarters or curr_q not in asset2_quarters:
+                    logger.debug(f"🔍 {cycle_type}: Missing asset2 data for {prev_q}→{curr_q}")
                     continue
     
                 smt_result = self._compare_quarters_with_3_candle_tolerance(
