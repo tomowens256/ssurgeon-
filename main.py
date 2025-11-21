@@ -570,35 +570,37 @@ class RobustQuarterManager:
 
 
     def get_last_three_quarters(self, cycle_type):
-        """Get last three quarters - INCLUDING q_less"""
-        # Include 'q_less' in the quarter sequence
-        order = ["q1", "q2", "q3", "q4", "q_less"]
+        """Get last three quarters - PROPERLY HANDLES q_less"""
+        # Use the appropriate quarter sequence based on cycle type
+        if cycle_type == 'weekly':
+            # For weekly, include q_less in the sequence
+            order = ['q1', 'q2', 'q3', 'q4', 'q_less']
+        else:
+            order = ['q1', 'q2', 'q3', 'q4']
+        
         current_q = self.get_current_quarter(cycle_type)
         
         logger.debug(f"🔍 {cycle_type}: Current quarter = '{current_q}'")
         
         # Ensure current_q is in order list
         if current_q not in order:
-            logger.error(f"❌ {cycle_type}: Invalid quarter '{current_q}', using 'q_less'")
-            current_q = 'q_less'
+            logger.error(f"❌ {cycle_type}: Invalid quarter '{current_q}'")
+            # Fallback to a safe default
+            return ['q2', 'q3', 'q4']
         
         try:
             idx = order.index(current_q)
-            # For q_less, we want to look at q4, q3, q2
-            if current_q == 'q_less':
-                last_three = ["q4", "q3", "q_less"]
-            else:
-                last_three = [
-                    order[idx],
-                    order[(idx - 1) % len(order)],
-                    order[(idx - 2) % len(order)]
-                ]
+            last_three = [
+                order[idx],
+                order[(idx - 1) % len(order)],
+                order[(idx - 2) % len(order)]
+            ]
             logger.debug(f"🔍 {cycle_type}: Last three quarters = {last_three}")
             return last_three
             
         except ValueError as e:
-            logger.error(f"❌ {cycle_type}: Error finding index of '{current_q}': {e}")
-            return ["q2", "q3", "q4"]  # Emergency fallback
+            logger.error(f"❌ {cycle_type}: Error in get_last_three_quarters: {e}")
+            return ['q2', 'q3', 'q4']  # Emergency fallback
 
 
     
@@ -658,17 +660,20 @@ class RobustQuarterManager:
     
     def get_all_possible_quarter_pairs(self, cycle_type):
         """Get ALL possible consecutive quarter pairs regardless of current quarter"""
-        quarter_sequence = ['q1', 'q2', 'q3', 'q4']
+        if cycle_type == 'weekly':
+            # For weekly, include transitions to/from q_less
+            quarter_sequence = ['q1', 'q2', 'q3', 'q4', 'q_less']
+        else:
+            quarter_sequence = ['q1', 'q2', 'q3', 'q4']
         
         # ALL possible consecutive pairs
-        all_pairs = [
-            ('q1', 'q2'),
-            ('q2', 'q3'), 
-            ('q3', 'q4'),
-            ('q4', 'q1')
-        ]
+        all_pairs = []
+        for i in range(len(quarter_sequence)):
+            current = quarter_sequence[i]
+            next_q = quarter_sequence[(i + 1) % len(quarter_sequence)]
+            all_pairs.append((current, next_q))
         
-        #logger.info(f"🔍 {cycle_type}: Checking ALL quarter pairs: {all_pairs}")
+        logger.debug(f"🔍 {cycle_type}: Checking ALL quarter pairs: {all_pairs}")
         return all_pairs
     
     def group_candles_by_quarters(self, df, cycle_type, num_quarters=4):
