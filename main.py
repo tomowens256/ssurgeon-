@@ -1119,6 +1119,25 @@ class UltimateSMTDetector:
             a1_curr_H, a1_curr_L = self.swing_detector.find_swing_highs_lows(asset1_curr)
             a2_prev_H, a2_prev_L = self.swing_detector.find_swing_highs_lows(asset2_prev)
             a2_curr_H, a2_curr_L = self.swing_detector.find_swing_highs_lows(asset2_curr)
+
+            # --- FIX: ensure all swing times are real pandas Timestamps ---
+            def normalize_time(swings):
+                for s in swings:
+                    if not isinstance(s['time'], pd.Timestamp):
+                        s['time'] = pd.to_datetime(s['time'])
+                return swings
+            
+            asset1_prev_swing_highs = normalize_time(asset1_prev_swing_highs)
+            asset1_prev_swing_lows  = normalize_time(asset1_prev_swing_lows)
+            asset1_curr_swing_highs = normalize_time(asset1_curr_swing_highs)
+            asset1_curr_swing_lows  = normalize_time(asset1_curr_swing_lows)
+            
+            asset2_prev_swing_highs = normalize_time(asset2_prev_swing_highs)
+            asset2_prev_swing_lows  = normalize_time(asset2_prev_swing_lows)
+            asset2_curr_swing_highs = normalize_time(asset2_curr_swing_highs)
+            asset2_curr_swing_lows  = normalize_time(asset2_curr_swing_lows)
+            # ---------------------------------------------------------------
+
     
             # helper: sort swings by time
             def sort_swings(swings):
