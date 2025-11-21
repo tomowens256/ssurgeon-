@@ -499,9 +499,7 @@ class RobustQuarterManager:
             ("q1", "q2"),
             ("q2", "q3"),
             ("q3", "q4"),
-            ("q4", "q1"),
-            ("q_less","q1"),
-            ("q4","q_less")
+            ("q4", "q1")
         ]
 
 
