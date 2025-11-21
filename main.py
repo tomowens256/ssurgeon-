@@ -763,7 +763,11 @@ class UltimateSwingDetector:
     
     @staticmethod
     def find_aligned_swings(asset1_swings, asset2_swings, max_candle_diff=3, timeframe_minutes=5):
+        
         """Find swings that occur within 3 CANDLES of each other"""
+        # 🔥 FIX 1: enforce chronological order
+        asset1_swings = sorted(asset1_swings, key=lambda x: x['time'])
+        asset2_swings = sorted(asset2_swings, key=lambda x: x['time'])
         aligned_pairs = []
         
         # Calculate time tolerance based on timeframe and max_candle_diff
