@@ -23,6 +23,9 @@ from typing import Dict, List, Tuple, Optional, Set
 from oandapyV20 import API
 from oandapyV20.exceptions import V20Error
 from oandapyV20.endpoints import instruments
+from pytz import timezone
+NY_TZ = timezone('America/New_York')  # automatically handles EST/EDT
+
 
 # ================================
 # CONFIGURATION
@@ -1121,21 +1124,29 @@ class UltimateSMTDetector:
             a2_curr_H, a2_curr_L = self.swing_detector.find_swing_highs_lows(asset2_curr)
         
             # --- FIX: ensure all swing times are real pandas Timestamps ---
-            def normalize_time(swings):
+            def normalize_time(swings, tz=NY_TZ):
                 for s in swings:
+                    # ensure timestamp
                     if not isinstance(s['time'], pd.Timestamp):
                         s['time'] = pd.to_datetime(s['time'])
+                    # make timezone aware if naive
+                    if s['time'].tzinfo is None:
+                        s['time'] = s['time'].tz_localize(tz)
+                    else:
+                        s['time'] = s['time'].tz_convert(tz)
                 return swings
+
         
-            a1_prev_H = normalize_time(a1_prev_H)
-            a1_prev_L = normalize_time(a1_prev_L)
-            a1_curr_H = normalize_time(a1_curr_H)
-            a1_curr_L = normalize_time(a1_curr_L)
-        
-            a2_prev_H = normalize_time(a2_prev_H)
-            a2_prev_L = normalize_time(a2_prev_L)
-            a2_curr_H = normalize_time(a2_curr_H)
-            a2_curr_L = normalize_time(a2_curr_L)
+            a1_prev_H = normalize_time(a1_prev_H, NY_TZ)
+            a1_prev_L = normalize_time(a1_prev_L, NY_TZ)
+            a1_curr_H = normalize_time(a1_curr_H, NY_TZ)
+            a1_curr_L = normalize_time(a1_curr_L, NY_TZ)
+            
+            a2_prev_H = normalize_time(a2_prev_H, NY_TZ)
+            a2_prev_L = normalize_time(a2_prev_L, NY_TZ)
+            a2_curr_H = normalize_time(a2_curr_H, NY_TZ)
+            a2_curr_L = normalize_time(a2_curr_L, NY_TZ)
+
             # --------------------------------------------------------------
         
             # helper: sort swings by time
