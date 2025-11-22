@@ -1351,6 +1351,37 @@ class UltimateSMTDetector:
             print(f"\n🔍 ASSET2 QUARTER SEQUENCE:")
             asset2_sequence = self.validate_quarter_sequence(cycle_type, asset2_quarters)
 
+    def validate_quarter_sequence(self, cycle_type, asset_quarters):
+        """Validate that quarters are in proper sequence"""
+        print(f"   VALIDATING {cycle_type} QUARTER SEQUENCE:")
+        
+        # Define expected sequence
+        if cycle_type == 'weekly':
+            expected_sequence = ['q1', 'q2', 'q3', 'q4', 'q_less']
+        else:
+            expected_sequence = ['q1', 'q2', 'q3', 'q4']
+        
+        # Get quarters that actually have data
+        available_quarters = [q for q in expected_sequence if q in asset_quarters and not asset_quarters[q].empty]
+        
+        print(f"      Expected: {expected_sequence}")
+        print(f"      Available: {available_quarters}")
+        
+        # Check if available quarters are in expected order
+        for i in range(len(available_quarters) - 1):
+            current_q = available_quarters[i]
+            next_q = available_quarters[i + 1]
+            
+            current_idx = expected_sequence.index(current_q)
+            next_idx = expected_sequence.index(next_q)
+            
+            if next_idx != current_idx + 1:
+                print(f"      ❌ SEQUENCE BREAK: {current_q}→{next_q} (expected {expected_sequence[current_idx]}→{expected_sequence[current_idx+1]})")
+            else:
+                print(f"      ✅ Sequence OK: {current_q}→{next_q}")
+        
+        return available_quarters
+
     
     def _compare_quarters_with_3_candle_tolerance(self, asset1_prev, asset1_curr, asset2_prev, asset2_curr, cycle_type, prev_q, curr_q):
         """Compare quarters with debug info"""
