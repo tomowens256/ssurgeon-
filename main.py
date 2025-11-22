@@ -2158,6 +2158,7 @@ class UltimateTradingSystem:
             await self._fetch_all_data(api_key)
 
             # === FIXED DEBUG CALL - Pass market data ===
+            # === FIXED DEBUG CALL ===
             for cycle in ['monthly', 'weekly', 'daily', '90min']:
                 self.smt_detector.run_comprehensive_debug(
                     cycle, 
