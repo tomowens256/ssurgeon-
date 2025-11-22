@@ -495,9 +495,12 @@ class RobustQuarterManager:
         else: return 'q_less'
 
     def get_adjacent_quarter_pairs(self, cycle_type):
-        """Get ALL possible consecutive quarter pairs including q_less"""
-        if cycle_type == 'weekly':
-            # For weekly, q_less (Friday) comes after q4 (Thursday)
+        """Get ALL possible consecutive quarter pairs for 18:00-start system"""
+        if cycle_type == 'daily':
+            # For daily: q1→q2→q3→q4→q1 (next day)
+            quarter_sequence = ['q1', 'q2', 'q3', 'q4']
+        elif cycle_type == 'weekly':
+            # For weekly, include q_less
             quarter_sequence = ['q1', 'q2', 'q3', 'q4', 'q_less']
         else:
             quarter_sequence = ['q1', 'q2', 'q3', 'q4']
@@ -509,7 +512,7 @@ class RobustQuarterManager:
             next_q = quarter_sequence[(i + 1) % len(quarter_sequence)]
             all_pairs.append((current, next_q))
         
-        logger.debug(f"🔍 {cycle_type}: All quarter pairs: {all_pairs}")
+        logger.debug(f"🔍 {cycle_type}: Adjacent quarter pairs: {all_pairs}")
         return all_pairs
 
 
@@ -613,50 +616,85 @@ class RobustQuarterManager:
         else: return 'q_less'
     
     def _get_daily_quarter(self, timestamp):
+        """FIXED: Daily quarters starting at 18:00 (6 PM)"""
         hour = timestamp.hour
-        if 0 <= hour < 6: return 'q2'
+        # q1: 18:00-23:59 (starts previous day at 6 PM)
+        # q2: 00:00-05:59
+        # q3: 06:00-11:59  
+        # q4: 12:00-17:59
+        if 18 <= hour <= 23: return 'q1'
+        elif 0 <= hour < 6: return 'q2'
         elif 6 <= hour < 12: return 'q3'
         elif 12 <= hour < 18: return 'q4'
-        else: return 'q1'
+        else: return 'q_less'
     
     def _get_90min_quarter_fixed(self, timestamp):
+        """FIXED: 90min quarters within the 18:00-start day"""
         daily_quarter = self._get_daily_quarter(timestamp)
         hour = timestamp.hour
         minute = timestamp.minute
         total_minutes = hour * 60 + minute
         
+        # Adjust for 18:00 start - map hours to the correct 6-hour block
+        adjusted_hour = (hour + 6) % 24  # Shift so 18:00 becomes 00:00 for calculation
+        adjusted_total_minutes = adjusted_hour * 60 + minute
+        
+        # 90min quarters within each 6-hour daily quarter
         boundaries = {
-            'q1': [
-                (18*60, 19*60+30, 'q1'),
-                (19*60+30, 21*60, 'q2'),  
-                (21*60, 22*60+30, 'q3'),
-                (22*60+30, 24*60, 'q4')
-            ],
-            'q2': [
-                (0, 1*60+30, 'q1'),
+            'q1': [  # 18:00-00:00 (adjusted: 00:00-06:00)
+                (0*60, 1*60+30, 'q1'),
                 (1*60+30, 3*60, 'q2'),
-                (3*60, 4*60+30, 'q3'),
+                (3*60, 4*60+30, 'q3'), 
                 (4*60+30, 6*60, 'q4')
             ],
-            'q3': [
+            'q2': [  # 00:00-06:00 (adjusted: 06:00-12:00)
                 (6*60, 7*60+30, 'q1'),
                 (7*60+30, 9*60, 'q2'),
                 (9*60, 10*60+30, 'q3'),
                 (10*60+30, 12*60, 'q4')
             ],
-            'q4': [
+            'q3': [  # 06:00-12:00 (adjusted: 12:00-18:00)
                 (12*60, 13*60+30, 'q1'),
                 (13*60+30, 15*60, 'q2'),
                 (15*60, 16*60+30, 'q3'),
                 (16*60+30, 18*60, 'q4')
+            ],
+            'q4': [  # 12:00-18:00 (adjusted: 18:00-24:00)
+                (18*60, 19*60+30, 'q1'),
+                (19*60+30, 21*60, 'q2'),
+                (21*60, 22*60+30, 'q3'),
+                (22*60+30, 24*60, 'q4')
             ]
         }
         
         for start_min, end_min, quarter in boundaries[daily_quarter]:
-            if start_min <= total_minutes < end_min:
+            if start_min <= adjusted_total_minutes < end_min:
                 return quarter
         
         return 'q_less'
+
+    def test_18hr_quarter_system(self):
+        """Test that the 18:00-start quarter system works correctly"""
+        print("\n🧪 TESTING 18:00-START QUARTER SYSTEM:")
+        
+        test_times = [
+            # q1: 18:00-23:59
+            datetime(2025, 11, 20, 18, 0),   # Should be q1
+            datetime(2025, 11, 20, 22, 0),   # Should be q1
+            # q2: 00:00-05:59  
+            datetime(2025, 11, 21, 0, 0),    # Should be q2
+            datetime(2025, 11, 21, 4, 0),    # Should be q2
+            # q3: 06:00-11:59
+            datetime(2025, 11, 21, 6, 0),    # Should be q3
+            datetime(2025, 11, 21, 10, 0),   # Should be q3
+            # q4: 12:00-17:59
+            datetime(2025, 11, 21, 12, 0),   # Should be q4
+            datetime(2025, 11, 21, 16, 0),   # Should be q4
+        ]
+        
+        for test_time in test_times:
+            daily_quarter = self._get_daily_quarter(test_time)
+            print(f"   {test_time.strftime('%m-%d %H:%M')} → Daily: {daily_quarter}")
     
     def get_all_possible_quarter_pairs(self, cycle_type):
         """Get ALL possible consecutive quarter pairs regardless of current quarter"""
