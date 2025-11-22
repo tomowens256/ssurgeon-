@@ -2381,7 +2381,26 @@ class UltimateTradingSystem:
                 self.signal_builder.set_psp_for_smt(cycle, psp_signal)
     
     async def _fetch_all_data(self, api_key):
-        """Fetch ALL data needed for complete analysis"""
+        """Fetch data with PROVEN candle counts from working script"""
+        
+        # PROVEN CANDLE COUNTS from the working script
+        proven_counts = {
+            # Monthly: keep existing (H4)
+            'H4': 100,  # Monthly timeframe
+            
+            # Weekly: H1 with 120 candles (5 days * 24 hours)
+            'H1': 120,  # Weekly timeframe  
+            
+            # Daily: M15 with 96 candles (24 hours * 4 candles/hour)
+            'M15': 96,  # Daily timeframe
+            
+            # 90min: M5 with 72 candles (6 hours * 12 candles/hour)  
+            'M5': 72,   # 90min timeframe
+            
+            # CRT timeframes - keep existing
+            'H2': 100, 'H3': 100, 'H6': 100, 'H8': 100, 'H12': 100
+        }
+        
         required_timeframes = list(self.pair_config['timeframe_mapping'].values())
         
         # ALWAYS include CRT timeframes for better detection
@@ -2391,13 +2410,16 @@ class UltimateTradingSystem:
         
         for pair in [self.pair1, self.pair2]:
             for tf in required_timeframes:
+                # Use proven count if available, otherwise default to 100
+                count = proven_counts.get(tf, 100)
+                
                 try:
                     df = await asyncio.get_event_loop().run_in_executor(
-                        None, fetch_candles, pair, tf, 100, api_key
+                        None, fetch_candles, pair, tf, count, api_key
                     )
                     if df is not None and not df.empty:
                         self.market_data[pair][tf] = df
-                        logger.debug(f"📥 Fetched {len(df)} {tf} candles for {pair}")
+                        logger.debug(f"📥 Fetched {len(df)} {tf} candles for {pair} (requested: {count})")
                     else:
                         logger.warning(f"⚠️ No data received for {pair} {tf}")
                 except Exception as e:
