@@ -1953,6 +1953,51 @@ class UltimateSMTDetector:
             for key in keys_to_remove:
                 del self.signal_counts[key]
 
+    def debug_quarter_contents(self, cycle_type, asset_name, quarter_data):
+        """
+        Print detailed debug for a single asset and cycle:
+        - quarter names
+        - time ranges
+        - candle count
+        - swing highs/lows (first few)
+        """
+    
+        logger.info(f"📌 DEBUG — {cycle_type.upper()} / {asset_name}")
+    
+        for qname, qcontent in quarter_data.items():
+    
+            if not qcontent or len(qcontent) == 0:
+                logger.warning(f"   ⚠️ {qname}: EMPTY quarter")
+                continue
+    
+            # Extract timestamps
+            times = [c['time'] for c in qcontent]
+            start_t = times[0]
+            end_t = times[-1]
+    
+            # Extract swings if available
+            highs = [c for c in qcontent if c.get("is_swing_high")]
+            lows  = [c for c in qcontent if c.get("is_swing_low")]
+    
+            logger.info(f"\n   🟦 Quarter: {qname}")
+            logger.info(f"      🕒 Range: {start_t} → {end_t}")
+            logger.info(f"      🔢 Candles: {len(qcontent)}")
+    
+            if highs:
+                logger.info("      🔺 High Swings:")
+                for h in highs[:3]:
+                    logger.info(f"         • {h['time']} → {h['high']}")
+            else:
+                logger.info("      🔺 High Swings: NONE")
+    
+            if lows:
+                logger.info("      🔻 Low Swings:")
+                for l in lows[:3]:
+                    logger.info(f"         • {l['time']} → {l['low']}")
+            else:
+                logger.info("      🔻 Low Swings: NONE")
+
+
 # ================================
 # ULTIMATE SIGNAL BUILDER WITH CRT+PSP+SMT TRIPLE CONFLUENCE
 # ================================
