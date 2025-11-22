@@ -28,17 +28,22 @@ NY_TZ = timezone('America/New_York')  # automatically handles EST/EDT
 
 
 
+# ================================
+# CONFIGURATION - BACKWARD COMPATIBLE
+# ================================
+
 TRADING_PAIRS = {
     'precious_metals': {
-        'instruments': ['XAU_USD', 'XAG_USD'],  # Keep existing pairs
+        'pair1': 'XAU_USD',  # OLD structure (keep for compatibility)
+        'pair2': 'XAG_USD',  # OLD structure (keep for compatibility)
+        'instruments': ['XAU_USD', 'XAG_USD'],  # NEW structure
         'timeframe_mapping': {
             'monthly': 'H4',
-            'weekly': 'H1',
+            'weekly': 'H1', 
             'daily': 'M15',
             '90min': 'M5'
         }
     },
-
     'us_indices_triad': {
         'instruments': ['NAS100_USD', 'SPX500_USD', 'US30_USD'],  # TRIAD: 3 assets
         'timeframe_mapping': {
@@ -48,9 +53,10 @@ TRADING_PAIRS = {
             '90min': 'M5'
         }
     },
-
     'fx_triad': {
-        'instruments': ['GBP_USD', 'EUR_USD'],  # TRIAD: 3 assets
+        'pair1': 'GBP_USD',  # OLD structure
+        'pair2': 'EUR_USD',  # OLD structure  
+        'instruments': ['GBP_USD', 'EUR_USD'],  # NEW structure
         'timeframe_mapping': {
             'monthly': 'H4',
             'weekly': 'H1',
@@ -58,22 +64,10 @@ TRADING_PAIRS = {
             '90min': 'M5'
         }
     },
-
     'jpy_triad': {
-        'instruments': ['EUR_JPY', 'GBP_JPY'],  # TRIAD: 3 assets
-        'timeframe_mapping': {
-            'monthly': 'H4',
-            'weekly': 'H1',
-            'daily': 'M15',
-            '90min': 'M5'
-        }
-    },
-
-    # ... keep other pairs as needed
-
-    'european_indices': {
-        'pair1': 'DE30_EUR',
-        'pair2': 'EU50_EUR',
+        'pair1': 'EUR_JPY',  # OLD structure
+        'pair2': 'GBP_JPY',  # OLD structure
+        'instruments': ['EUR_JPY', 'GBP_JPY'],  # NEW structure
         'timeframe_mapping': {
             'monthly': 'H4',
             'weekly': 'H1',
@@ -82,7 +76,6 @@ TRADING_PAIRS = {
         }
     }
 }
-
 
 CRT_TIMEFRAMES = ['H1', 'H2', 'H3', 'H4', 'H6', 'H8', 'H12']
 
