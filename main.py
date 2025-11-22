@@ -815,6 +815,33 @@ class RobustQuarterManager:
         
         return available_quarters
 
+    def adjust_for_weekend_data(self, cycle_type, asset_quarters):
+        """Adjust quarter logic for weekend data"""
+        print(f"\n🔍 ADJUSTING FOR WEEKEND DATA ({cycle_type}):")
+        
+        # On weekends, the data might span across the week boundary
+        # We need to be more careful about quarter transitions
+        
+        adjusted_quarters = {}
+        
+        for quarter, data in asset_quarters.items():
+            if not data.empty:
+                times = data['time']
+                day_range = f"{times.min().strftime('%a %H:%M')} to {times.max().strftime('%a %H:%M')}"
+                print(f"   {quarter}: {day_range} ({len(data)} candles)")
+                
+                # On weekends, we might want to exclude certain quarter transitions
+                if cycle_type == 'daily':
+                    # For daily cycles on weekend, be more restrictive
+                    min_date = times.min().date()
+                    max_date = times.max().date()
+                    if max_date > min_date:
+                        print(f"   ⚠️ {quarter} spans multiple days: {min_date} to {max_date}")
+                
+                adjusted_quarters[quarter] = data
+        
+        return adjusted_quarters
+
 # ================================
 # ULTIMATE SWING DETECTOR WITH 3-CANDLE TOLERANCE
 # ================================
@@ -1141,11 +1168,10 @@ class UltimateSMTDetector:
         self.smt_psp_tracking = {}
         
     def detect_smt_all_cycles(self, asset1_data, asset2_data, cycle_type):
-        """Detect SMT using ONLY adjacent quarters, scanning last 3 quarters."""
+        """Detect SMT using ONLY valid chronological quarter pairs"""
         try:
             logger.info(f"🔍 Scanning {cycle_type} for SMT signals...")
-
-            # === ADD THIS DATA QUALITY CHECK ===
+    
             if not self.check_data_quality(asset1_data, asset2_data, cycle_type):
                 return None
     
@@ -1154,10 +1180,10 @@ class UltimateSMTDetector:
                 logger.warning(f"⚠️ No data for {cycle_type} SMT detection")
                 return None
     
-            # Get adjacent quarter pairs (now includes q_less for weekly)
+            # Get adjacent quarter pairs
             adjacent_pairs = self.quarter_manager.get_adjacent_quarter_pairs(cycle_type)
     
-            # Get last 3 quarters (now includes q_less if applicable)
+            # Get last 3 quarters 
             last_3_quarters = self.quarter_manager.get_last_three_quarters(cycle_type)
     
             logger.debug(f"🔍 {cycle_type}: Last 3 quarters: {last_3_quarters}")
@@ -1170,21 +1196,17 @@ class UltimateSMTDetector:
                 logger.warning(f"⚠️ No quarter grouped data for {cycle_type}")
                 return None
     
+            # === FILTER OUT INVALID/OVERLAPPING PAIRS ===
+            valid_pairs = self.filter_valid_quarter_pairs(cycle_type, asset1_quarters, asset2_quarters, adjacent_pairs)
+            
+            if not valid_pairs:
+                logger.warning(f"⚠️ No valid quarter pairs for {cycle_type}")
+                return None
+    
             results = []
     
-            # Scan ONLY adjacent pairs *within* the last 3 quarters
-            for prev_q, curr_q in adjacent_pairs:
-                if prev_q not in last_3_quarters or curr_q not in last_3_quarters:
-                    continue
-    
-                # Check if we have data for these quarters
-                if prev_q not in asset1_quarters or curr_q not in asset1_quarters:
-                    logger.debug(f"🔍 {cycle_type}: Missing asset1 data for {prev_q}→{curr_q}")
-                    continue
-                if prev_q not in asset2_quarters or curr_q not in asset2_quarters:
-                    logger.debug(f"🔍 {cycle_type}: Missing asset2 data for {prev_q}→{curr_q}")
-                    continue
-    
+            # Scan ONLY valid chronological pairs
+            for prev_q, curr_q in valid_pairs:
                 smt_result = self._compare_quarters_with_3_candle_tolerance(
                     asset1_quarters[prev_q], asset1_quarters[curr_q],
                     asset2_quarters[prev_q], asset2_quarters[curr_q],
@@ -1193,6 +1215,8 @@ class UltimateSMTDetector:
     
                 if smt_result:
                     results.append(smt_result)
+    
+            # ... rest of your existing method ...
     
             if not results:
                 logger.debug(f"🔍 No SMT found for {cycle_type}")
