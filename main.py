@@ -2692,106 +2692,106 @@ class UltimateTradingSystem:
             return sleep_time
 
     async def _analyze_triad(self, api_key):
-    """Analyze triad of 3 instruments - check all pair combinations"""
-    if len(self.instruments) != 3:
-        logger.error(f"❌ _analyze_triad called but only {len(self.instruments)} instruments")
-        return None
+        """Analyze triad of 3 instruments - check all pair combinations"""
+        if len(self.instruments) != 3:
+            logger.error(f"❌ _analyze_triad called but only {len(self.instruments)} instruments")
+            return None
+            
+        instrument_a, instrument_b, instrument_c = self.instruments
         
-    instrument_a, instrument_b, instrument_c = self.instruments
+        # Analyze all pairs: AB, AC, BC
+        signals = []
+        
+        # Pair AB
+        signal_ab = await self._analyze_pair_combo(instrument_a, instrument_b, "AB")
+        if signal_ab:
+            signals.append(('AB', signal_ab))
+        
+        # Pair AC  
+        signal_ac = await self._analyze_pair_combo(instrument_a, instrument_c, "AC")
+        if signal_ac:
+            signals.append(('AC', signal_ac))
+        
+        # Pair BC
+        signal_bc = await self._analyze_pair_combo(instrument_b, instrument_c, "BC")
+        if signal_bc:
+            signals.append(('BC', signal_bc))
+        
+        # Find confluence - at least 2 pairs agreeing on direction
+        return self._find_triad_confluence(signals)
     
-    # Analyze all pairs: AB, AC, BC
-    signals = []
+    def _find_triad_confluence(self, signals):
+        """Find confluence across triad pairs"""
+        if len(signals) < 2:
+            logger.info(f"🔍 {self.pair_group}: No triad confluence (only {len(signals)} signals)")
+            return None
+        
+        # Count directions
+        bullish_count = 0
+        bearish_count = 0
+        signal_details = []
+        
+        for combo, signal in signals:
+            direction = signal.get('direction')
+            if direction == 'bullish':
+                bullish_count += 1
+            elif direction == 'bearish':
+                bearish_count += 1
+            signal_details.append(f"{combo}: {direction}")
+        
+        # Check for confluence (at least 2 pairs agreeing)
+        if bullish_count >= 2:
+            confluence_direction = 'bullish'
+        elif bearish_count >= 2:
+            confluence_direction = 'bearish'
+        else:
+            logger.info(f"🔍 {self.pair_group}: No clear confluence - Bullish: {bullish_count}, Bearish: {bearish_count}")
+            return None
+        
+        # Create triad signal
+        triad_signal = {
+            'pair_group': self.pair_group,
+            'direction': confluence_direction,
+            'confluence_strength': max(bullish_count, bearish_count),
+            'total_pairs': len(signals),
+            'signal_details': signal_details,
+            'instruments': self.instruments,
+            'timestamp': datetime.now(NY_TZ),
+            'signal_key': f"TRIAD_{self.pair_group}_{confluence_direction}_{datetime.now().strftime('%H%M')}",
+            'description': f"TRIAD CONFLUENCE: {confluence_direction.upper()} ({max(bullish_count, bearish_count)}/3 pairs)"
+        }
+        
+        logger.info(f"🎯 TRIAD CONFLUENCE DETECTED: {self.pair_group} {confluence_direction.upper()} "
+                   f"({max(bullish_count, bearish_count)}/3 pairs agreeing)")
+        
+        return triad_signal
     
-    # Pair AB
-    signal_ab = await self._analyze_pair_combo(instrument_a, instrument_b, "AB")
-    if signal_ab:
-        signals.append(('AB', signal_ab))
-    
-    # Pair AC  
-    signal_ac = await self._analyze_pair_combo(instrument_a, instrument_c, "AC")
-    if signal_ac:
-        signals.append(('AC', signal_ac))
-    
-    # Pair BC
-    signal_bc = await self._analyze_pair_combo(instrument_b, instrument_c, "BC")
-    if signal_bc:
-        signals.append(('BC', signal_bc))
-    
-    # Find confluence - at least 2 pairs agreeing on direction
-    return self._find_triad_confluence(signals)
-
-def _find_triad_confluence(self, signals):
-    """Find confluence across triad pairs"""
-    if len(signals) < 2:
-        logger.info(f"🔍 {self.pair_group}: No triad confluence (only {len(signals)} signals)")
+    async def _analyze_pair(self, api_key):
+        """Analyze 2-instrument pair (original logic)"""
+        # Reset signal builder
+        self.signal_builder.reset()
+        
+        # Get data for this pair
+        asset1_data = self.market_data[self.instruments[0]]
+        asset2_data = self.market_data[self.instruments[1]]
+        
+        if not asset1_data or not asset2_data:
+            return None
+        
+        # Your existing analysis steps...
+        await self._check_smt_tracking()
+        await self._scan_all_smt()
+        await self._check_psp_for_existing_smts()
+        await self._scan_crt_signals()
+        
+        # Check if signal is complete
+        if self.signal_builder.is_signal_ready() and not self.signal_builder.has_serious_conflict():
+            signal = self.signal_builder.get_signal_details()
+            if signal and not self.timing_manager.is_duplicate_signal(signal['signal_key'], self.pair_group):
+                logger.info(f"🎯 {self.pair_group}: SIGNAL COMPLETE via {signal['path']}")
+                return signal
+        
         return None
-    
-    # Count directions
-    bullish_count = 0
-    bearish_count = 0
-    signal_details = []
-    
-    for combo, signal in signals:
-        direction = signal.get('direction')
-        if direction == 'bullish':
-            bullish_count += 1
-        elif direction == 'bearish':
-            bearish_count += 1
-        signal_details.append(f"{combo}: {direction}")
-    
-    # Check for confluence (at least 2 pairs agreeing)
-    if bullish_count >= 2:
-        confluence_direction = 'bullish'
-    elif bearish_count >= 2:
-        confluence_direction = 'bearish'
-    else:
-        logger.info(f"🔍 {self.pair_group}: No clear confluence - Bullish: {bullish_count}, Bearish: {bearish_count}")
-        return None
-    
-    # Create triad signal
-    triad_signal = {
-        'pair_group': self.pair_group,
-        'direction': confluence_direction,
-        'confluence_strength': max(bullish_count, bearish_count),
-        'total_pairs': len(signals),
-        'signal_details': signal_details,
-        'instruments': self.instruments,
-        'timestamp': datetime.now(NY_TZ),
-        'signal_key': f"TRIAD_{self.pair_group}_{confluence_direction}_{datetime.now().strftime('%H%M')}",
-        'description': f"TRIAD CONFLUENCE: {confluence_direction.upper()} ({max(bullish_count, bearish_count)}/3 pairs)"
-    }
-    
-    logger.info(f"🎯 TRIAD CONFLUENCE DETECTED: {self.pair_group} {confluence_direction.upper()} "
-               f"({max(bullish_count, bearish_count)}/3 pairs agreeing)")
-    
-    return triad_signal
-
-async def _analyze_pair(self, api_key):
-    """Analyze 2-instrument pair (original logic)"""
-    # Reset signal builder
-    self.signal_builder.reset()
-    
-    # Get data for this pair
-    asset1_data = self.market_data[self.instruments[0]]
-    asset2_data = self.market_data[self.instruments[1]]
-    
-    if not asset1_data or not asset2_data:
-        return None
-    
-    # Your existing analysis steps...
-    await self._check_smt_tracking()
-    await self._scan_all_smt()
-    await self._check_psp_for_existing_smts()
-    await self._scan_crt_signals()
-    
-    # Check if signal is complete
-    if self.signal_builder.is_signal_ready() and not self.signal_builder.has_serious_conflict():
-        signal = self.signal_builder.get_signal_details()
-        if signal and not self.timing_manager.is_duplicate_signal(signal['signal_key'], self.pair_group):
-            logger.info(f"🎯 {self.pair_group}: SIGNAL COMPLETE via {signal['path']}")
-            return signal
-    
-    return None
 
 # ================================
 # ULTIMATE MAIN MANAGER
