@@ -2308,12 +2308,16 @@ class UltimateTradingSystem:
     async def run_ultimate_analysis(self, api_key):
         """Run ultimate analysis with TRIAD support"""
         try:
-            # Fetch data for ALL instruments
-            await self._fetch_all_data(api_key)
+            current_status = self.signal_builder.get_progress_status()
+            logger.info(f"📊 {self.pair_group}: Current status - {current_status}")
             
-            # Determine if this is a triad (3 instruments) or pair (2 instruments)
+            # Fetch ALL data needed for analysis
+            await self._fetch_all_data(api_key)
+    
+            # For triads (3 instruments), analyze all pairs: AB, AC, BC
             if len(self.instruments) == 3:
                 return await self._analyze_triad(api_key)
+            # For pairs (2 instruments), use existing logic
             elif len(self.instruments) == 2:
                 return await self._analyze_pair(api_key)
             else:
