@@ -1203,13 +1203,15 @@ class UltimateSMTDetector:
             if swing['time'].year < 2020:
                 print(f"   ❌ INVALID TIMESTAMP: {swing['time']}")
 
-    def run_comprehensive_debug(self, cycle_type):
-        """Run complete debug for a cycle"""
+    def run_comprehensive_debug(self, cycle_type, market_data_pair1, market_data_pair2):
+        """Run complete debug for a cycle - FIXED VERSION"""
         print(f"\n🎯 COMPREHENSIVE DEBUG FOR {cycle_type.upper()}")
         
         timeframe = self.pair_config['timeframe_mapping'][cycle_type]
-        pair1_data = self.market_data[self.pair1].get(timeframe)
-        pair2_data = self.market_data[self.pair2].get(timeframe)
+        
+        # Get data from passed market_data dictionaries
+        pair1_data = market_data_pair1.get(timeframe)
+        pair2_data = market_data_pair2.get(timeframe)
         
         if not self.check_data_quality(pair1_data, pair2_data, cycle_type):
             return
