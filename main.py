@@ -2330,6 +2330,10 @@ class UltimateTradingSystem:
     
     async def _analyze_triad(self, api_key):
         """Analyze triad of 3 instruments - check all pair combinations"""
+        if len(self.instruments) != 3:
+            logger.error(f"❌ _analyze_triad called but only {len(self.instruments)} instruments")
+            return None
+            
         instrument_a, instrument_b, instrument_c = self.instruments
         
         # Analyze all pairs: AB, AC, BC
@@ -2371,13 +2375,13 @@ class UltimateTradingSystem:
         await self._check_smt_tracking()
         
         # Step 2: Scan for NEW SMT signals
-        await self._scan_all_smt_for_pair(asset1_data, asset2_data)
+        await self._scan_all_smt()
         
         # Step 3: Check for PSP for existing SMTs
-        await self._check_psp_for_existing_smts_for_pair(asset1_data, asset2_data)
+        await self._check_psp_for_existing_smts()
         
         # Step 4: Scan for CRT signals
-        await self._scan_crt_signals_for_pair(asset1_data, asset2_data)
+        await self._scan_crt_signals()
         
         # Check if signal is complete
         if self.signal_builder.is_signal_ready() and not self.signal_builder.has_serious_conflict():
@@ -2483,8 +2487,8 @@ class UltimateTradingSystem:
         
         for cycle in cycles:
             timeframe = self.pair_config['timeframe_mapping'][cycle]
-            asset1_data = self.market_data[self.instruments[0]].get(timeframe)  # ← Use instruments[0]
-            asset2_data = self.market_data[self.instruments[1]].get(timeframe)  # ← Use instruments[1]
+            asset1_data = self.market_data[self.instruments[0]].get(timeframe)  # ← FIXED: Use instruments[0]
+            asset2_data = self.market_data[self.instruments[1]].get(timeframe)  # ← FIXED: Use instruments[1]
             
             if (asset1_data is None or not isinstance(asset1_data, pd.DataFrame) or asset1_data.empty or
                 asset2_data is None or not isinstance(asset2_data, pd.DataFrame) or asset2_data.empty):
@@ -2506,8 +2510,8 @@ class UltimateTradingSystem:
         crt_detected = False
         
         for timeframe in CRT_TIMEFRAMES:
-            asset1_data = self.market_data[self.instruments[0]].get(timeframe)  # ← Use instruments[0]
-            asset2_data = self.market_data[self.instruments[1]].get(timeframe)  # ← Use instruments[1]
+            asset1_data = self.market_data[self.instruments[0]].get(timeframe)  # ← FIXED: Use instruments[0]
+            asset2_data = self.market_data[self.instruments[1]].get(timeframe)  # ← FIXED: Use instruments[1]
             
             if (asset1_data is None or not isinstance(asset1_data, pd.DataFrame) or asset1_data.empty or
                 asset2_data is None or not isinstance(asset2_data, pd.DataFrame) or asset2_data.empty):
@@ -2535,8 +2539,8 @@ class UltimateTradingSystem:
             
         for cycle, smt in list(self.signal_builder.active_smts.items()):
             timeframe = smt['timeframe']
-            asset1_data = self.market_data[self.instruments[0]].get(timeframe)  # ← Use instruments[0]
-            asset2_data = self.market_data[self.instruments[1]].get(timeframe)  # ← Use instruments[1]
+            asset1_data = self.market_data[self.instruments[0]].get(timeframe)  # ← FIXED: Use instruments[0]
+            asset2_data = self.market_data[self.instruments[1]].get(timeframe)  # ← FIXED: Use instruments[1]
             
             # Check invalidation
             if self.smt_detector.check_smt_invalidation(smt, asset1_data, asset2_data):
@@ -2562,8 +2566,8 @@ class UltimateTradingSystem:
                 continue
                 
             timeframe = smt['timeframe']
-            asset1_data = self.market_data[self.instruments[0]].get(timeframe)  # ← Use instruments[0]
-            asset2_data = self.market_data[self.instruments[1]].get(timeframe)  # ← Use instruments[1]
+            asset1_data = self.market_data[self.instruments[0]].get(timeframe)  # ← FIXED: Use instruments[0]
+            asset2_data = self.market_data[self.instruments[1]].get(timeframe)  # ← FIXED: Use instruments[1]
             
             if (asset1_data is None or not isinstance(asset1_data, pd.DataFrame) or asset1_data.empty or
                 asset2_data is None or not isinstance(asset2_data, pd.DataFrame) or asset2_data.empty):
@@ -2603,22 +2607,23 @@ class UltimateTradingSystem:
             if tf not in required_timeframes:
                 required_timeframes.append(tf)
         
-        for pair in [self.pair1, self.pair2]:
+        # FIXED: Use self.instruments instead of [self.pair1, self.pair2]
+        for instrument in self.instruments:
             for tf in required_timeframes:
                 # Use proven count if available, otherwise default to 100
                 count = proven_counts.get(tf, 100)
                 
                 try:
                     df = await asyncio.get_event_loop().run_in_executor(
-                        None, fetch_candles, pair, tf, count, api_key
+                        None, fetch_candles, instrument, tf, count, api_key
                     )
                     if df is not None and not df.empty:
-                        self.market_data[pair][tf] = df
-                        logger.debug(f"📥 Fetched {len(df)} {tf} candles for {pair} (requested: {count})")
+                        self.market_data[instrument][tf] = df
+                        logger.debug(f"📥 Fetched {len(df)} {tf} candles for {instrument} (requested: {count})")
                     else:
-                        logger.warning(f"⚠️ No data received for {pair} {tf}")
+                        logger.warning(f"⚠️ No data received for {instrument} {tf}")
                 except Exception as e:
-                    logger.error(f"❌ Error fetching {pair} {tf}: {str(e)}")
+                    logger.error(f"❌ Error fetching {instrument} {tf}: {str(e)}")
     
     async def _scan_all_smt(self):
         """Scan for SMT on ALL cycles"""
@@ -2626,20 +2631,21 @@ class UltimateTradingSystem:
         
         for cycle in cycles:
             timeframe = self.pair_config['timeframe_mapping'][cycle]
-            pair1_data = self.market_data[self.pair1].get(timeframe)
-            pair2_data = self.market_data[self.pair2].get(timeframe)
+            # FIXED: Use instruments[0] and instruments[1] instead of pair1 and pair2
+            asset1_data = self.market_data[self.instruments[0]].get(timeframe)
+            asset2_data = self.market_data[self.instruments[1]].get(timeframe)
             
-            if (pair1_data is None or not isinstance(pair1_data, pd.DataFrame) or pair1_data.empty or
-                pair2_data is None or not isinstance(pair2_data, pd.DataFrame) or pair2_data.empty):
+            if (asset1_data is None or not isinstance(asset1_data, pd.DataFrame) or asset1_data.empty or
+                asset2_data is None or not isinstance(asset2_data, pd.DataFrame) or asset2_data.empty):
                 logger.warning(f"⚠️ No data for {cycle} ({timeframe})")
                 continue
             
             logger.info(f"🔍 Scanning {cycle} cycle ({timeframe}) for SMT...")
-            smt_signal = self.smt_detector.detect_smt_all_cycles(pair1_data, pair2_data, cycle)
+            smt_signal = self.smt_detector.detect_smt_all_cycles(asset1_data, asset2_data, cycle)
             
             if smt_signal:
                 # Check for PSP immediately for this new SMT
-                psp_signal = self.smt_detector.check_psp_for_smt(smt_signal, pair1_data, pair2_data)
+                psp_signal = self.smt_detector.check_psp_for_smt(smt_signal, asset1_data, asset2_data)
                 
                 # Add SMT with PSP if found
                 self.signal_builder.add_smt_signal(smt_signal, psp_signal)
@@ -2649,16 +2655,17 @@ class UltimateTradingSystem:
         crt_detected = False
         
         for timeframe in CRT_TIMEFRAMES:
-            pair1_data = self.market_data[self.pair1].get(timeframe)
-            pair2_data = self.market_data[self.pair2].get(timeframe)
+            # FIXED: Use instruments[0] and instruments[1] instead of pair1 and pair2
+            asset1_data = self.market_data[self.instruments[0]].get(timeframe)
+            asset2_data = self.market_data[self.instruments[1]].get(timeframe)
             
-            if (pair1_data is None or not isinstance(pair1_data, pd.DataFrame) or pair1_data.empty or
-                pair2_data is None or not isinstance(pair2_data, pd.DataFrame) or pair2_data.empty):
+            if (asset1_data is None or not isinstance(asset1_data, pd.DataFrame) or asset1_data.empty or
+                asset2_data is None or not isinstance(asset2_data, pd.DataFrame) or asset2_data.empty):
                 continue
             
             # UPDATED: CRT detection now includes PSP checking
             crt_signal = self.crt_detector.calculate_crt_current_candle(
-                pair1_data, pair1_data, pair2_data, timeframe
+                asset1_data, asset1_data, asset2_data, timeframe
             )
             
             if crt_signal and self.signal_builder.set_crt_signal(crt_signal, timeframe, crt_signal.get('psp_signal')):
