@@ -2478,102 +2478,102 @@ class UltimateTradingSystem:
         return triad_signal
     
     async def _scan_all_smt(self):
-    """Scan for SMT on ALL cycles - UPDATED for new structure"""
-    cycles = self.signal_builder.get_required_cycles()
-    
-    for cycle in cycles:
-        timeframe = self.pair_config['timeframe_mapping'][cycle]
-        asset1_data = self.market_data[self.instruments[0]].get(timeframe)  # ← Use instruments[0]
-        asset2_data = self.market_data[self.instruments[1]].get(timeframe)  # ← Use instruments[1]
+        """Scan for SMT on ALL cycles - UPDATED for new structure"""
+        cycles = self.signal_builder.get_required_cycles()
         
-        if (asset1_data is None or not isinstance(asset1_data, pd.DataFrame) or asset1_data.empty or
-            asset2_data is None or not isinstance(asset2_data, pd.DataFrame) or asset2_data.empty):
-            logger.warning(f"⚠️ No data for {cycle} ({timeframe})")
-            continue
-        
-        logger.info(f"🔍 Scanning {cycle} cycle ({timeframe}) for SMT...")
-        smt_signal = self.smt_detector.detect_smt_all_cycles(asset1_data, asset2_data, cycle)
-        
-        if smt_signal:
-            # Check for PSP immediately for this new SMT
-            psp_signal = self.smt_detector.check_psp_for_smt(smt_signal, asset1_data, asset2_data)
+        for cycle in cycles:
+            timeframe = self.pair_config['timeframe_mapping'][cycle]
+            asset1_data = self.market_data[self.instruments[0]].get(timeframe)  # ← Use instruments[0]
+            asset2_data = self.market_data[self.instruments[1]].get(timeframe)  # ← Use instruments[1]
             
-            # Add SMT with PSP if found
-            self.signal_builder.add_smt_signal(smt_signal, psp_signal)
-
-async def _scan_crt_signals(self):
-    """Scan for CRT signals on all timeframes - UPDATED for new structure"""
-    crt_detected = False
-    
-    for timeframe in CRT_TIMEFRAMES:
-        asset1_data = self.market_data[self.instruments[0]].get(timeframe)  # ← Use instruments[0]
-        asset2_data = self.market_data[self.instruments[1]].get(timeframe)  # ← Use instruments[1]
-        
-        if (asset1_data is None or not isinstance(asset1_data, pd.DataFrame) or asset1_data.empty or
-            asset2_data is None or not isinstance(asset2_data, pd.DataFrame) or asset2_data.empty):
-            continue
-        
-        # UPDATED: CRT detection now includes PSP checking
-        crt_signal = self.crt_detector.calculate_crt_current_candle(
-            asset1_data, asset1_data, asset2_data, timeframe
-        )
-        
-        if crt_signal and self.signal_builder.set_crt_signal(crt_signal, timeframe, crt_signal.get('psp_signal')):
-            logger.info(f"🔷 {self.pair_group}: Fresh CRT detected on {timeframe}")
-            if crt_signal.get('psp_signal'):
-                logger.info(f"🎯 {self.pair_group}: CRT with PSP confluence detected!")
-            crt_detected = True
-            break
-    
-    if not crt_detected:
-        logger.debug(f"🔍 {self.pair_group}: No CRT signals detected this cycle")
-
-async def _check_smt_tracking(self):
-    """Check SMT invalidations and update PSP tracking - UPDATED for new structure"""
-    if not self.signal_builder.active_smts:
-        return
-        
-    for cycle, smt in list(self.signal_builder.active_smts.items()):
-        timeframe = smt['timeframe']
-        asset1_data = self.market_data[self.instruments[0]].get(timeframe)  # ← Use instruments[0]
-        asset2_data = self.market_data[self.instruments[1]].get(timeframe)  # ← Use instruments[1]
-        
-        # Check invalidation
-        if self.smt_detector.check_smt_invalidation(smt, asset1_data, asset2_data):
-            # Remove from signal builder
-            if cycle in self.signal_builder.active_smts:
-                del self.signal_builder.active_smts[cycle]
-            logger.info(f"🔄 Removed invalidated SMT: {cycle}")
-            continue
-        
-        # Check if we should keep tracking this SMT for PSP
-        if not self.smt_detector.should_keep_checking_smt(smt):
-            logger.info(f"⏹️ Stopping PSP tracking for SMT: {cycle}")
-            continue
-
-async def _check_psp_for_existing_smts(self):
-    """Check for PSP confirmation for existing SMTs - UPDATED for new structure"""
-    if not self.signal_builder.active_smts:
-        return
-        
-    for cycle, smt in self.signal_builder.active_smts.items():
-        # Skip if already has PSP
-        if cycle in self.signal_builder.psp_for_smts:
-            continue
+            if (asset1_data is None or not isinstance(asset1_data, pd.DataFrame) or asset1_data.empty or
+                asset2_data is None or not isinstance(asset2_data, pd.DataFrame) or asset2_data.empty):
+                logger.warning(f"⚠️ No data for {cycle} ({timeframe})")
+                continue
             
-        timeframe = smt['timeframe']
-        asset1_data = self.market_data[self.instruments[0]].get(timeframe)  # ← Use instruments[0]
-        asset2_data = self.market_data[self.instruments[1]].get(timeframe)  # ← Use instruments[1]
+            logger.info(f"🔍 Scanning {cycle} cycle ({timeframe}) for SMT...")
+            smt_signal = self.smt_detector.detect_smt_all_cycles(asset1_data, asset2_data, cycle)
+            
+            if smt_signal:
+                # Check for PSP immediately for this new SMT
+                psp_signal = self.smt_detector.check_psp_for_smt(smt_signal, asset1_data, asset2_data)
+                
+                # Add SMT with PSP if found
+                self.signal_builder.add_smt_signal(smt_signal, psp_signal)
+
+    async def _scan_crt_signals(self):
+        """Scan for CRT signals on all timeframes - UPDATED for new structure"""
+        crt_detected = False
         
-        if (asset1_data is None or not isinstance(asset1_data, pd.DataFrame) or asset1_data.empty or
-            asset2_data is None or not isinstance(asset2_data, pd.DataFrame) or asset2_data.empty):
-            continue
+        for timeframe in CRT_TIMEFRAMES:
+            asset1_data = self.market_data[self.instruments[0]].get(timeframe)  # ← Use instruments[0]
+            asset2_data = self.market_data[self.instruments[1]].get(timeframe)  # ← Use instruments[1]
+            
+            if (asset1_data is None or not isinstance(asset1_data, pd.DataFrame) or asset1_data.empty or
+                asset2_data is None or not isinstance(asset2_data, pd.DataFrame) or asset2_data.empty):
+                continue
+            
+            # UPDATED: CRT detection now includes PSP checking
+            crt_signal = self.crt_detector.calculate_crt_current_candle(
+                asset1_data, asset1_data, asset2_data, timeframe
+            )
+            
+            if crt_signal and self.signal_builder.set_crt_signal(crt_signal, timeframe, crt_signal.get('psp_signal')):
+                logger.info(f"🔷 {self.pair_group}: Fresh CRT detected on {timeframe}")
+                if crt_signal.get('psp_signal'):
+                    logger.info(f"🎯 {self.pair_group}: CRT with PSP confluence detected!")
+                crt_detected = True
+                break
         
-        # Check for PSP in last 5 candles
-        psp_signal = self.smt_detector.check_psp_for_smt(smt, asset1_data, asset2_data)
-        
-        if psp_signal:
-            self.signal_builder.set_psp_for_smt(cycle, psp_signal)
+        if not crt_detected:
+            logger.debug(f"🔍 {self.pair_group}: No CRT signals detected this cycle")
+    
+    async def _check_smt_tracking(self):
+        """Check SMT invalidations and update PSP tracking - UPDATED for new structure"""
+        if not self.signal_builder.active_smts:
+            return
+            
+        for cycle, smt in list(self.signal_builder.active_smts.items()):
+            timeframe = smt['timeframe']
+            asset1_data = self.market_data[self.instruments[0]].get(timeframe)  # ← Use instruments[0]
+            asset2_data = self.market_data[self.instruments[1]].get(timeframe)  # ← Use instruments[1]
+            
+            # Check invalidation
+            if self.smt_detector.check_smt_invalidation(smt, asset1_data, asset2_data):
+                # Remove from signal builder
+                if cycle in self.signal_builder.active_smts:
+                    del self.signal_builder.active_smts[cycle]
+                logger.info(f"🔄 Removed invalidated SMT: {cycle}")
+                continue
+            
+            # Check if we should keep tracking this SMT for PSP
+            if not self.smt_detector.should_keep_checking_smt(smt):
+                logger.info(f"⏹️ Stopping PSP tracking for SMT: {cycle}")
+                continue
+    
+    async def _check_psp_for_existing_smts(self):
+        """Check for PSP confirmation for existing SMTs - UPDATED for new structure"""
+        if not self.signal_builder.active_smts:
+            return
+            
+        for cycle, smt in self.signal_builder.active_smts.items():
+            # Skip if already has PSP
+            if cycle in self.signal_builder.psp_for_smts:
+                continue
+                
+            timeframe = smt['timeframe']
+            asset1_data = self.market_data[self.instruments[0]].get(timeframe)  # ← Use instruments[0]
+            asset2_data = self.market_data[self.instruments[1]].get(timeframe)  # ← Use instruments[1]
+            
+            if (asset1_data is None or not isinstance(asset1_data, pd.DataFrame) or asset1_data.empty or
+                asset2_data is None or not isinstance(asset2_data, pd.DataFrame) or asset2_data.empty):
+                continue
+            
+            # Check for PSP in last 5 candles
+            psp_signal = self.smt_detector.check_psp_for_smt(smt, asset1_data, asset2_data)
+            
+            if psp_signal:
+                self.signal_builder.set_psp_for_smt(cycle, psp_signal)
     
     async def _fetch_all_data(self, api_key):
         """Fetch data with PROVEN candle counts from working script"""
