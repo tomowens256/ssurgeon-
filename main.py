@@ -31,10 +31,13 @@ NY_TZ = timezone('America/New_York')  # automatically handles EST/EDT
 # CONFIGURATION
 # ================================
 
+# ================================
+# CONFIGURATION - WITH TRIAD SUPPORT
+# ================================
+
 TRADING_PAIRS = {
     'precious_metals': {
-        'pair1': 'XAU_USD',
-        'pair2': 'XAG_USD',
+        'instruments': ['XAU_USD', 'XAG_USD'],  # Keep existing pairs
         'timeframe_mapping': {
             'monthly': 'H4',
             'weekly': 'H1', 
@@ -42,15 +45,34 @@ TRADING_PAIRS = {
             '90min': 'M5'
         }
     },
-    'us_indices': {
-        'pair1': 'NAS100_USD',
-        'pair2': 'SPX500_USD',
+    'us_indices_triad': {
+        'instruments': ['NAS100_USD', 'SPX500_USD', 'US30_USD'],  # TRIAD: 3 assets
         'timeframe_mapping': {
             'monthly': 'H4',
             'weekly': 'H1',
-            'daily': 'M15', 
+            'daily': 'M15',
             '90min': 'M5'
         }
+    },
+    'fx_triad': {
+        'instruments': ['GBP_USD', 'EUR_USD'],  # TRIAD: 3 assets
+        'timeframe_mapping': {
+            'monthly': 'H4',
+            'weekly': 'H1',
+            'daily': 'M15',
+            '90min': 'M5'
+        }
+    },
+    'jpy_triad': {
+        'instruments': ['EUR_JPY', 'GBP_JPY'],  # TRIAD: 3 assets
+        'timeframe_mapping': {
+            'monthly': 'H4',
+            'weekly': 'H1',
+            'daily': 'M15',
+            '90min': 'M5'
+        }
+    }
+    # ... keep other pairs as needed
     },
     'european_indices': {
         'pair1': 'DE30_EUR',
@@ -62,26 +84,7 @@ TRADING_PAIRS = {
             '90min': 'M5'
         }
     },
-    'fx_triad': {
-        'pair1': 'GBP_USD',
-        'pair2': 'EUR_USD',
-        'timeframe_mapping': {
-            'monthly': 'H4',
-            'weekly': 'H1',
-            'daily': 'M15',
-            '90min': 'M5'
-        }
-    },
-    'jpy_pairs': {
-        'pair1': 'EUR_JPY',
-        'pair2': 'GBP_JPY',
-        'timeframe_mapping': {
-            'monthly': 'H4',
-            'weekly': 'H1',
-            'daily': 'M15',
-            '90min': 'M5'
-        }
-    }
+
 }
 
 CRT_TIMEFRAMES = ['H1', 'H2', 'H3', 'H4', 'H6', 'H8', 'H12']
@@ -654,6 +657,25 @@ class RobustQuarterManager:
             daily_quarter = self._get_daily_quarter_fixed(test_time)
             weekly_quarter = self._get_weekly_quarter_fixed(test_time)
             print(f"   {test_time.strftime('%m-%d %H:%M')} → Daily: {daily_quarter}, Weekly: {weekly_quarter}")
+
+
+def test_proven_quarter_patch():
+    """Test that the proven quarter system works"""
+    quarter_manager = RobustQuarterManager()
+    
+    print("\n🎯 TESTING PROVEN QUARTER PATCH:")
+    
+    # Test current quarters
+    current = quarter_manager.get_current_quarters()
+    print(f"   Current quarters: {current}")
+    
+    # Test quarter pairs
+    for cycle in ['monthly', 'weekly', 'daily', '90min']:
+        pairs = quarter_manager.get_adjacent_quarter_pairs(cycle)
+        print(f"   {cycle} pairs: {pairs}")
+    
+    # Test the proven daily quarter system
+    quarter_manager.test_quarter_system()
 
 # ================================
 # ULTIMATE SWING DETECTOR WITH 3-CANDLE TOLERANCE
