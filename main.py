@@ -1342,14 +1342,16 @@ class UltimateSMTDetector:
             if quarter in asset2_quarters and not asset2_quarters[quarter].empty:
                 a2_times = asset2_quarters[quarter]['time']
                 print(f"   {quarter}: Asset2 → {a2_times.min().strftime('%m-%d %H:%M')} to {a2_times.max().strftime('%m-%d %H:%M')} ({len(a2_times)} candles)")
+        
+        # Validate sequence - THIS MUST BE INSIDE THE METHOD
+        print(f"\n🔍 ASSET1 QUARTER SEQUENCE:")
+        asset1_sequence = self.validate_quarter_sequence(cycle_type, asset1_quarters)
+        
+        if asset2_quarters:
+            print(f"\n🔍 ASSET2 QUARTER SEQUENCE:")
+            asset2_sequence = self.validate_quarter_sequence(cycle_type, asset2_quarters)
+
     
-    # Validate sequence
-    print(f"\n🔍 ASSET1 QUARTER SEQUENCE:")
-    asset1_sequence = self.validate_quarter_sequence(cycle_type, asset1_quarters)
-    
-    if asset2_quarters:
-        print(f"\n🔍 ASSET2 QUARTER SEQUENCE:")
-        asset2_sequence = self.validate_quarter_sequence(cycle_type, asset2_quarters)
     def _compare_quarters_with_3_candle_tolerance(self, asset1_prev, asset1_curr, asset2_prev, asset2_curr, cycle_type, prev_q, curr_q):
         """Compare quarters with debug info"""
         try:
