@@ -1045,6 +1045,10 @@ class UltimateSMTDetector:
         """Detect SMT using ONLY adjacent quarters, scanning last 3 quarters."""
         try:
             logger.info(f"🔍 Scanning {cycle_type} for SMT signals...")
+
+            # === ADD THIS DATA QUALITY CHECK ===
+            if not self.check_data_quality(asset1_data, asset2_data, cycle_type):
+                return None
     
             if (asset1_data is None or not isinstance(asset1_data, pd.DataFrame) or asset1_data.empty or
                 asset2_data is None or not isinstance(asset2_data, pd.DataFrame) or asset2_data.empty):
@@ -1245,6 +1249,9 @@ class UltimateSMTDetector:
             # Debug the input data
             print(f"   Asset1 prev: {len(asset1_prev)} candles, time range: {asset1_prev['time'].min() if not asset1_prev.empty else 'empty'} to {asset1_prev['time'].max() if not asset1_prev.empty else 'empty'}")
             print(f"   Asset1 curr: {len(asset1_curr)} candles, time range: {asset1_curr['time'].min() if not asset1_curr.empty else 'empty'} to {asset1_curr['time'].max() if not asset1_curr.empty else 'empty'}")
+
+            # === ADD THIS VALIDATION CALL ===
+            self.debug_quarter_validation(prev_q, curr_q, asset1_prev, asset1_curr, asset2_prev, asset2_curr)
             
             if (asset1_prev.empty or asset1_curr.empty or 
                 asset2_prev.empty or asset2_curr.empty):
