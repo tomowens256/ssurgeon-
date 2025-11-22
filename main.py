@@ -496,30 +496,26 @@ class RobustQuarterManager:
 
     def get_adjacent_quarter_pairs(self, cycle_type):
         """Get ONLY chronologically valid quarter pairs"""
+    
         if cycle_type == 'weekly':
-            # For weekly: q1→q2→q3→q4→q_less (NO circular q_less→q1)
             quarter_sequence = ['q1', 'q2', 'q3', 'q4', 'q_less']
         else:
-            # For other cycles: q1→q2→q3→q4 (NO circular q4→q1)
             quarter_sequence = ['q1', 'q2', 'q3', 'q4']
-        
-        # ONLY consecutive pairs, NO circular transitions
+    
         all_pairs = []
         for i in range(len(quarter_sequence) - 1):
-            current = quarter_sequence[i]
-            next_q = quarter_sequence[i + 1]
-            all_pairs.append((current, next_q))
-        
+            all_pairs.append((quarter_sequence[i], quarter_sequence[i+1]))
+    
         logger.debug(f"🔍 {cycle_type}: Valid quarter pairs: {all_pairs}")
         return all_pairs
+
 
 
     def get_current_quarter(self, cycle_type):
         """
         Determine the current quarter based on cycle type and current time.
         ICT Daily quarters start at 18:00 New York.
-        Weekly uses Monday→Thursday as Q1–Q4 and Friday as Q_less.
-        90min stays rotating quarterly every 90 minutes.
+        Weekly uses Monday→Thursday as q1–q4 and Friday as q_less.
         """
     
         now = datetime.now(self.timezone)
@@ -534,100 +530,91 @@ class RobustQuarterManager:
     
             # q1 → 18:00 – 00:00
             if total_min >= 18*60:
-                return "Q1"
+                return "q1"
     
             # q2 → 00:00 – 06:00
             if 0 <= total_min < 6*60:
-                return "Q2"
+                return "q2"
     
             # q3 → 06:00 – 12:00
             if 6*60 <= total_min < 12*60:
-                return "Q3"
+                return "q3"
     
             # q4 → 12:00 – 18:00
-            return "Q4"
+            return "q4"
     
         # --------------------------
-        # 90 MIN CYCLE (your original logic)
+        # 90 MIN CYCLE
         # --------------------------
         if cycle_type == "90min":
             minute_block = total_min // 90
             quarter_index = minute_block % 4
-            return ["Q1", "Q2", "Q3", "Q4"][quarter_index]
+            return ["q1", "q2", "q3", "q4"][quarter_index]
     
         # --------------------------
-        # WEEKLY CYCLE (ICT style)
-        # Monday→Q1, Tue→Q2, Wed→Q3, Thu→Q4, Fri→Q_less
+        # WEEKLY CYCLE
         # --------------------------
         if cycle_type == "weekly":
-            weekday = now.weekday()  # Monday=0, Friday=4
+            weekday = now.weekday()
     
             if weekday == 0:
-                return "Q1"
+                return "q1"
             elif weekday == 1:
-                return "Q2"
+                return "q2"
             elif weekday == 2:
-                return "Q3"
+                return "q3"
             elif weekday == 3:
-                return "Q4"
+                return "q4"
             elif weekday == 4:
-                return "Q_less"
+                return "q_less"
             else:
-                # Weekends → no quarter (no SMT)
                 return None
-
     
-        # Monthly cycle → divide month into 4 parts
+        # --------------------------
+        # MONTHLY (simple 4-part split)
+        # --------------------------
         if cycle_type == "monthly":
             day = now.day
             days_in_month = monthrange(now.year, now.month)[1]
             quarter_size = days_in_month // 4
     
             if day <= quarter_size:
-                return "Q1"
+                return "q1"
             elif day <= quarter_size * 2:
-                return "Q2"
+                return "q2"
             elif day <= quarter_size * 3:
-                return "Q3"
+                return "q3"
             else:
-                return "Q4"
+                return "q4"
     
-        # fallback
-        return "Q1"
+        return "q1"  # fallback
 
 
     def get_last_three_quarters(self, cycle_type):
-        """Get last three quarters - PROPERLY HANDLES q_less"""
-        # Use the appropriate quarter sequence based on cycle type
+
         if cycle_type == 'weekly':
-            # For weekly, include q_less in the sequence
             order = ['q1', 'q2', 'q3', 'q4', 'q_less']
         else:
             order = ['q1', 'q2', 'q3', 'q4']
-        
+    
         current_q = self.get_current_quarter(cycle_type)
-        
+    
         logger.debug(f"🔍 {cycle_type}: Current quarter = '{current_q}'")
-        
-        # Ensure current_q is in order list
+    
+        # If invalid or weekend
         if current_q not in order:
             logger.error(f"❌ {cycle_type}: Invalid quarter '{current_q}'")
-            # Fallback to a safe default
             return ['q2', 'q3', 'q4']
-        
-        try:
-            idx = order.index(current_q)
-            last_three = [
-                order[idx],
-                order[(idx - 1) % len(order)],
-                order[(idx - 2) % len(order)]
-            ]
-            logger.debug(f"🔍 {cycle_type}: Last three quarters = {last_three}")
-            return last_three
-            
-        except ValueError as e:
-            logger.error(f"❌ {cycle_type}: Error in get_last_three_quarters: {e}")
-            return ['q2', 'q3', 'q4']  # Emergency fallback
+    
+        idx = order.index(current_q)
+        last_three = [
+            order[idx],
+            order[(idx - 1) % len(order)],
+            order[(idx - 2) % len(order)]
+        ]
+    
+        logger.debug(f"🔍 {cycle_type}: Last three quarters = {last_three}")
+        return last_three
 
 
     
