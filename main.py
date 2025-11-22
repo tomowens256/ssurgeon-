@@ -2311,10 +2311,9 @@ class UltimateTradingSystem:
             # Fetch data for ALL instruments
             await self._fetch_all_data(api_key)
             
-            # For triads (3 instruments), analyze all pairs: AB, AC, BC
+            # Determine if this is a triad (3 instruments) or pair (2 instruments)
             if len(self.instruments) == 3:
                 return await self._analyze_triad(api_key)
-            # For pairs (2 instruments), use existing logic
             elif len(self.instruments) == 2:
                 return await self._analyze_pair(api_key)
             else:
