@@ -2644,6 +2644,105 @@ class UltimateTradingManager:
             self.trading_systems[pair_group] = UltimateTradingSystem(pair_group, pair_config)
         
         logger.info(f"🎯 Initialized ULTIMATE trading manager with {len(self.trading_systems)} pair groups")
+
+    def _format_ultimate_signal_message(self, signal):
+        """Format ultimate signal for Telegram - NOW WITH TRIAD SUPPORT"""
+        
+        # Check if this is a TRIAD signal (has confluence_strength)
+        if 'confluence_strength' in signal:
+            return self._format_triad_signal_message(signal)
+        else:
+            # This is a regular pair signal - use your existing formatting
+            pair_group = signal.get('pair_group', 'Unknown')
+            direction = signal.get('direction', 'UNKNOWN').upper()
+            strength = signal.get('strength', 0)
+            path = signal.get('path', 'UNKNOWN')
+            description = signal.get('description', '')
+            bull_strength = signal.get('bullish_strength', 0)
+            bear_strength = signal.get('bearish_strength', 0)
+            has_conflict = signal.get('has_conflict', False)
+            
+            message = f"🛡️ *ULTIMATE TRADING SIGNAL* 🛡️\n\n"
+            message += f"*Pair Group:* {pair_group.replace('_', ' ').title()}\n"
+            message += f"*Direction:* {direction}\n"
+            message += f"*Strength:* {strength}/9\n"
+            message += f"*Path:* {path}\n"
+            message += f"*Bullish SMTs:* {bull_strength}\n"
+            message += f"*Bearish SMTs:* {bear_strength}\n"
+            message += f"*Conflict Detected:* {'YES ⚠️' if has_conflict else 'NO ✅'}\n"
+            message += f"*Description:* {description}\n\n"
+            
+            if 'criteria' in signal:
+                message += "*Signal Criteria:*\n"
+                # Remove duplicate criteria before displaying
+                unique_criteria = []
+                for criterion in signal['criteria']:
+                    if criterion not in unique_criteria:
+                        unique_criteria.append(criterion)
+                        message += f"• {criterion}\n"
+            
+            # Show CRT+PSP confluence if present
+            if signal.get('psp_for_crt'):
+                psp = signal['psp_for_crt']
+                psp_time = psp['formation_time'].strftime('%H:%M')
+                message += f"• CRT with PSP on {psp['timeframe']} at {psp_time}\n"
+            
+            if 'all_smts' in signal and signal['all_smts']:
+                message += f"\n*SMT Swing Details:*\n"
+                for cycle, smt in signal['all_smts'].items():
+                    psp_status = "✅ WITH PSP" if cycle in signal.get('psp_smts', {}) else "⏳ Waiting PSP"
+                    message += f"• {cycle}: {smt['direction']} {smt['quarters']} {psp_status}\n"
+                    message += f"  📍 {smt['asset1_action']}\n"
+                    message += f"  📍 {smt['asset2_action']}\n"
+                    
+                    # Add PSP timeframe and time if available
+                    if cycle in signal.get('psp_smts', {}):
+                        psp = signal['psp_smts'][cycle]
+                        psp_time = psp['formation_time'].strftime('%H:%M')
+                        message += f"  🕒 PSP on {psp['timeframe']} at {psp_time}\n"
+            
+            message += f"\n*Detection Time:* {signal['timestamp'].strftime('%Y-%m-%d %H:%M:%S %Z')}\n"
+            
+            if 'TRIPLE' in path:
+                message += f"\n*🎯 ULTIMATE TRIPLE CONFLUENCE: CRT + PSP + SMT - HIGHEST PROBABILITY*\n"
+            elif 'OVERRIDE' in path:
+                message += f"\n*🎯 CYCLE OVERRIDE: Multiple smaller cycles overriding higher timeframes*\n"
+            elif has_conflict:
+                message += f"\n*⚠️ NOTE: Trading with caution due to conflicting signals*\n"
+            
+            message += f"\n#UltimateSignal #{pair_group} #{path}"
+            
+            return message
+    
+    def _format_triad_signal_message(self, signal):
+        """Format triad confluence signal for Telegram"""
+        pair_group = signal.get('pair_group', 'Unknown')
+        direction = signal.get('direction', 'UNKNOWN').upper()
+        confluence = signal.get('confluence_strength', 0)
+        total_pairs = signal.get('total_pairs', 0)
+        instruments = signal.get('instruments', [])
+        details = signal.get('signal_details', [])
+        
+        message = f"🔄 *TRIAD CONFLUENCE SIGNAL* 🔄\n\n"
+        message += f"*Group:* {pair_group.replace('_', ' ').title()}\n"
+        message += f"*Direction:* {direction}\n"
+        message += f"*Confluence:* {confluence}/{total_pairs} pairs\n"
+        message += f"*Instruments:* {', '.join(instruments)}\n\n"
+        
+        message += "*Pair Signals:*\n"
+        for detail in details:
+            message += f"• {detail}\n"
+        
+        message += f"\n*Detection Time:* {signal['timestamp'].strftime('%Y-%m-%d %H:%M:%S %Z')}\n"
+        
+        if confluence == 3:
+            message += f"\n*🎯 PERFECT TRIAD CONFLUENCE: All 3 pairs agreeing!*\n"
+        elif confluence == 2:
+            message += f"\n*✅ STRONG TRIAD CONFLUENCE: 2/3 pairs agreeing*\n"
+        
+        message += f"\n#TriadConfluence #{pair_group} #{direction}"
+        
+        return message
     
     async def run_ultimate_systems(self):
         """Run all trading systems with ultimate decision making"""
