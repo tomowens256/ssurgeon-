@@ -1331,7 +1331,7 @@ class UltimateSMTDetector:
             self.debug_swing_data_quality(swings_low, f"{cycle_type} {test_quarter} Lows")
 
     def debug_quarter_time_ranges(self, cycle_type, asset1_quarters, asset2_quarters):
-        """Debug the actual time ranges of quarters"""
+        """Debug the actual time ranges of quarters with sequence validation"""
         print(f"\n🔍 DEBUG QUARTER TIME RANGES for {cycle_type}:")
         
         for quarter in ['q1', 'q2', 'q3', 'q4', 'q_less']:
@@ -1342,7 +1342,14 @@ class UltimateSMTDetector:
             if quarter in asset2_quarters and not asset2_quarters[quarter].empty:
                 a2_times = asset2_quarters[quarter]['time']
                 print(f"   {quarter}: Asset2 → {a2_times.min().strftime('%m-%d %H:%M')} to {a2_times.max().strftime('%m-%d %H:%M')} ({len(a2_times)} candles)")
-
+    
+    # Validate sequence
+    print(f"\n🔍 ASSET1 QUARTER SEQUENCE:")
+    asset1_sequence = self.validate_quarter_sequence(cycle_type, asset1_quarters)
+    
+    if asset2_quarters:
+        print(f"\n🔍 ASSET2 QUARTER SEQUENCE:")
+        asset2_sequence = self.validate_quarter_sequence(cycle_type, asset2_quarters)
     def _compare_quarters_with_3_candle_tolerance(self, asset1_prev, asset1_curr, asset2_prev, asset2_curr, cycle_type, prev_q, curr_q):
         """Compare quarters with debug info"""
         try:
