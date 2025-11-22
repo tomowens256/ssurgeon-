@@ -2382,6 +2382,43 @@ class UltimateTradingSystem:
                 return signal
         
         return None
+
+    # Update data fetching for multiple instruments
+    async def _fetch_all_data(self, api_key):
+        """Fetch data for ALL instruments in the group"""
+        required_timeframes = list(self.pair_config['timeframe_mapping'].values())
+        
+        # Add CRT timeframes
+        for tf in CRT_TIMEFRAMES:
+            if tf not in required_timeframes:
+                required_timeframes.append(tf)
+        
+        for instrument in self.instruments:
+            for tf in required_timeframes:
+                count = self._get_proven_count(tf)
+                
+                try:
+                    df = await asyncio.get_event_loop().run_in_executor(
+                        None, fetch_candles, instrument, tf, count, api_key
+                    )
+                    if df is not None and not df.empty:
+                        self.market_data[instrument][tf] = df
+                        logger.debug(f"📥 Fetched {len(df)} {tf} candles for {instrument}")
+                    else:
+                        logger.warning(f"⚠️ No data received for {instrument} {tf}")
+                except Exception as e:
+                    logger.error(f"❌ Error fetching {instrument} {tf}: {str(e)}")
+    
+    def _get_proven_count(self, timeframe):
+        """Get proven candle counts"""
+        proven_counts = {
+            'H4': 100,  # Monthly
+            'H1': 120,  # Weekly
+            'M15': 96,  # Daily
+            'M5': 72,   # 90min
+            'H2': 100, 'H3': 100, 'H6': 100, 'H8': 100, 'H12': 100
+        }
+        return proven_counts.get(timeframe, 100)
     
     def _find_triad_confluence(self, signals):
         """Find confluence across triad pairs"""
