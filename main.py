@@ -1136,6 +1136,107 @@ class UltimateSMTDetector:
             logger.error(f"❌ Error in SMT detection for {cycle_type}: {str(e)}")
             return None
 
+    def check_data_quality(self, pair1_data, pair2_data, cycle_type):
+        """Check if we have good quality data for analysis"""
+        print(f"\n🔍 DATA QUALITY CHECK for {cycle_type}:")
+        
+        if pair1_data is None or pair2_data is None:
+            print(f"   ❌ Missing data")
+            return False
+        
+        # Check data length
+        if len(pair1_data) < 20 or len(pair2_data) < 20:
+            print(f"   ❌ Insufficient data: {len(pair1_data)} vs {len(pair2_data)} candles")
+            return False
+        
+        # Check time range coverage
+        p1_start = pair1_data['time'].min()
+        p1_end = pair1_data['time'].max()  
+        p2_start = pair2_data['time'].min()
+        p2_end = pair2_data['time'].max()
+        
+        time_coverage = (min(p1_end, p2_end) - max(p1_start, p2_start)).total_seconds() / 3600
+        print(f"   Time overlap: {time_coverage:.1f}h")
+        
+        if time_coverage < 1:
+            print(f"   ❌ Insufficient time overlap")
+            return False
+        
+        print(f"   ✅ Good data quality")
+        return True
+
+    def debug_quarter_validation(self, prev_q, curr_q, asset1_prev, asset1_curr, asset2_prev, asset2_curr):
+        """Validate if quarter pairs make chronological sense"""
+        print(f"\n🔍 VALIDATING {prev_q}→{curr_q}:")
+        
+        # Check if quarters are chronologically ordered
+        if not asset1_prev.empty and not asset1_curr.empty:
+            prev_end = asset1_prev['time'].max()
+            curr_start = asset1_curr['time'].min()
+            time_gap = (curr_start - prev_end).total_seconds() / 3600  # hours
+            
+            print(f"   Time gap: {prev_end.strftime('%m-%d %H:%M')} → {curr_start.strftime('%m-%d %H:%M')} ({time_gap:.1f}h)")
+            
+            if time_gap < 0:
+                print(f"   ❌ REVERSED TIME: Current quarter starts BEFORE previous quarter!")
+            elif time_gap > 24:
+                print(f"   ⚠️ LARGE GAP: {time_gap:.1f}h between quarters")
+            else:
+                print(f"   ✅ Reasonable gap: {time_gap:.1f}h")
+
+    def debug_swing_data_quality(self, swings, label):
+        """Debug the quality of swing data"""
+        print(f"\n🔍 SWING DATA QUALITY - {label}:")
+        
+        if not swings:
+            print(f"   No swings found")
+            return
+        
+        for i, swing in enumerate(swings):
+            print(f"   Swing {i}: time={swing['time'].strftime('%m-%d %H:%M')}, price={swing['price']:.4f}")
+            
+            # Check for invalid timestamps
+            if swing['time'].year < 2020:
+                print(f"   ❌ INVALID TIMESTAMP: {swing['time']}")
+
+    def run_comprehensive_debug(self, cycle_type):
+        """Run complete debug for a cycle"""
+        print(f"\n🎯 COMPREHENSIVE DEBUG FOR {cycle_type.upper()}")
+        
+        timeframe = self.pair_config['timeframe_mapping'][cycle_type]
+        pair1_data = self.market_data[self.pair1].get(timeframe)
+        pair2_data = self.market_data[self.pair2].get(timeframe)
+        
+        if not self.check_data_quality(pair1_data, pair2_data, cycle_type):
+            return
+        
+        # Test quarter grouping
+        asset1_quarters = self.quarter_manager.group_candles_by_quarters(pair1_data, cycle_type)
+        asset2_quarters = self.quarter_manager.group_candles_by_quarters(pair2_data, cycle_type)
+        
+        self.debug_quarter_time_ranges(cycle_type, asset1_quarters, asset2_quarters)
+        
+        # Test swing detection on sample quarter
+        test_quarter = 'q1'
+        if test_quarter in asset1_quarters:
+            test_data = asset1_quarters[test_quarter]
+            swings_high, swings_low = self.swing_detector.find_swing_highs_lows(test_data)
+            self.debug_swing_data_quality(swings_high, f"{cycle_type} {test_quarter} Highs")
+            self.debug_swing_data_quality(swings_low, f"{cycle_type} {test_quarter} Lows")
+
+    def debug_quarter_time_ranges(self, cycle_type, asset1_quarters, asset2_quarters):
+        """Debug the actual time ranges of quarters"""
+        print(f"\n🔍 DEBUG QUARTER TIME RANGES for {cycle_type}:")
+        
+        for quarter in ['q1', 'q2', 'q3', 'q4', 'q_less']:
+            if quarter in asset1_quarters and not asset1_quarters[quarter].empty:
+                a1_times = asset1_quarters[quarter]['time']
+                print(f"   {quarter}: Asset1 → {a1_times.min().strftime('%m-%d %H:%M')} to {a1_times.max().strftime('%m-%d %H:%M')} ({len(a1_times)} candles)")
+            
+            if quarter in asset2_quarters and not asset2_quarters[quarter].empty:
+                a2_times = asset2_quarters[quarter]['time']
+                print(f"   {quarter}: Asset2 → {a2_times.min().strftime('%m-%d %H:%M')} to {a2_times.max().strftime('%m-%d %H:%M')} ({len(a2_times)} candles)")
+
     def _compare_quarters_with_3_candle_tolerance(self, asset1_prev, asset1_curr, asset2_prev, asset2_curr, cycle_type, prev_q, curr_q):
         """Compare quarters with debug info"""
         try:
