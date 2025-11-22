@@ -2156,6 +2156,9 @@ class UltimateTradingSystem:
             
             # Fetch ALL data needed for analysis
             await self._fetch_all_data(api_key)
+
+            for cycle in ['monthly', 'weekly', 'daily', '90min']:
+                self.smt_detector.run_comprehensive_debug(cycle)
             
             # Step 1: Check SMT invalidations and PSP tracking
             await self._check_smt_tracking()
