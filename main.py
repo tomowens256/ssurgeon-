@@ -2157,8 +2157,13 @@ class UltimateTradingSystem:
             # Fetch ALL data needed for analysis
             await self._fetch_all_data(api_key)
 
+            # === FIXED DEBUG CALL - Pass market data ===
             for cycle in ['monthly', 'weekly', 'daily', '90min']:
-                self.smt_detector.run_comprehensive_debug(cycle)
+                self.smt_detector.run_comprehensive_debug(
+                    cycle, 
+                    self.market_data[self.pair1], 
+                    self.market_data[self.pair2]
+                )
             
             # Step 1: Check SMT invalidations and PSP tracking
             await self._check_smt_tracking()
