@@ -614,17 +614,21 @@ class RobustQuarterManager:
         else: return 'q_less'
     
     def _get_daily_quarter(self, timestamp):
-        """FIXED: Daily quarters starting at 18:00 (6 PM)"""
+        """FIXED: Daily quarter that handles multi-day data properly"""
         hour = timestamp.hour
-        # q1: 18:00-23:59 (starts previous day at 6 PM)
-        # q2: 00:00-05:59
-        # q3: 06:00-11:59  
-        # q4: 12:00-17:59
-        if 18 <= hour <= 23: return 'q1'
-        elif 0 <= hour < 6: return 'q2'
-        elif 6 <= hour < 12: return 'q3'
-        elif 12 <= hour < 18: return 'q4'
-        else: return 'q_less'
+        
+        # Since it's Saturday morning, adjust for the trading week
+        # For daily quarters, we need to handle the fact that data spans multiple days
+        
+        # Simple fixed quarters based on hour only
+        if 0 <= hour < 6: 
+            return 'q1'
+        elif 6 <= hour < 12: 
+            return 'q2'
+        elif 12 <= hour < 18: 
+            return 'q3'
+        else: 
+            return 'q4'
     
     def _get_90min_quarter_fixed(self, timestamp):
         """FIXED: 90min quarters within the 18:00-start day"""
@@ -1287,6 +1291,41 @@ class UltimateSMTDetector:
                 print(f"   ⚠️ LARGE GAP: {time_gap:.1f}h between quarters")
             else:
                 print(f"   ✅ Reasonable gap: {time_gap:.1f}h")
+
+    def filter_valid_quarter_pairs(self, cycle_type, asset1_quarters, asset2_quarters, adjacent_pairs):
+        """Filter out quarter pairs that have overlapping time ranges"""
+        print(f"\n🔍 FILTERING VALID QUARTER PAIRS for {cycle_type}:")
+        
+        valid_pairs = []
+        
+        for prev_q, curr_q in adjacent_pairs:
+            # Check if both quarters exist and have data
+            if (prev_q not in asset1_quarters or curr_q not in asset1_quarters or
+                prev_q not in asset2_quarters or curr_q not in asset2_quarters):
+                continue
+                
+            asset1_prev = asset1_quarters[prev_q]
+            asset1_curr = asset1_quarters[curr_q]
+            asset2_prev = asset2_quarters[prev_q]
+            asset2_curr = asset2_quarters[curr_q]
+            
+            if asset1_prev.empty or asset1_curr.empty or asset2_prev.empty or asset2_curr.empty:
+                continue
+            
+            # STRICT: Check that current quarter starts AFTER previous quarter ends
+            prev_end = max(asset1_prev['time'].max(), asset2_prev['time'].max())
+            curr_start = min(asset1_curr['time'].min(), asset2_curr['time'].min())
+            
+            time_gap = (curr_start - prev_end).total_seconds() / 3600
+            
+            if time_gap > 0:
+                print(f"   ✅ {prev_q}→{curr_q}: Valid gap {time_gap:.1f}h")
+                valid_pairs.append((prev_q, curr_q))
+            else:
+                print(f"   ❌ {prev_q}→{curr_q}: INVALID (overlap {-time_gap:.1f}h)")
+        
+        print(f"   Final valid pairs: {valid_pairs}")
+        return valid_pairs
 
     def debug_swing_data_quality(self, swings, label):
         """Debug the quality of swing data"""
