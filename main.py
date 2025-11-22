@@ -2284,7 +2284,14 @@ class UltimateTradingSystem:
     def __init__(self, pair_group, pair_config):
         self.pair_group = pair_group
         self.pair_config = pair_config
-        self.instruments = pair_config['instruments']  # List of instruments
+        
+        # BACKWARD COMPATIBLE: Handle both old and new structures
+        if 'instruments' in pair_config:
+            self.instruments = pair_config['instruments']  # NEW structure
+        else:
+            # OLD structure: convert pair1/pair2 to instruments list
+            self.instruments = [pair_config['pair1'], pair_config['pair2']]
+            logger.info(f"🔄 Converted old structure for {pair_group} to instruments: {self.instruments}")
         
         # Initialize components
         self.timing_manager = RobustTimingManager()
@@ -2388,9 +2395,15 @@ class UltimateTradingSystem:
             if tf not in required_timeframes:
                 required_timeframes.append(tf)
         
-        for instrument in self.instruments:
+        # Use proven candle counts
+        proven_counts = {
+            'H4': 100, 'H1': 120, 'M15': 96, 'M5': 72,
+            'H2': 100, 'H3': 100, 'H6': 100, 'H8': 100, 'H12': 100
+        }
+        
+        for instrument in self.instruments:  # ← This now works with both structures
             for tf in required_timeframes:
-                count = self._get_proven_count(tf)
+                count = proven_counts.get(tf, 100)
                 
                 try:
                     df = await asyncio.get_event_loop().run_in_executor(
