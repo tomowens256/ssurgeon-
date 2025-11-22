@@ -1217,6 +1217,9 @@ class UltimateSMTDetector:
                 return None
     
             results = []
+            self.debug_quarter_contents("daily", "Asset1", quarter_data['daily']['asset1'])
+            self.debug_quarter_contents("daily", "Asset2", quarter_data['daily']['asset2'])
+
     
             # Scan ONLY valid chronological pairs
             for prev_q, curr_q in valid_pairs:
