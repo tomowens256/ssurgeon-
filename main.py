@@ -495,24 +495,22 @@ class RobustQuarterManager:
         else: return 'q_less'
 
     def get_adjacent_quarter_pairs(self, cycle_type):
-        """Get ALL possible consecutive quarter pairs for 18:00-start system"""
-        if cycle_type == 'daily':
-            # For daily: q1→q2→q3→q4→q1 (next day)
-            quarter_sequence = ['q1', 'q2', 'q3', 'q4']
-        elif cycle_type == 'weekly':
-            # For weekly, include q_less
+        """Get ONLY chronologically valid quarter pairs"""
+        if cycle_type == 'weekly':
+            # For weekly: q1→q2→q3→q4→q_less (NO circular q_less→q1)
             quarter_sequence = ['q1', 'q2', 'q3', 'q4', 'q_less']
         else:
+            # For other cycles: q1→q2→q3→q4 (NO circular q4→q1)
             quarter_sequence = ['q1', 'q2', 'q3', 'q4']
         
-        # ALL possible consecutive pairs
+        # ONLY consecutive pairs, NO circular transitions
         all_pairs = []
-        for i in range(len(quarter_sequence)):
+        for i in range(len(quarter_sequence) - 1):
             current = quarter_sequence[i]
-            next_q = quarter_sequence[(i + 1) % len(quarter_sequence)]
+            next_q = quarter_sequence[i + 1]
             all_pairs.append((current, next_q))
         
-        logger.debug(f"🔍 {cycle_type}: Adjacent quarter pairs: {all_pairs}")
+        logger.debug(f"🔍 {cycle_type}: Valid quarter pairs: {all_pairs}")
         return all_pairs
 
 
@@ -715,10 +713,13 @@ class RobustQuarterManager:
         return all_pairs
     
     def group_candles_by_quarters(self, df, cycle_type, num_quarters=4):
-        """Group candles into exact quarters based on their timestamps"""
+        """Group candles into exact quarters with STRICT chronological validation"""
         if df is None or not isinstance(df, pd.DataFrame) or df.empty:
             logger.warning(f"⚠️ No data to group for {cycle_type}")
             return {}
+        
+        # Sort by time first - CRITICAL
+        df = df.sort_values('time').reset_index(drop=True)
         
         quarters_data = {}
         
@@ -730,11 +731,36 @@ class RobustQuarterManager:
                 quarters_data[quarter] = []
             quarters_data[quarter].append(candle)
         
+        # Convert to DataFrames and ensure chronological order
         for quarter in quarters_data:
             quarters_data[quarter] = pd.DataFrame(quarters_data[quarter])
             quarters_data[quarter] = quarters_data[quarter].sort_values('time')
+            
+            # Validate quarter data chronology
+            if not quarters_data[quarter].empty:
+                times = quarters_data[quarter]['time']
+                time_range = f"{times.min().strftime('%m-%d %H:%M')} to {times.max().strftime('%m-%d %H:%M')}"
+                logger.debug(f"📊 {cycle_type} {quarter}: {len(quarters_data[quarter])} candles, {time_range}")
+                
+                # Check if quarter data is chronological
+                if not times.is_monotonic_increasing:
+                    logger.warning(f"⚠️ {cycle_type} {quarter}: Data is not chronological!")
+                    # Force chronological order
+                    quarters_data[quarter] = quarters_data[quarter].sort_values('time').reset_index(drop=True)
         
-        #logger.debug(f"📊 {cycle_type}: Quarters found: {list(quarters_data.keys())}")
+        # Remove quarters with insufficient data
+        quarters_to_remove = []
+        for quarter in quarters_data:
+            if len(quarters_data[quarter]) < 5:  # Minimum 5 candles for swing detection
+                quarters_to_remove.append(quarter)
+                logger.debug(f"📊 {cycle_type} {quarter}: Removing - only {len(quarters_data[quarter])} candles")
+        
+        for quarter in quarters_to_remove:
+            del quarters_data[quarter]
+        
+        valid_quarters = [q for q in quarters_data if not quarters_data[q].empty]
+        logger.debug(f"📊 {cycle_type}: Valid quarters with sufficient data: {valid_quarters}")
+        
         return quarters_data
     
     def _get_candle_quarter(self, candle_time, cycle_type):
@@ -753,6 +779,37 @@ class RobustQuarterManager:
         """Return current quarter using the existing quarter detection logic."""
         quarters = self.detect_current_quarters(timestamp)
         return quarters.get(cycle_type, None)
+
+    def validate_quarter_sequence(self, cycle_type, asset_quarters):
+        """Validate that quarters are in proper sequence"""
+        print(f"\n🔍 VALIDATING {cycle_type} QUARTER SEQUENCE:")
+        
+        # Define expected sequence
+        if cycle_type == 'weekly':
+            expected_sequence = ['q1', 'q2', 'q3', 'q4', 'q_less']
+        else:
+            expected_sequence = ['q1', 'q2', 'q3', 'q4']
+        
+        # Get quarters that actually have data
+        available_quarters = [q for q in expected_sequence if q in asset_quarters and not asset_quarters[q].empty]
+        
+        print(f"   Expected: {expected_sequence}")
+        print(f"   Available: {available_quarters}")
+        
+        # Check if available quarters are in expected order
+        for i in range(len(available_quarters) - 1):
+            current_q = available_quarters[i]
+            next_q = available_quarters[i + 1]
+            
+            current_idx = expected_sequence.index(current_q)
+            next_idx = expected_sequence.index(next_q)
+            
+            if next_idx != current_idx + 1:
+                print(f"   ❌ SEQUENCE BREAK: {current_q}→{next_q} (expected {expected_sequence[current_idx]}→{expected_sequence[current_idx+1]})")
+            else:
+                print(f"   ✅ Sequence OK: {current_q}→{next_q}")
+        
+        return available_quarters
 
 # ================================
 # ULTIMATE SWING DETECTOR WITH 3-CANDLE TOLERANCE
@@ -1295,6 +1352,26 @@ class UltimateSMTDetector:
             print(f"   Asset1 prev: {len(asset1_prev)} candles, time range: {asset1_prev['time'].min() if not asset1_prev.empty else 'empty'} to {asset1_prev['time'].max() if not asset1_prev.empty else 'empty'}")
             print(f"   Asset1 curr: {len(asset1_curr)} candles, time range: {asset1_curr['time'].min() if not asset1_curr.empty else 'empty'} to {asset1_curr['time'].max() if not asset1_curr.empty else 'empty'}")
 
+            # === ADD STRICT CHRONOLOGY CHECK ===
+            if not asset1_prev.empty and not asset1_curr.empty:
+                prev_end = asset1_prev['time'].max()
+                curr_start = asset1_curr['time'].min()
+                
+                # STRICT: Current quarter MUST start AFTER previous quarter ends
+                if curr_start <= prev_end:
+                    print(f"   ❌ CHRONOLOGY ERROR: Skipping {prev_q}→{curr_q} - current starts at {curr_start.strftime('%m-%d %H:%M')} (BEFORE previous ends at {prev_end.strftime('%m-%d %H:%M')})")
+                    return None
+                
+                time_gap = (curr_start - prev_end).total_seconds() / 3600
+                if time_gap > 24:
+                    print(f"   ⚠️ LARGE GAP: {time_gap:.1f}h between quarters")
+                else:
+                    print(f"   ✅ Chronology OK: {time_gap:.1f}h gap")
+    
+            if (asset1_prev.empty or asset1_curr.empty or 
+                asset2_prev.empty or asset2_curr.empty):
+                print(f"   ⚠️ SKIPPING: Missing quarter data")
+                return None
             # === ADD THIS VALIDATION CALL ===
             self.debug_quarter_validation(prev_q, curr_q, asset1_prev, asset1_curr, asset2_prev, asset2_curr)
             
