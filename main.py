@@ -659,6 +659,10 @@ class RobustQuarterManager:
             print(f"   {test_time.strftime('%m-%d %H:%M')} → Daily: {daily_quarter}, Weekly: {weekly_quarter}")
 
 
+# ================================
+# FIXED QUARTER MANAGER - USING PROVEN APPROACH  
+# ================================
+
 def test_proven_quarter_patch():
     """Test that the proven quarter system works"""
     quarter_manager = RobustQuarterManager()
@@ -676,6 +680,7 @@ def test_proven_quarter_patch():
     
     # Test the proven daily quarter system
     quarter_manager.test_quarter_system()
+
 
 # ================================
 # ULTIMATE SWING DETECTOR WITH 3-CANDLE TOLERANCE
@@ -2644,6 +2649,7 @@ class UltimateTradingManager:
             self.trading_systems[pair_group] = UltimateTradingSystem(pair_group, pair_config)
         
         logger.info(f"🎯 Initialized ULTIMATE trading manager with {len(self.trading_systems)} pair groups")
+        
 
     def _format_ultimate_signal_message(self, signal):
         """Format ultimate signal for Telegram - NOW WITH TRIAD SUPPORT"""
@@ -2747,6 +2753,9 @@ class UltimateTradingManager:
     async def run_ultimate_systems(self):
         """Run all trading systems with ultimate decision making"""
         logger.info("🎯 Starting ULTIMATE Multi-Pair Trading System...")
+        test_proven_quarter_patch()
+        api_key = os.getenv('OANDA_API_KEY')
+        telegram_token = os.getenv('TELEGRAM_BOT_TOKEN')
         
         while True:
             try:
