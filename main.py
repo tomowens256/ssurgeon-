@@ -463,40 +463,104 @@ class RobustTimingManager:
 # FIXED QUARTER MANAGER - ALL POSSIBLE PAIRS
 # ================================
 
+# ================================
+# FIXED QUARTER MANAGER - USING PROVEN APPROACH
+# ================================
 class RobustQuarterManager:
-    """Enhanced quarter manager with ALL possible quarter pairs"""
+    """FIXED Quarter Manager using the proven working approach"""
     
     def __init__(self):
-        self.ny_tz = pytz.timezone('America/New_York')  # UTC-4
+        self.ny_tz = pytz.timezone('America/New_York')
         
-    def detect_current_quarters(self, timestamp=None):
-        """Detect current quarter for all cycles"""
+        # PROVEN QUARTER DEFINITIONS from working script
+        self.DAILY_QUARTERS = {
+            "q1": ("Asian", 18, 0),  # 18:00-00:00
+            "q2": ("London", 0, 0),  # 00:00-06:00
+            "q3": ("NY", 6, 0),      # 06:00-12:00
+            "q4": ("PM", 12, 0)      # 12:00-18:00
+        }
+        
+        self.SESSION_QUARTERS = [(0, 0), (1, 30), (3, 0), (4, 30)]  # 90-min splits
+        self.WEEKLY_QUARTERS = ["q1", "q2", "q3", "q4", "q_less"]  # Mon, Tue, Wed, Thu, Fri
+    
+    def get_current_quarters(self, timestamp=None):
+        """Get current quarters for all cycles - PROVEN WORKING METHOD"""
         if timestamp is None:
             timestamp = datetime.now(self.ny_tz)
         else:
-            if timestamp.tzinfo is None:
-                timestamp = self.ny_tz.localize(timestamp)
-            else:
-                timestamp = timestamp.astimezone(self.ny_tz)
-                
+            timestamp = timestamp.astimezone(self.ny_tz)
+            
         return {
-            'monthly': self._get_monthly_quarter(timestamp),
-            'weekly': self._get_weekly_quarter(timestamp),
-            'daily': self._get_daily_quarter(timestamp),
+            'monthly': self._get_monthly_quarter_fixed(timestamp),
+            'weekly': self._get_weekly_quarter_fixed(timestamp),
+            'daily': self._get_daily_quarter_fixed(timestamp),
             '90min': self._get_90min_quarter_fixed(timestamp)
         }
     
-    def _get_monthly_quarter(self, timestamp):
-        day = timestamp.day
-        if 1 <= day <= 7: return 'q1'
-        elif 8 <= day <= 14: return 'q2'
-        elif 15 <= day <= 21: return 'q3'
-        elif 22 <= day <= 28: return 'q4'
+    def _get_monthly_quarter_fixed(self, timestamp):
+        """Monthly quarters based on week of month"""
+        week_of_month = (timestamp.day - 1) // 7 + 1
+        if week_of_month == 1: return 'q1'
+        elif week_of_month == 2: return 'q2'
+        elif week_of_month == 3: return 'q3'
+        elif week_of_month == 4: return 'q4'
         else: return 'q_less'
-
-    def get_adjacent_quarter_pairs(self, cycle_type):
-        """Get ONLY chronologically valid quarter pairs"""
     
+    def _get_weekly_quarter_fixed(self, timestamp):
+        """Weekly quarters - Monday to Friday"""
+        weekday = timestamp.weekday()
+        if weekday == 0: return 'q1'      # Monday
+        elif weekday == 1: return 'q2'    # Tuesday
+        elif weekday == 2: return 'q3'    # Wednesday
+        elif weekday == 3: return 'q4'    # Thursday
+        else: return 'q_less'             # Friday (and weekend)
+    
+    def _get_daily_quarter_fixed(self, timestamp):
+        """PROVEN DAILY QUARTERS - 18:00 NY start"""
+        hour = timestamp.hour
+        minute = timestamp.minute
+        
+        # Daily quarters starting at 18:00 NY time
+        if 18 <= hour < 24: return 'q1'      # 18:00-00:00 (Asian)
+        elif 0 <= hour < 6: return 'q2'      # 00:00-06:00 (London)  
+        elif 6 <= hour < 12: return 'q3'     # 06:00-12:00 (NY)
+        elif 12 <= hour < 18: return 'q4'    # 12:00-18:00 (PM)
+        else: return 'q_less'
+    
+    def _get_90min_quarter_fixed(self, timestamp):
+        """PROVEN 90MIN QUARTERS within daily quarters"""
+        daily_quarter = self._get_daily_quarter_fixed(timestamp)
+        
+        # Get start of current daily quarter
+        quarter_start = self._get_daily_quarter_start_time(timestamp, daily_quarter)
+        
+        # Calculate minutes into the daily quarter
+        minutes_into_quarter = (timestamp - quarter_start).total_seconds() / 60
+        
+        # 90-minute quarters within each 6-hour daily quarter
+        if 0 <= minutes_into_quarter < 90: return 'q1'
+        elif 90 <= minutes_into_quarter < 180: return 'q2'
+        elif 180 <= minutes_into_quarter < 270: return 'q3'
+        elif 270 <= minutes_into_quarter < 360: return 'q4'
+        else: return 'q_less'
+    
+    def _get_daily_quarter_start_time(self, timestamp, daily_quarter):
+        """Get the start time of a daily quarter"""
+        if daily_quarter == 'q1':  # 18:00-00:00
+            start_time = timestamp.replace(hour=18, minute=0, second=0, microsecond=0)
+        elif daily_quarter == 'q2':  # 00:00-06:00
+            start_time = timestamp.replace(hour=0, minute=0, second=0, microsecond=0)
+        elif daily_quarter == 'q3':  # 06:00-12:00
+            start_time = timestamp.replace(hour=6, minute=0, second=0, microsecond=0)
+        elif daily_quarter == 'q4':  # 12:00-18:00
+            start_time = timestamp.replace(hour=12, minute=0, second=0, microsecond=0)
+        else:
+            start_time = timestamp
+            
+        return start_time
+    
+    def get_adjacent_quarter_pairs(self, cycle_type):
+        """Get chronologically valid quarter pairs"""
         if cycle_type == 'weekly':
             quarter_sequence = ['q1', 'q2', 'q3', 'q4', 'q_less']
         else:
@@ -508,352 +572,88 @@ class RobustQuarterManager:
     
         logger.debug(f"🔍 {cycle_type}: Valid quarter pairs: {all_pairs}")
         return all_pairs
-
-
-
-    def get_current_quarter(self, cycle_type):
-        """
-        Determine the current quarter based on cycle type and current time.
-        ICT Daily quarters start at 18:00 New York.
-        Weekly uses Monday→Thursday as q1–q4 and Friday as q_less.
-        """
     
-        now = datetime.now(self.timezone)
-        hour = now.hour
-        minute = now.minute
-        total_min = hour * 60 + minute
+    def group_candles_by_quarters(self, df, cycle_type, num_quarters=4):
+        """Group candles into quarters using PROVEN timing"""
+        if df is None or df.empty:
+            return {}
+            
+        df = df.sort_values('time').reset_index(drop=True)
+        quarters_data = {}
+        
+        for _, candle in df.iterrows():
+            quarter = self._get_candle_quarter_fixed(candle['time'], cycle_type)
+            
+            if quarter not in quarters_data:
+                quarters_data[quarter] = []
+            quarters_data[quarter].append(candle)
+        
+        # Convert to DataFrames
+        for quarter in list(quarters_data.keys()):
+            if len(quarters_data[quarter]) < 3:  # Minimum candles
+                del quarters_data[quarter]
+                continue
+                
+            quarters_data[quarter] = pd.DataFrame(quarters_data[quarter])
+            quarters_data[quarter] = quarters_data[quarter].sort_values('time')
+        
+        logger.debug(f"📊 {cycle_type}: Found quarters {list(quarters_data.keys())}")
+        return quarters_data
     
-        # --------------------------
-        # DAILY (ICT STYLE)
-        # --------------------------
-        if cycle_type == "daily":
+    def _get_candle_quarter_fixed(self, candle_time, cycle_type):
+        """Get quarter for candle using PROVEN method"""
+        if cycle_type == 'monthly':
+            return self._get_monthly_quarter_fixed(candle_time)
+        elif cycle_type == 'weekly':
+            return self._get_weekly_quarter_fixed(candle_time)
+        elif cycle_type == 'daily':
+            return self._get_daily_quarter_fixed(candle_time)
+        elif cycle_type == '90min':
+            return self._get_90min_quarter_fixed(candle_time)
+        else:
+            return 'unknown'
     
-            # q1 → 18:00 – 00:00
-            if total_min >= 18*60:
-                return "q1"
+    def get_current_quarter(self, cycle_type, timestamp=None):
+        """Get current quarter - simple wrapper"""
+        quarters = self.get_current_quarters(timestamp)
+        return quarters.get(cycle_type)
     
-            # q2 → 00:00 – 06:00
-            if 0 <= total_min < 6*60:
-                return "q2"
-    
-            # q3 → 06:00 – 12:00
-            if 6*60 <= total_min < 12*60:
-                return "q3"
-    
-            # q4 → 12:00 – 18:00
-            return "q4"
-    
-        # --------------------------
-        # 90 MIN CYCLE
-        # --------------------------
-        if cycle_type == "90min":
-            minute_block = total_min // 90
-            quarter_index = minute_block % 4
-            return ["q1", "q2", "q3", "q4"][quarter_index]
-    
-        # --------------------------
-        # WEEKLY CYCLE
-        # --------------------------
-        if cycle_type == "weekly":
-            weekday = now.weekday()
-    
-            if weekday == 0:
-                return "q1"
-            elif weekday == 1:
-                return "q2"
-            elif weekday == 2:
-                return "q3"
-            elif weekday == 3:
-                return "q4"
-            elif weekday == 4:
-                return "q_less"
-            else:
-                return None
-    
-        # --------------------------
-        # MONTHLY (simple 4-part split)
-        # --------------------------
-        if cycle_type == "monthly":
-            day = now.day
-            days_in_month = monthrange(now.year, now.month)[1]
-            quarter_size = days_in_month // 4
-    
-            if day <= quarter_size:
-                return "q1"
-            elif day <= quarter_size * 2:
-                return "q2"
-            elif day <= quarter_size * 3:
-                return "q3"
-            else:
-                return "q4"
-    
-        return "q1"  # fallback
-
-
     def get_last_three_quarters(self, cycle_type):
-
+        """Get last 3 quarters for analysis"""
+        current_q = self.get_current_quarter(cycle_type)
+        
         if cycle_type == 'weekly':
             order = ['q1', 'q2', 'q3', 'q4', 'q_less']
         else:
             order = ['q1', 'q2', 'q3', 'q4']
-    
-        current_q = self.get_current_quarter(cycle_type)
-    
-        logger.debug(f"🔍 {cycle_type}: Current quarter = '{current_q}'")
-    
-        # If invalid or weekend
+        
         if current_q not in order:
-            logger.error(f"❌ {cycle_type}: Invalid quarter '{current_q}'")
             return ['q2', 'q3', 'q4']
-    
+            
         idx = order.index(current_q)
         last_three = [
             order[idx],
             order[(idx - 1) % len(order)],
             order[(idx - 2) % len(order)]
         ]
-    
-        logger.debug(f"🔍 {cycle_type}: Last three quarters = {last_three}")
+        
         return last_three
 
-
-    
-    def _get_weekly_quarter(self, timestamp):
-        weekday = timestamp.weekday()
-        if weekday == 0: return 'q1'
-        elif weekday == 1: return 'q2'
-        elif weekday == 2: return 'q3'
-        elif weekday == 3: return 'q4'
-        else: return 'q_less'
-    
-    def _get_daily_quarter(self, timestamp):
-        """FIXED: Daily quarter that handles multi-day data properly"""
-        hour = timestamp.hour
-        
-        # Since it's Saturday morning, adjust for the trading week
-        # For daily quarters, we need to handle the fact that data spans multiple days
-        
-        # Simple fixed quarters based on hour only
-        if 0 <= hour < 6: 
-            return 'q1'
-        elif 6 <= hour < 12: 
-            return 'q2'
-        elif 12 <= hour < 18: 
-            return 'q3'
-        else: 
-            return 'q4'
-    
-    def _get_90min_quarter_fixed(self, timestamp):
-        """FIXED: 90min quarters within the 18:00-start day"""
-        daily_quarter = self._get_daily_quarter(timestamp)
-        hour = timestamp.hour
-        minute = timestamp.minute
-        total_minutes = hour * 60 + minute
-        
-        # Adjust for 18:00 start - map hours to the correct 6-hour block
-        adjusted_hour = (hour + 6) % 24  # Shift so 18:00 becomes 00:00 for calculation
-        adjusted_total_minutes = adjusted_hour * 60 + minute
-        
-        # 90min quarters within each 6-hour daily quarter
-        boundaries = {
-            'q1': [  # 18:00-00:00 (adjusted: 00:00-06:00)
-                (0*60, 1*60+30, 'q1'),
-                (1*60+30, 3*60, 'q2'),
-                (3*60, 4*60+30, 'q3'), 
-                (4*60+30, 6*60, 'q4')
-            ],
-            'q2': [  # 00:00-06:00 (adjusted: 06:00-12:00)
-                (6*60, 7*60+30, 'q1'),
-                (7*60+30, 9*60, 'q2'),
-                (9*60, 10*60+30, 'q3'),
-                (10*60+30, 12*60, 'q4')
-            ],
-            'q3': [  # 06:00-12:00 (adjusted: 12:00-18:00)
-                (12*60, 13*60+30, 'q1'),
-                (13*60+30, 15*60, 'q2'),
-                (15*60, 16*60+30, 'q3'),
-                (16*60+30, 18*60, 'q4')
-            ],
-            'q4': [  # 12:00-18:00 (adjusted: 18:00-24:00)
-                (18*60, 19*60+30, 'q1'),
-                (19*60+30, 21*60, 'q2'),
-                (21*60, 22*60+30, 'q3'),
-                (22*60+30, 24*60, 'q4')
-            ]
-        }
-        
-        for start_min, end_min, quarter in boundaries[daily_quarter]:
-            if start_min <= adjusted_total_minutes < end_min:
-                return quarter
-        
-        return 'q_less'
-
-    def test_18hr_quarter_system(self):
-        """Test that the 18:00-start quarter system works correctly"""
-        print("\n🧪 TESTING 18:00-START QUARTER SYSTEM:")
+    def test_quarter_system(self):
+        """Test the quarter system"""
+        print("\n🧪 TESTING PROVEN QUARTER SYSTEM:")
         
         test_times = [
-            # q1: 18:00-23:59
-            datetime(2025, 11, 20, 18, 0),   # Should be q1
-            datetime(2025, 11, 20, 22, 0),   # Should be q1
-            # q2: 00:00-05:59  
-            datetime(2025, 11, 21, 0, 0),    # Should be q2
-            datetime(2025, 11, 21, 4, 0),    # Should be q2
-            # q3: 06:00-11:59
-            datetime(2025, 11, 21, 6, 0),    # Should be q3
-            datetime(2025, 11, 21, 10, 0),   # Should be q3
-            # q4: 12:00-17:59
-            datetime(2025, 11, 21, 12, 0),   # Should be q4
-            datetime(2025, 11, 21, 16, 0),   # Should be q4
+            datetime(2025, 11, 20, 18, 0),   # Thursday 18:00 - should be q1 daily
+            datetime(2025, 11, 21, 0, 0),    # Friday 00:00 - should be q2 daily  
+            datetime(2025, 11, 21, 6, 0),    # Friday 06:00 - should be q3 daily
+            datetime(2025, 11, 21, 12, 0),   # Friday 12:00 - should be q4 daily
         ]
         
         for test_time in test_times:
-            daily_quarter = self._get_daily_quarter(test_time)
-            print(f"   {test_time.strftime('%m-%d %H:%M')} → Daily: {daily_quarter}")
-    
-    def get_all_possible_quarter_pairs(self, cycle_type):
-        """Get ALL possible consecutive quarter pairs regardless of current quarter"""
-        if cycle_type == 'weekly':
-            # For weekly, include transitions to/from q_less
-            quarter_sequence = ['q1', 'q2', 'q3', 'q4', 'q_less']
-        else:
-            quarter_sequence = ['q1', 'q2', 'q3', 'q4']
-        
-        # ALL possible consecutive pairs
-        all_pairs = []
-        for i in range(len(quarter_sequence)):
-            current = quarter_sequence[i]
-            next_q = quarter_sequence[(i + 1) % len(quarter_sequence)]
-            all_pairs.append((current, next_q))
-        
-        logger.debug(f"🔍 {cycle_type}: Checking ALL quarter pairs: {all_pairs}")
-        return all_pairs
-    
-    def group_candles_by_quarters(self, df, cycle_type, num_quarters=4):
-        """Group candles into exact quarters with STRICT chronological validation"""
-        if df is None or not isinstance(df, pd.DataFrame) or df.empty:
-            logger.warning(f"⚠️ No data to group for {cycle_type}")
-            return {}
-        
-        # Sort by time first - CRITICAL
-        df = df.sort_values('time').reset_index(drop=True)
-        
-        quarters_data = {}
-        
-        for _, candle in df.iterrows():
-            candle_time = candle['time']
-            quarter = self._get_candle_quarter(candle_time, cycle_type)
-            
-            if quarter not in quarters_data:
-                quarters_data[quarter] = []
-            quarters_data[quarter].append(candle)
-        
-        # Convert to DataFrames and ensure chronological order
-        for quarter in quarters_data:
-            quarters_data[quarter] = pd.DataFrame(quarters_data[quarter])
-            quarters_data[quarter] = quarters_data[quarter].sort_values('time')
-            
-            # Validate quarter data chronology
-            if not quarters_data[quarter].empty:
-                times = quarters_data[quarter]['time']
-                time_range = f"{times.min().strftime('%m-%d %H:%M')} to {times.max().strftime('%m-%d %H:%M')}"
-                logger.debug(f"📊 {cycle_type} {quarter}: {len(quarters_data[quarter])} candles, {time_range}")
-                
-                # Check if quarter data is chronological
-                if not times.is_monotonic_increasing:
-                    logger.warning(f"⚠️ {cycle_type} {quarter}: Data is not chronological!")
-                    # Force chronological order
-                    quarters_data[quarter] = quarters_data[quarter].sort_values('time').reset_index(drop=True)
-        
-        # Remove quarters with insufficient data
-        quarters_to_remove = []
-        for quarter in quarters_data:
-            if len(quarters_data[quarter]) < 5:  # Minimum 5 candles for swing detection
-                quarters_to_remove.append(quarter)
-                logger.debug(f"📊 {cycle_type} {quarter}: Removing - only {len(quarters_data[quarter])} candles")
-        
-        for quarter in quarters_to_remove:
-            del quarters_data[quarter]
-        
-        valid_quarters = [q for q in quarters_data if not quarters_data[q].empty]
-        logger.debug(f"📊 {cycle_type}: Valid quarters with sufficient data: {valid_quarters}")
-        
-        return quarters_data
-    
-    def _get_candle_quarter(self, candle_time, cycle_type):
-        """Get the quarter for a specific candle based on cycle type"""
-        if cycle_type == 'monthly':
-            return self._get_monthly_quarter(candle_time)
-        elif cycle_type == 'weekly':
-            return self._get_weekly_quarter(candle_time)
-        elif cycle_type == 'daily':
-            return self._get_daily_quarter(candle_time)
-        elif cycle_type == '90min':
-            return self._get_90min_quarter_fixed(candle_time)
-        else:
-            return 'unknown'
-    def get_current_quarter(self, cycle_type, timestamp=None):
-        """Return current quarter using the existing quarter detection logic."""
-        quarters = self.detect_current_quarters(timestamp)
-        return quarters.get(cycle_type, None)
-
-    def validate_quarter_sequence(self, cycle_type, asset_quarters):
-        """Validate that quarters are in proper sequence"""
-        print(f"\n🔍 VALIDATING {cycle_type} QUARTER SEQUENCE:")
-        
-        # Define expected sequence
-        if cycle_type == 'weekly':
-            expected_sequence = ['q1', 'q2', 'q3', 'q4', 'q_less']
-        else:
-            expected_sequence = ['q1', 'q2', 'q3', 'q4']
-        
-        # Get quarters that actually have data
-        available_quarters = [q for q in expected_sequence if q in asset_quarters and not asset_quarters[q].empty]
-        
-        print(f"   Expected: {expected_sequence}")
-        print(f"   Available: {available_quarters}")
-        
-        # Check if available quarters are in expected order
-        for i in range(len(available_quarters) - 1):
-            current_q = available_quarters[i]
-            next_q = available_quarters[i + 1]
-            
-            current_idx = expected_sequence.index(current_q)
-            next_idx = expected_sequence.index(next_q)
-            
-            if next_idx != current_idx + 1:
-                print(f"   ❌ SEQUENCE BREAK: {current_q}→{next_q} (expected {expected_sequence[current_idx]}→{expected_sequence[current_idx+1]})")
-            else:
-                print(f"   ✅ Sequence OK: {current_q}→{next_q}")
-        
-        return available_quarters
-
-    def adjust_for_weekend_data(self, cycle_type, asset_quarters):
-        """Adjust quarter logic for weekend data"""
-        print(f"\n🔍 ADJUSTING FOR WEEKEND DATA ({cycle_type}):")
-        
-        # On weekends, the data might span across the week boundary
-        # We need to be more careful about quarter transitions
-        
-        adjusted_quarters = {}
-        
-        for quarter, data in asset_quarters.items():
-            if not data.empty:
-                times = data['time']
-                day_range = f"{times.min().strftime('%a %H:%M')} to {times.max().strftime('%a %H:%M')}"
-                print(f"   {quarter}: {day_range} ({len(data)} candles)")
-                
-                # On weekends, we might want to exclude certain quarter transitions
-                if cycle_type == 'daily':
-                    # For daily cycles on weekend, be more restrictive
-                    min_date = times.min().date()
-                    max_date = times.max().date()
-                    if max_date > min_date:
-                        print(f"   ⚠️ {quarter} spans multiple days: {min_date} to {max_date}")
-                
-                adjusted_quarters[quarter] = data
-        
-        return adjusted_quarters
+            daily_quarter = self._get_daily_quarter_fixed(test_time)
+            weekly_quarter = self._get_weekly_quarter_fixed(test_time)
+            print(f"   {test_time.strftime('%m-%d %H:%M')} → Daily: {daily_quarter}, Weekly: {weekly_quarter}")
 
 # ================================
 # ULTIMATE SWING DETECTOR WITH 3-CANDLE TOLERANCE
@@ -1156,12 +956,11 @@ class RobustCRTDetector:
 # ULTIMATE SMT DETECTOR WITH ALL QUARTER PAIRS
 # ================================
 
+# In UltimateSMTDetector.__init__ method, replace the quarter manager:
 class UltimateSMTDetector:
-    """Ultimate SMT detector checking ALL quarter pairs"""
-    
     def __init__(self, pair_config, timing_manager):
         self.smt_history = []
-        self.quarter_manager = RobustQuarterManager()
+        self.quarter_manager = RobustQuarterManager()  # ← USE FIXED VERSION
         self.swing_detector = UltimateSwingDetector()
         self.timing_manager = timing_manager
         self.signal_counts = {}
