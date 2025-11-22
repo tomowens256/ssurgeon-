@@ -1208,20 +1208,25 @@ class UltimateSMTDetector:
         return True
 
     def debug_quarter_validation(self, prev_q, curr_q, asset1_prev, asset1_curr, asset2_prev, asset2_curr):
-        """Validate if quarter pairs make chronological sense"""
-        print(f"\n🔍 VALIDATING {prev_q}→{curr_q}:")
+        """Validate quarter chronology for 18:00-start system"""
+        print(f"\n🔍 VALIDATING {prev_q}→{curr_q} (18:00-start system):")
         
-        # Check if quarters are chronologically ordered
         if not asset1_prev.empty and not asset1_curr.empty:
             prev_end = asset1_prev['time'].max()
             curr_start = asset1_curr['time'].min()
-            time_gap = (curr_start - prev_end).total_seconds() / 3600  # hours
+            time_gap = (curr_start - prev_end).total_seconds() / 3600
             
-            print(f"   Time gap: {prev_end.strftime('%m-%d %H:%M')} → {curr_start.strftime('%m-%d %H:%M')} ({time_gap:.1f}h)")
-            
-            if time_gap < 0:
-                print(f"   ❌ REVERSED TIME: Current quarter starts BEFORE previous quarter!")
-            elif time_gap > 24:
+            # Special handling for q4→q1 transition (crosses day boundary)
+            if prev_q == 'q4' and curr_q == 'q1':
+                # q4 ends at 17:59, q1 starts at 18:00 (could be same day or next day)
+                expected_gap = 0.02  # ~1 minute gap is acceptable
+                if -1 <= time_gap <= 1:  # Allow small gaps around the boundary
+                    print(f"   ✅ Q4→Q1 TRANSITION: {prev_end.strftime('%m-%d %H:%M')} → {curr_start.strftime('%m-%d %H:%M')} ({time_gap:+.1f}h)")
+                else:
+                    print(f"   ⚠️ UNUSUAL Q4→Q1 GAP: {prev_end.strftime('%m-%d %H:%M')} → {curr_start.strftime('%m-%d %H:%M')} ({time_gap:+.1f}h)")
+            elif time_gap < -1:
+                print(f"   ❌ REVERSED TIME: Current quarter starts BEFORE previous quarter! ({time_gap:+.1f}h)")
+            elif time_gap > 6:
                 print(f"   ⚠️ LARGE GAP: {time_gap:.1f}h between quarters")
             else:
                 print(f"   ✅ Reasonable gap: {time_gap:.1f}h")
