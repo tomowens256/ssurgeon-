@@ -1168,6 +1168,8 @@ class UltimateSMTDetector:
         self.invalidated_smts = set()
         self.pair_config = pair_config
         self.last_smt_candle = None
+        
+
 
         
         # Timeframe to minutes mapping for tolerance calculation
@@ -1217,8 +1219,10 @@ class UltimateSMTDetector:
                 return None
     
             results = []
-            self.debug_quarter_contents("daily", "Asset1", quarter_data['daily']['asset1'])
-            self.debug_quarter_contents("daily", "Asset2", quarter_data['daily']['asset2'])
+            # debug the actual quarter DataFrames we just created
+            self.debug_quarter_contents_from_dfs(cycle_type, "Asset1", asset1_quarters)
+            self.debug_quarter_contents_from_dfs(cycle_type, "Asset2", asset2_quarters)
+
 
     
             # Scan ONLY valid chronological pairs
@@ -1278,6 +1282,51 @@ class UltimateSMTDetector:
         except Exception as e:
             logger.error(f"❌ Error in SMT detection for {cycle_type}: {str(e)}")
             return None
+
+    def debug_quarter_contents_from_dfs(self, cycle_type, asset_name, quarter_dfs):
+        """
+        Debug helper for quarter dicts where each value is a pandas DataFrame.
+        quarter_dfs is expected to be a dict: { 'q1': df_q1, 'q2': df_q2, ... }
+        """
+        logger.info(f"📌 DEBUG — {cycle_type.upper()} / {asset_name}")
+    
+        for qname, qdf in quarter_dfs.items():
+            if qdf is None or (hasattr(qdf, "empty") and qdf.empty):
+                logger.warning(f"   ⚠️ {qname}: EMPTY quarter")
+                continue
+    
+            # Ensure time column is Timestamp type
+            try:
+                times = pd.to_datetime(qdf['time'])
+            except Exception:
+                # fallback if 'time' not a column
+                times = pd.to_datetime(qdf.index)
+    
+            start_t = times.min()
+            end_t = times.max()
+            count = len(qdf)
+    
+            # run swing detector on this quarter to show the swings
+            highs, lows = self.swing_detector.find_swing_highs_lows(qdf)
+    
+            logger.info(f"\n   🟦 Quarter: {qname}")
+            logger.info(f"      🕒 Range: {start_t} → {end_t}")
+            logger.info(f"      🔢 Candles: {count}")
+    
+            if highs:
+                logger.info("      🔺 High Swings:")
+                for h in highs[:5]:
+                    logger.info(f"         • {h['time']} → {h['price']}")
+            else:
+                logger.info("      🔺 High Swings: NONE")
+    
+            if lows:
+                logger.info("      🔻 Low Swings:")
+                for l in lows[:5]:
+                    logger.info(f"         • {l['time']} → {l['price']}")
+            else:
+                logger.info("      🔻 Low Swings: NONE")
+
 
     def check_data_quality(self, pair1_data, pair2_data, cycle_type):
         """Check if we have good quality data for analysis"""
