@@ -517,39 +517,65 @@ class RobustQuarterManager:
     def get_current_quarter(self, cycle_type):
         """
         Determine the current quarter based on cycle type and current time.
+        ICT Daily quarters start at 18:00 New York.
+        Weekly uses Monday→Thursday as Q1–Q4 and Friday as Q_less.
+        90min stays rotating quarterly every 90 minutes.
         """
     
         now = datetime.now(self.timezone)
+        hour = now.hour
+        minute = now.minute
+        total_min = hour * 60 + minute
     
-        # Daily cycle → quarters of the day
+        # --------------------------
+        # DAILY (ICT STYLE)
+        # --------------------------
         if cycle_type == "daily":
-            hour = now.hour
-            if 0 <= hour < 6:
-                return "Q1"
-            elif 6 <= hour < 12:
-                return "Q2"
-            elif 12 <= hour < 18:
-                return "Q3"
-            else:
-                return "Q4"
     
-        # 90min cycle → use mod-6 logic (6 periods in 9 hours)
+            # q1 → 18:00 – 00:00
+            if total_min >= 18*60:
+                return "Q1"
+    
+            # q2 → 00:00 – 06:00
+            if 0 <= total_min < 6*60:
+                return "Q2"
+    
+            # q3 → 06:00 – 12:00
+            if 6*60 <= total_min < 12*60:
+                return "Q3"
+    
+            # q4 → 12:00 – 18:00
+            return "Q4"
+    
+        # --------------------------
+        # 90 MIN CYCLE (your original logic)
+        # --------------------------
         if cycle_type == "90min":
-            minute_block = (now.hour * 60 + now.minute) // 90
+            minute_block = total_min // 90
             quarter_index = minute_block % 4
             return ["Q1", "Q2", "Q3", "Q4"][quarter_index]
     
-        # Weekly cycle → divide the week
+        # --------------------------
+        # WEEKLY CYCLE (ICT style)
+        # Monday→Q1, Tue→Q2, Wed→Q3, Thu→Q4, Fri→Q_less
+        # --------------------------
         if cycle_type == "weekly":
-            weekday = now.weekday()  # 0 Monday → 6 Sunday
-            if weekday < 2:
+            weekday = now.weekday()  # Monday=0, Friday=4
+    
+            if weekday == 0:
                 return "Q1"
-            elif weekday < 4:
+            elif weekday == 1:
                 return "Q2"
-            elif weekday == 4:
+            elif weekday == 2:
                 return "Q3"
-            else:
+            elif weekday == 3:
                 return "Q4"
+            elif weekday == 4:
+                return "Q_less"
+            else:
+                # Weekends → no quarter (no SMT)
+                return None
+
     
         # Monthly cycle → divide month into 4 parts
         if cycle_type == "monthly":
