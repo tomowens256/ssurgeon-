@@ -1658,7 +1658,7 @@ class UltimateSMTDetector:
 
     
     def _find_bearish_smt_with_tolerance(self, asset1_prev_highs, asset1_curr_highs, asset2_prev_highs, asset2_curr_highs, asset1_combined_data, timeframe_minutes):
-        """Find bearish SMT with 3-CANDLE TOLERANCE"""
+        """Find bearish SMT with 3-CANDLE TOLERANCE - FIXED VARIABLE NAMES"""
         # Find aligned previous swings with tolerance
         aligned_prev_highs = self.swing_detector.find_aligned_swings(
             asset1_prev_highs, asset2_prev_highs, 
@@ -1674,22 +1674,18 @@ class UltimateSMTDetector:
         logger.debug(f"🔍 Bearish SMT: {len(aligned_prev_highs)} aligned prev highs, {len(aligned_curr_highs)} aligned curr highs")
         
         for prev_pair in aligned_prev_highs:
-            asset1_prev, asset2_prev, prev_time_diff = prev_pair
-            
+            asset1_prev, asset2_prev, prev_time_diff = prev_pair  # ← SINGULAR: asset1_prev
+                
             for curr_pair in aligned_curr_highs:
-                asset1_curr, asset2_curr, curr_time_diff = curr_pair
+                asset1_curr, asset2_curr, curr_time_diff = curr_pair  # ← SINGULAR: asset1_curr
                 
-                # Check SMT conditions - FIXED LOGIC FOR YOUR SCENARIO
-                # Asset1 makes HIGHER high (price goes above and closes above)
+                # Check SMT conditions
                 asset1_hh = asset1_curr['price'] > asset1_prev['price']
+                asset2_lh = asset2_curr['price'] <= asset2_prev['price']
                 
-                # Asset2 makes LOWER high (price may go above but fails to close above, OR doesn't go above at all)
-                # This matches your scenario: GBPJPY goes above but closes below
-                asset2_lh = asset2_curr['price'] <= asset2_prev['price']  # Lower high
-                
-                # CRITICAL: Check interim price validation for bearish SMT
+                # CRITICAL: Check interim price validation for bearish SMT - FIXED VARIABLE NAMES
                 interim_valid = self.swing_detector.validate_interim_price_action(
-                    asset1_combined_data, asset1_prev_high, asset1_curr_high, "bearish", "high"
+                    asset1_combined_data, asset1_prev, asset1_curr, "bearish", "high"  # ← SINGULAR: asset1_prev, asset1_curr
                 )
                 
                 if asset1_hh and asset2_lh and interim_valid:
@@ -1706,7 +1702,7 @@ class UltimateSMTDetector:
         return None
     
     def _find_bullish_smt_with_tolerance(self, asset1_prev_lows, asset1_curr_lows, asset2_prev_lows, asset2_curr_lows, asset1_combined_data, timeframe_minutes):
-        """Find bullish SMT with 3-CANDLE TOLERANCE"""
+        """Find bullish SMT with 3-CANDLE TOLERANCE - FIXED VARIABLE NAMES"""
         # Find aligned previous swings with tolerance
         aligned_prev_lows = self.swing_detector.find_aligned_swings(
             asset1_prev_lows, asset2_prev_lows,
@@ -1722,18 +1718,18 @@ class UltimateSMTDetector:
         logger.debug(f"🔍 Bullish SMT: {len(aligned_prev_lows)} aligned prev lows, {len(aligned_curr_lows)} aligned curr lows")
         
         for prev_pair in aligned_prev_lows:
-            asset1_prev, asset2_prev, prev_time_diff = prev_pair
-            
+            asset1_prev, asset2_prev, prev_time_diff = prev_pair  # ← SINGULAR: asset1_prev
+                
             for curr_pair in aligned_curr_lows:
-                asset1_curr, asset2_curr, curr_time_diff = curr_pair
+                asset1_curr, asset2_curr, curr_time_diff = curr_pair  # ← SINGULAR: asset1_curr
                 
                 # Check SMT conditions
                 asset1_ll = asset1_curr['price'] < asset1_prev['price']  # Lower low
                 asset2_hl = asset2_curr['price'] >= asset2_prev['price']  # Higher low
                 
-                # CRITICAL: Check interim price validation for bullish SMT
+                # CRITICAL: Check interim price validation for bullish SMT - FIXED VARIABLE NAMES
                 interim_valid = self.swing_detector.validate_interim_price_action(
-                    asset1_combined_data, asset1_prev_low, asset1_curr_low, "bullish", "low"
+                    asset1_combined_data, asset1_prev, asset1_curr, "bullish", "low"  # ← SINGULAR: asset1_prev, asset1_curr
                 )
                 
                 if asset1_ll and asset2_hl and interim_valid:
