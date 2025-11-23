@@ -1552,26 +1552,27 @@ class UltimateSMTDetector:
                 return None
     
             # Choose found result and unpack safely
+            # In the section where you process bearish_smt:
             if bearish_smt:
                 direction = 'bearish'
                 smt_type = 'Higher Swing High'
-                asset1_prev_high, asset1_curr_high, asset2_prev_high, asset2_curr_high = bearish_smt
-    
+                asset1_prev_high, asset1_curr_high, asset2_prev_high, asset2_curr_high = bearish_smt  # ← These are SINGULAR from the return tuple
+            
                 # Ensure chronological order for both assets; if reversed, swap
-                if asset1_curr_high['time'] <= asset1_prev_high['time']:
+                if asset1_curr_high['time'] <= asset1_prev_high['time']:  # ← SINGULAR
                     logger.warning(f"⚠️ Fixing chronology A1: {asset1_prev_high['time']} -> {asset1_curr_high['time']}")
                     asset1_prev_high, asset1_curr_high = asset1_curr_high, asset1_prev_high
-                if asset2_curr_high['time'] <= asset2_prev_high['time']:
+                if asset2_curr_high['time'] <= asset2_prev_high['time']:  # ← SINGULAR
                     logger.warning(f"⚠️ Fixing chronology A2: {asset2_prev_high['time']} -> {asset2_curr_high['time']}")
                     asset2_prev_high, asset2_curr_high = asset2_curr_high, asset2_prev_high
-    
-                formation_time = asset1_curr_high['time']
-                asset1_action = self.swing_detector.format_swing_time_description(asset1_prev_high, asset1_curr_high, "high", self.timing_manager)
-                asset2_action = self.swing_detector.format_swing_time_description(asset2_prev_high, asset2_curr_high, "high", self.timing_manager)
-                critical_level = asset1_curr_high['price']
-    
-                # Extra sanity: ensure prev < curr across both assets (otherwise reject)
-                if not (asset1_prev_high['time'] < asset1_curr_high['time'] and asset2_prev_high['time'] < asset2_curr_high['time']):
+            
+                formation_time = asset1_curr_high['time']  # ← SINGULAR
+                asset1_action = self.swing_detector.format_swing_time_description(asset1_prev_high, asset1_curr_high, "high", self.timing_manager)  # ← SINGULAR
+                asset2_action = self.swing_detector.format_swing_time_description(asset2_prev_high, asset2_curr_high, "high", self.timing_manager)  # ← SINGULAR
+                critical_level = asset1_curr_high['price']  # ← SINGULAR
+            
+                # Extra sanity: ensure prev < curr across both assets
+                if not (asset1_prev_high['time'] < asset1_curr_high['time'] and asset2_prev_high['time'] < asset2_curr_high['time']):  # ← SINGULAR
                     logger.warning("⚠️ Rejected bearish SMT because swings are not chronological across both assets")
                     return None
     
