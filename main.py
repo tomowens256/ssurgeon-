@@ -787,65 +787,91 @@ class UltimateSwingDetector:
 
     @staticmethod
     def validate_interim_price_action(df, first_swing, second_swing, direction="bearish"):
+        """
+        Enhanced validation: Check from first swing time until most current candle
+        to ensure no price violated the protected level
+        """
         if df is None or first_swing is None or second_swing is None:
             return False
     
         first_time = first_swing['time']
         second_time = second_swing['time']
     
-        # FIX 1: ensure correct ordering (first_swing must be before second_swing)
+        # Ensure correct chronological order
         if first_time >= second_time:
             logger.warning("⚠️ Swing times out of order — swapping them.")
             first_swing, second_swing = second_swing, first_swing
             first_time, second_time = second_time, first_time
     
-        # Interim candles
-        interim_candles = df[(df['time'] > first_time) & (df['time'] < second_time)]
-    
-        if interim_candles.empty:
-            #logger.debug("✅ No interim candles to validate")
+        # Get the MOST RECENT candle time in the dataframe
+        most_recent_time = df['time'].max()
+        
+        # Check ALL candles from first swing time until the most current candle
+        validation_candles = df[df['time'] >= first_time]
+        
+        if validation_candles.empty:
+            logger.debug("✅ No candles to validate after first swing")
             return True
     
         if direction == "bearish":
-    
+            # Protected level: highest of the two swing highs
             protected_high = max(
                 float(first_swing['price']),
                 float(second_swing['price'])
             )
     
-            max_interim_high = float(interim_candles['high'].max())
+            # Check ALL highs from first swing until now
+            max_validation_high = float(validation_candles['high'].max())
     
-            if max_interim_high > protected_high:
-                #logger.warning(
-                    #f"❌ INTERIM PRICE INVALIDATION (Bearish): Interim high {max_interim_high:.4f} > protected high {protected_high:.4f}"
-                #)
+            if max_validation_high > protected_high:
+                # Find which candle violated and when
+                violating_candle = validation_candles[validation_candles['high'] > protected_high].iloc[0]
+                violation_time = violating_candle['time'].strftime('%Y-%m-%d %H:%M')
+                violation_high = violating_candle['high']
+                
+                logger.warning(
+                    f"❌ BEARISH INTERIM INVALIDATION: "
+                    f"High {violation_high:.4f} > protected {protected_high:.4f} "
+                    f"at {violation_time}"
+                )
                 return False
     
-            #logger.info(
-                #f"✅ Valid interim price action (Bearish): Max interim high {max_interim_high:.4f} <= protected high {protected_high:.4f}"
-            #)
+            logger.info(
+                f"✅ BEARISH INTERIM VALIDATION PASSED: "
+                f"Max high {max_validation_high:.4f} <= protected {protected_high:.4f} "
+                f"(checked {len(validation_candles)} candles from {first_time.strftime('%H:%M')} to {most_recent_time.strftime('%H:%M')})"
+            )
             return True
     
         else:  # bullish
-    
+            # Protected level: lowest of the two swing lows
             protected_low = min(
                 float(first_swing['price']),
                 float(second_swing['price'])
             )
     
-            min_interim_low = float(interim_candles['low'].min())
+            # Check ALL lows from first swing until now
+            min_validation_low = float(validation_candles['low'].min())
     
-            if min_interim_low < protected_low:
-                #logger.warning(
-                    #f"❌ INTERIM PRICE INVALIDATION (Bullish): Interim low {min_interim_low:.4f} < protected low {protected_low:.4f}"
-                #)
+            if min_validation_low < protected_low:
+                # Find which candle violated and when
+                violating_candle = validation_candles[validation_candles['low'] < protected_low].iloc[0]
+                violation_time = violating_candle['time'].strftime('%Y-%m-%d %H:%M')
+                violation_low = violating_candle['low']
+                
+                logger.warning(
+                    f"❌ BULLISH INTERIM INVALIDATION: "
+                    f"Low {violation_low:.4f} < protected {protected_low:.4f} "
+                    f"at {violation_time}"
+                )
                 return False
     
-            #logger.info(
-                #f"✅ Valid interim price action (Bullish): Min interim low {min_interim_low:.4f} >= protected low {protected_low:.4f}"
-            #)
+            logger.info(
+                f"✅ BULLISH INTERIM VALIDATION PASSED: "
+                f"Min low {min_validation_low:.4f} >= protected {protected_low:.4f} "
+                f"(checked {len(validation_candles)} candles from {first_time.strftime('%H:%M')} to {most_recent_time.strftime('%H:%M')})"
+            )
             return True
-
 
 
 # ================================
