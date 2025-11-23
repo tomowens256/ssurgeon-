@@ -786,10 +786,17 @@ class UltimateSwingDetector:
                     return f"⚠️ NON-CHRONOLOGICAL: first low at {prev_time_str} and higher low at {curr_time_str}"
 
     @staticmethod
-    def validate_interim_price_action(df, first_swing, second_swing, direction="bearish"):
+    def validate_interim_price_action(df, first_swing, second_swing, direction="bearish", swing_type="high"):
         """
-        Enhanced validation: Check from first swing time until most current candle
-        to ensure no price violated the protected level
+        Enhanced validation for BOTH swing highs and swing lows
+        Checks from first swing time until most current candle to ensure no price violated the protected level
+        
+        Parameters:
+        - df: DataFrame with price data
+        - first_swing: First swing point (dict with 'time' and 'price')
+        - second_swing: Second swing point (dict with 'time' and 'price') 
+        - direction: "bearish" or "bullish"
+        - swing_type: "high" or "low" - specifies what type of swings we're validating
         """
         if df is None or first_swing is None or second_swing is None:
             return False
@@ -799,7 +806,7 @@ class UltimateSwingDetector:
     
         # Ensure correct chronological order
         if first_time >= second_time:
-            logger.warning("⚠️ Swing times out of order — swapping them.")
+            logger.warning(f"⚠️ Swing times out of order — swapping them. First: {first_time}, Second: {second_time}")
             first_swing, second_swing = second_swing, first_swing
             first_time, second_time = second_time, first_time
     
@@ -814,65 +821,124 @@ class UltimateSwingDetector:
             return True
     
         if direction == "bearish":
-            # Protected level: highest of the two swing highs
-            protected_high = max(
-                float(first_swing['price']),
-                float(second_swing['price'])
-            )
-    
-            # Check ALL highs from first swing until now
-            max_validation_high = float(validation_candles['high'].max())
-    
-            if max_validation_high > protected_high:
-                # Find which candle violated and when
-                violating_candle = validation_candles[validation_candles['high'] > protected_high].iloc[0]
-                violation_time = violating_candle['time'].strftime('%Y-%m-%d %H:%M')
-                violation_high = violating_candle['high']
-                
-                logger.warning(
-                    f"❌ BEARISH INTERIM INVALIDATION: "
-                    f"High {violation_high:.4f} > protected {protected_high:.4f} "
-                    f"at {violation_time}"
+            if swing_type == "high":
+                # For bearish SMT with swing highs: protected level is the highest of the two swing highs
+                protected_level = max(
+                    float(first_swing['price']),
+                    float(second_swing['price'])
                 )
-                return False
+                
+                # Check ALL highs from first swing until now
+                max_validation_level = float(validation_candles['high'].max())
     
-            logger.info(
-                f"✅ BEARISH INTERIM VALIDATION PASSED: "
-                f"Max high {max_validation_high:.4f} <= protected {protected_high:.4f} "
-                f"(checked {len(validation_candles)} candles from {first_time.strftime('%H:%M')} to {most_recent_time.strftime('%H:%M')})"
-            )
-            return True
+                if max_validation_level > protected_level:
+                    # Find which candle violated and when
+                    violating_candle = validation_candles[validation_candles['high'] > protected_level].iloc[0]
+                    violation_time = violating_candle['time'].strftime('%Y-%m-%d %H:%M')
+                    violation_price = violating_candle['high']
+                    
+                    logger.warning(
+                        f"❌ BEARISH SWING HIGH INVALIDATION: "
+                        f"High {violation_price:.4f} > protected high {protected_level:.4f} "
+                        f"at {violation_time}"
+                    )
+                    return False
+    
+                logger.info(
+                    f"✅ BEARISH SWING HIGH VALIDATION PASSED: "
+                    f"Max high {max_validation_level:.4f} <= protected high {protected_level:.4f} "
+                    f"(checked {len(validation_candles)} candles from {first_time.strftime('%H:%M')} to {most_recent_time.strftime('%H:%M')})"
+                )
+                return True
+                
+            else:  # swing_type == "low" for bearish (though less common)
+                # For bearish with swing lows: protected level is the higher of the two swing lows
+                protected_level = max(
+                    float(first_swing['price']),
+                    float(second_swing['price'])
+                )
+                
+                # Check ALL lows from first swing until now
+                max_validation_level = float(validation_candles['low'].max())
+    
+                if max_validation_level > protected_level:
+                    violating_candle = validation_candles[validation_candles['low'] > protected_level].iloc[0]
+                    violation_time = violating_candle['time'].strftime('%Y-%m-%d %H:%M')
+                    violation_price = violating_candle['low']
+                    
+                    logger.warning(
+                        f"❌ BEARISH SWING LOW INVALIDATION: "
+                        f"Low {violation_price:.4f} > protected low {protected_level:.4f} "
+                        f"at {violation_time}"
+                    )
+                    return False
+    
+                logger.info(
+                    f"✅ BEARISH SWING LOW VALIDATION PASSED: "
+                    f"Max low {max_validation_level:.4f} <= protected low {protected_level:.4f} "
+                    f"(checked {len(validation_candles)} candles)"
+                )
+                return True
     
         else:  # bullish
-            # Protected level: lowest of the two swing lows
-            protected_low = min(
-                float(first_swing['price']),
-                float(second_swing['price'])
-            )
-    
-            # Check ALL lows from first swing until now
-            min_validation_low = float(validation_candles['low'].min())
-    
-            if min_validation_low < protected_low:
-                # Find which candle violated and when
-                violating_candle = validation_candles[validation_candles['low'] < protected_low].iloc[0]
-                violation_time = violating_candle['time'].strftime('%Y-%m-%d %H:%M')
-                violation_low = violating_candle['low']
-                
-                logger.warning(
-                    f"❌ BULLISH INTERIM INVALIDATION: "
-                    f"Low {violation_low:.4f} < protected {protected_low:.4f} "
-                    f"at {violation_time}"
+            if swing_type == "low":
+                # For bullish SMT with swing lows: protected level is the lowest of the two swing lows
+                protected_level = min(
+                    float(first_swing['price']),
+                    float(second_swing['price'])
                 )
-                return False
     
-            logger.info(
-                f"✅ BULLISH INTERIM VALIDATION PASSED: "
-                f"Min low {min_validation_low:.4f} >= protected {protected_low:.4f} "
-                f"(checked {len(validation_candles)} candles from {first_time.strftime('%H:%M')} to {most_recent_time.strftime('%H:%M')})"
-            )
-            return True
-
+                # Check ALL lows from first swing until now
+                min_validation_level = float(validation_candles['low'].min())
+    
+                if min_validation_level < protected_level:
+                    # Find which candle violated and when
+                    violating_candle = validation_candles[validation_candles['low'] < protected_level].iloc[0]
+                    violation_time = violating_candle['time'].strftime('%Y-%m-%d %H:%M')
+                    violation_price = violating_candle['low']
+                    
+                    logger.warning(
+                        f"❌ BULLISH SWING LOW INVALIDATION: "
+                        f"Low {violation_price:.4f} < protected low {protected_level:.4f} "
+                        f"at {violation_time}"
+                    )
+                    return False
+    
+                logger.info(
+                    f"✅ BULLISH SWING LOW VALIDATION PASSED: "
+                    f"Min low {min_validation_level:.4f} >= protected low {protected_level:.4f} "
+                    f"(checked {len(validation_candles)} candles from {first_time.strftime('%H:%M')} to {most_recent_time.strftime('%H:%M')})"
+                )
+                return True
+                
+            else:  # swing_type == "high" for bullish (though less common)
+                # For bullish with swing highs: protected level is the lower of the two swing highs
+                protected_level = min(
+                    float(first_swing['price']),
+                    float(second_swing['price'])
+                )
+    
+                # Check ALL highs from first swing until now
+                min_validation_level = float(validation_candles['high'].min())
+    
+                if min_validation_level < protected_level:
+                    violating_candle = validation_candles[validation_candles['high'] < protected_level].iloc[0]
+                    violation_time = violating_candle['time'].strftime('%Y-%m-%d %H:%M')
+                    violation_price = violating_candle['high']
+                    
+                    logger.warning(
+                        f"❌ BULLISH SWING HIGH INVALIDATION: "
+                        f"High {violation_price:.4f} < protected high {protected_level:.4f} "
+                        f"at {violation_time}"
+                    )
+                    return False
+    
+                logger.info(
+                    f"✅ BULLISH SWING HIGH VALIDATION PASSED: "
+                    f"Min high {min_validation_level:.4f} >= protected high {protected_level:.4f} "
+                    f"(checked {len(validation_candles)} candles)"
+                )
+                return True
 
 # ================================
 # ENHANCED CRT DETECTOR WITH PSP TRACKING
@@ -1623,7 +1689,7 @@ class UltimateSMTDetector:
                 
                 # CRITICAL: Check interim price validation for bearish SMT
                 interim_valid = self.swing_detector.validate_interim_price_action(
-                    asset1_combined_data, asset1_prev, asset1_curr, "bearish"
+                    asset1_combined_data, asset1_prev_high, asset1_curr_high, "bearish", "high"
                 )
                 
                 if asset1_hh and asset2_lh and interim_valid:
@@ -1667,7 +1733,7 @@ class UltimateSMTDetector:
                 
                 # CRITICAL: Check interim price validation for bullish SMT
                 interim_valid = self.swing_detector.validate_interim_price_action(
-                    asset1_combined_data, asset1_prev, asset1_curr, "bullish"
+                    asset1_combined_data, asset1_prev_low, asset1_curr_low, "bullish", "low"
                 )
                 
                 if asset1_ll and asset2_hl and interim_valid:
