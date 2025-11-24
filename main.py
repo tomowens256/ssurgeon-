@@ -45,7 +45,7 @@ TRADING_PAIRS = {
         }
     },
     'us_indices_triad': {
-        'instruments': ['NAS100_USD', 'SPX500_USD', 'US30_USD'],  # TRIAD: 3 assets
+        'instruments': ['NAS100_USD', 'SPX500_USD'],  
         'timeframe_mapping': {
             'monthly': 'H4',
             'weekly': 'H1',
