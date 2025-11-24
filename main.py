@@ -2517,9 +2517,9 @@ class UltimateTradingSystem:
         """Get proven candle counts"""
         proven_counts = {
             'H4': 100,  # Monthly
-            'H1': 120,  # Weekly
-            'M15': 96,  # Daily
-            'M5': 72,   # 90min
+            'H1': 60,  # Weekly
+            'M15': 60,  # Daily
+            'M5': 50,  # 90min
             'H2': 100, 'H3': 100, 'H6': 100, 'H8': 100, 'H12': 100
         }
         return proven_counts.get(timeframe, 100)
