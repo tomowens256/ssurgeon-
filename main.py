@@ -2889,6 +2889,8 @@ class UltimateTradingSystem:
     def __init__(self, pair_group, pair_config):
         self.pair_group = pair_group
         self.pair_config = pair_config
+        self.telegram_token = telegram_token
+        self.telegram_chat_id = telegram_chat_id
         
         # BACKWARD COMPATIBLE: Handle both old and new structures
         if 'instruments' in pair_config:
@@ -2910,7 +2912,7 @@ class UltimateTradingSystem:
         self.market_data = {inst: {} for inst in self.instruments}
         
         logger.info(f"🎯 Initialized ULTIMATE trading system for {pair_group}: {', '.join(self.instruments)}")
-
+    self.feature_box = RealTimeFeatureBox(pair_group, self.timing_manager, telegram_token, telegram_chat_id)
     async def run_ultimate_analysis(self, api_key):
         """Run analysis with REAL-TIME feature tracking - FIXED"""
         try:
