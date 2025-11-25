@@ -2921,33 +2921,48 @@ class UltimateTradingSystem:
 
     # Update data fetching for multiple instruments
     async def _fetch_all_data(self, api_key):
-        """Fetch data for ALL instruments in the group"""
+        """Fetch data with PROVEN candle counts - FIXED DataFrame checks"""
+        
+        # PROVEN CANDLE COUNTS from the working script
+        proven_counts = {
+            'H4': 100,   # Monthly timeframe
+            'H1': 120,   # Weekly timeframe  
+            'M15': 96,   # Daily timeframe
+            'M5': 72,    # 90min timeframe
+            'H2': 100, 'H3': 100, 'H6': 100, 'H8': 100, 'H12': 100
+        }
+        
         required_timeframes = list(self.pair_config['timeframe_mapping'].values())
         
-        # Add CRT timeframes
+        # ALWAYS include CRT timeframes for better detection
         for tf in CRT_TIMEFRAMES:
             if tf not in required_timeframes:
                 required_timeframes.append(tf)
         
-        # Use proven candle counts
-        proven_counts = {
-            'H4': 100, 'H1': 120, 'M15': 96, 'M5': 72,
-            'H2': 100, 'H3': 100, 'H6': 100, 'H8': 100, 'H12': 100
-        }
-        
-        for instrument in self.instruments:  # ← This now works with both structures
+        # FIXED: Use self.instruments instead of [self.pair1, self.pair2]
+        for instrument in self.instruments:
             for tf in required_timeframes:
+                # Use proven count if available, otherwise default to 100
                 count = proven_counts.get(tf, 100)
                 
                 try:
                     df = await asyncio.get_event_loop().run_in_executor(
                         None, fetch_candles, instrument, tf, count, api_key
                     )
-                    if df is not None and not df.empty:
+                    
+                    # ✅ FIXED: Explicit DataFrame checking
+                    if df is not None and isinstance(df, pd.DataFrame) and not df.empty:
                         self.market_data[instrument][tf] = df
-                        logger.debug(f"📥 Fetched {len(df)} {tf} candles for {instrument}")
+                        logger.debug(f"📥 Fetched {len(df)} {tf} candles for {instrument} (requested: {count})")
                     else:
-                        logger.warning(f"⚠️ No data received for {instrument} {tf}")
+                        # ✅ FIXED: Check what exactly is returned
+                        if df is None:
+                            logger.warning(f"⚠️ NULL data received for {instrument} {tf}")
+                        elif not isinstance(df, pd.DataFrame):
+                            logger.warning(f"⚠️ Non-DataFrame returned for {instrument} {tf}: {type(df)}")
+                        else:
+                            logger.warning(f"⚠️ Empty DataFrame for {instrument} {tf}")
+                            
                 except Exception as e:
                     logger.error(f"❌ Error fetching {instrument} {tf}: {str(e)}")
     
