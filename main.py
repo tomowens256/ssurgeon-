@@ -2670,6 +2670,38 @@ class RealTimeFeatureBox:
         else:
             logger.error(f"❌ FAILED to send immediate signal: {signal_key}")
             return False
+
+    def _check_crt_psp_confluence(self):
+        """Check CRT + PSP confluence"""
+        signals_sent = 0
+        
+        for crt_key, crt_feature in list(self.active_features['crt'].items()):
+            if self._is_feature_expired(crt_feature):
+                continue
+                
+            crt_data = crt_feature['crt_data']
+            
+            # Check if CRT has PSP
+            if not crt_feature['psp_data']:
+                continue
+                
+            # We have a CRT with PSP, send signal
+            signal_data = {
+                'pair_group': self.pair_group,
+                'direction': crt_data['direction'],
+                'confluence_type': 'CRT_PSP_IMMEDIATE',
+                'crt': crt_data,
+                'crt_psp': crt_feature['psp_data'],
+                'timestamp': datetime.now(NY_TZ),
+                'signal_key': f"CRT_PSP_{crt_key}",
+                'description': f"IMMEDIATE: {crt_data['timeframe']} CRT + PSP"
+            }
+            
+            if self._send_immediate_signal(signal_data):
+                self._remove_feature('crt', crt_key)
+                signals_sent += 1
+        
+        return signals_sent > 0
     
     def _format_immediate_signal_message(self, signal_data):
         """Format immediate signal for Telegram"""
@@ -2973,6 +3005,9 @@ class UltimateTradingSystem:
         # TODO: This method still uses signal_builder - need to update to use feature_box
         # For now, just return None since we're using feature_box approach
         return None
+
+
+        
         
         # OLD CODE (commented out for now):
         """
@@ -3007,6 +3042,25 @@ class UltimateTradingSystem:
         
         return None
         """
+
+    def get_sleep_time(self):
+        """Calculate sleep time until next relevant candle - SIMPLIFIED FOR NOW"""
+        # Since we're using Feature Box now, we'll use a simpler approach
+        # TODO: Implement proper sleep timing based on active features
+        
+        # For now, use base interval or check if we have any active features
+        summary = self.feature_box.get_active_features_summary()
+        
+        if summary['smt_count'] > 0 or summary['crt_count'] > 0:
+            # We have active features, check more frequently
+            sleep_time = 30  # 30 seconds
+            logger.info(f"⏰ {self.pair_group}: Active features detected - sleeping {sleep_time}s")
+        else:
+            # No active features, use normal interval
+            sleep_time = 60  # 60 seconds
+            logger.info(f"⏰ {self.pair_group}: No active features - sleeping {sleep_time}s")
+        
+        return sleep_time
     
     def _find_triad_confluence(self, signals):
         """Find confluence across triad pairs - FIXED UNPACKING"""
