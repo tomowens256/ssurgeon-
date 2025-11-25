@@ -2748,7 +2748,7 @@ class RealTimeFeatureBox:
         
         # Format and send message
         message = self._format_immediate_signal_message(signal_data)
-        success = send_telegram(message, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID)
+        success = send_telegram(message, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)
         
         if success:
             logger.info(f"🚀 IMMEDIATE SIGNAL SENT: {signal_data['description']}")
