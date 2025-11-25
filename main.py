@@ -2376,9 +2376,11 @@ class RealTimeFeatureBox:
     when confluence criteria are met
     """
     
-    def __init__(self, pair_group, timing_manager):
+    def __init__(self, pair_group, timing_manager, telegram_token, telegram_chat_id):
         self.pair_group = pair_group
         self.timing_manager = timing_manager
+        self.telegram_token = telegram_token
+        self.telegram_chat_id = telegram_chat_id
         
         # Active features storage with expiration tracking
         self.active_features = {
@@ -2746,9 +2748,9 @@ class RealTimeFeatureBox:
             logger.info(f"⏳ IMMEDIATE SIGNAL BLOCKED (duplicate): {signal_key}")
             return False
         
-        # Format and send message
+        # Format and send message - NOW USING INSTANCE VARIABLES
         message = self._format_immediate_signal_message(signal_data)
-        success = send_telegram(message, token, chat_id)
+        success = send_telegram(message, self.telegram_token, self.telegram_chat_id)
         
         if success:
             logger.info(f"🚀 IMMEDIATE SIGNAL SENT: {signal_data['description']}")
