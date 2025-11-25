@@ -2418,7 +2418,7 @@ class UltimateTradingSystem:
             return None
     
     async def _analyze_triad(self, api_key):
-        """Analyze triad of 3 instruments - check all pair combinations"""
+        """Analyze triad of 3 instruments - check all pair combinations with better error handling"""
         if len(self.instruments) != 3:
             logger.error(f"❌ _analyze_triad called but only {len(self.instruments)} instruments")
             return None
@@ -2428,20 +2428,31 @@ class UltimateTradingSystem:
         # Analyze all pairs: AB, AC, BC
         signals = []
         
-        # Pair AB
-        signal_ab = await self._analyze_pair_combo(instrument_a, instrument_b, "AB")
-        if signal_ab:
-            signals.append(('AB', signal_ab))
+        try:
+            # Pair AB
+            signal_ab = await self._analyze_pair_combo(instrument_a, instrument_b, "AB")
+            if signal_ab and isinstance(signal_ab, dict):
+                signals.append(('AB', signal_ab))
+            else:
+                logger.debug(f"🔍 No valid signal for AB pair")
         
-        # Pair AC  
-        signal_ac = await self._analyze_pair_combo(instrument_a, instrument_c, "AC")
-        if signal_ac:
-            signals.append(('AC', signal_ac))
+            # Pair AC  
+            signal_ac = await self._analyze_pair_combo(instrument_a, instrument_c, "AC")
+            if signal_ac and isinstance(signal_ac, dict):
+                signals.append(('AC', signal_ac))
+            else:
+                logger.debug(f"🔍 No valid signal for AC pair")
         
-        # Pair BC
-        signal_bc = await self._analyze_pair_combo(instrument_b, instrument_c, "BC")
-        if signal_bc:
-            signals.append(('BC', signal_bc))
+            # Pair BC
+            signal_bc = await self._analyze_pair_combo(instrument_b, instrument_c, "BC")
+            if signal_bc and isinstance(signal_bc, dict):
+                signals.append(('BC', signal_bc))
+            else:
+                logger.debug(f"🔍 No valid signal for BC pair")
+        
+        except Exception as e:
+            logger.error(f"❌ Error in triad analysis for {self.pair_group}: {str(e)}")
+            return None
         
         # Find confluence - at least 2 pairs agreeing on direction
         return self._find_triad_confluence(signals)
