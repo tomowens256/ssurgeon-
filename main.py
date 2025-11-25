@@ -2365,6 +2365,401 @@ class UltimateSignalBuilder:
         self.has_conflict = False
         logger.info(f"🔄 {self.pair_group}: Signal builder reset")
 
+
+# ================================
+# REAL-TIME FEATURE TRACKING SYSTEM
+# ================================
+
+class RealTimeFeatureBox:
+    """
+    Real-time feature tracking system that immediately triggers signals
+    when confluence criteria are met
+    """
+    
+    def __init__(self, pair_group, timing_manager):
+        self.pair_group = pair_group
+        self.timing_manager = timing_manager
+        
+        # Active features storage with expiration tracking
+        self.active_features = {
+            'smt': {},      # key: signal_key, value: {smt_data, psp_data, timestamp, expiration}
+            'crt': {},      # key: signal_key, value: {crt_data, psp_data, timestamp, expiration}  
+            'psp': {}       # key: signal_key, value: {psp_data, timestamp, expiration}
+        }
+        
+        # Signal cooldown to prevent duplicates
+        self.sent_signals = {}
+        
+        # Feature expiration times (minutes)
+        self.expiration_times = {
+            'smt': 240,    # 4 hours for SMT
+            'crt': 240,    # 2 hours for CRT  
+            'psp': 60      # 1 hour for PSP
+        }
+        
+        logger.info(f"🎯 RealTimeFeatureBox initialized for {pair_group}")
+    
+    def add_smt(self, smt_data, psp_data=None):
+        """Add SMT feature to tracking - triggers immediate confluence check"""
+        if not smt_data:
+            return False
+            
+        signal_key = smt_data['signal_key']
+        
+        # Check if already exists and is still valid
+        if signal_key in self.active_features['smt']:
+            if not self._is_feature_expired(self.active_features['smt'][signal_key]):
+                logger.debug(f"🔄 SMT already active: {signal_key}")
+                return False
+        
+        # Store SMT feature
+        self.active_features['smt'][signal_key] = {
+            'smt_data': smt_data,
+            'psp_data': psp_data,
+            'timestamp': datetime.now(NY_TZ),
+            'expiration': datetime.now(NY_TZ) + timedelta(minutes=self.expiration_times['smt'])
+        }
+        
+        logger.info(f"📥 SMT ADDED to FeatureBox: {smt_data['cycle']} {smt_data['direction']} {smt_data['quarters']}")
+        
+        # Immediate confluence check
+        return self._check_immediate_confluence(signal_key, 'smt')
+    
+    def add_crt(self, crt_data, psp_data=None):
+        """Add CRT feature to tracking - triggers immediate confluence check"""
+        if not crt_data:
+            return False
+            
+        signal_key = crt_data['signal_key']
+        
+        # Check if already exists and is still valid
+        if signal_key in self.active_features['crt']:
+            if not self._is_feature_expired(self.active_features['crt'][signal_key]):
+                logger.debug(f"🔄 CRT already active: {signal_key}")
+                return False
+        
+        # Store CRT feature
+        self.active_features['crt'][signal_key] = {
+            'crt_data': crt_data,
+            'psp_data': psp_data, 
+            'timestamp': datetime.now(NY_TZ),
+            'expiration': datetime.now(NY_TZ) + timedelta(minutes=self.expiration_times['crt'])
+        }
+        
+        logger.info(f"📥 CRT ADDED to FeatureBox: {crt_data['timeframe']} {crt_data['direction']}")
+        
+        # Immediate confluence check
+        return self._check_immediate_confluence(signal_key, 'crt')
+    
+    def add_psp(self, psp_data, associated_smt_key=None):
+        """Add PSP feature to tracking - triggers immediate confluence check"""
+        if not psp_data:
+            return False
+            
+        signal_key = psp_data['signal_key']
+        
+        # Store PSP feature
+        self.active_features['psp'][signal_key] = {
+            'psp_data': psp_data,
+            'associated_smt': associated_smt_key,
+            'timestamp': datetime.now(NY_TZ),
+            'expiration': datetime.now(NY_TZ) + timedelta(minutes=self.expiration_times['psp'])
+        }
+        
+        logger.info(f"📥 PSP ADDED to FeatureBox: {psp_data['timeframe']} {psp_data['asset1_color']}/{psp_data['asset2_color']}")
+        
+        # If PSP is associated with specific SMT, check that SMT immediately
+        if associated_smt_key:
+            return self._check_smt_psp_confluence(associated_smt_key, signal_key)
+        else:
+            # Check all possible confluences
+            return self._check_immediate_confluence(signal_key, 'psp')
+    
+    def _check_immediate_confluence(self, new_feature_key, feature_type):
+        """
+        IMMEDIATE confluence check when new feature is added
+        Returns True if signal was sent
+        """
+        logger.info(f"🔍 IMMEDIATE CONFLUENCE CHECK for {feature_type}: {new_feature_key}")
+        
+        # Check all possible confluence combinations
+        signals_sent = []
+        
+        # 1. Check SMT + PSP confluence
+        signals_sent.append(self._check_smt_psp_confluence_global())
+        
+        # 2. Check CRT + SMT confluence  
+        signals_sent.append(self._check_crt_smt_confluence())
+        
+        # 3. Check CRT + PSP confluence
+        signals_sent.append(self._check_crt_psp_confluence())
+        
+        # 4. Check Multiple SMTs confluence
+        signals_sent.append(self._check_multiple_smts_confluence())
+        
+        # 5. Check Triple Confluence (CRT + PSP + SMT)
+        signals_sent.append(self._check_triple_confluence())
+        
+        return any(signals_sent)
+    
+    def _check_smt_psp_confluence(self, smt_key, psp_key):
+        """Check specific SMT + PSP confluence"""
+        if smt_key not in self.active_features['smt']:
+            return False
+        if psp_key not in self.active_features['psp']:
+            return False
+            
+        smt_feature = self.active_features['smt'][smt_key]
+        psp_feature = self.active_features['psp'][psp_key]
+        
+        # Validate they're still active
+        if self._is_feature_expired(smt_feature) or self._is_feature_expired(psp_feature):
+            return False
+        
+        smt_data = smt_feature['smt_data']
+        psp_data = psp_feature['psp_data']
+        
+        # Check if PSP timeframe matches SMT timeframe
+        if smt_data.get('timeframe') != psp_data.get('timeframe'):
+            logger.debug(f"⚠️ SMT/PSP timeframe mismatch: {smt_data.get('timeframe')} vs {psp_data.get('timeframe')}")
+            return False
+        
+        # Create signal
+        signal_data = {
+            'pair_group': self.pair_group,
+            'direction': smt_data['direction'],
+            'confluence_type': 'SMT_PSP_IMMEDIATE',
+            'smt': smt_data,
+            'psp': psp_data,
+            'timestamp': datetime.now(NY_TZ),
+            'signal_key': f"SMT_PSP_{smt_key}_{psp_key}",
+            'description': f"IMMEDIATE: {smt_data['cycle']} {smt_data['direction']} SMT + PSP confirmed"
+        }
+        
+        if self._send_immediate_signal(signal_data):
+            # Remove used features
+            self._remove_feature('smt', smt_key)
+            self._remove_feature('psp', psp_key)
+            return True
+            
+        return False
+    
+    def _check_smt_psp_confluence_global(self):
+        """Check all SMT+PSP combinations"""
+        signals_sent = 0
+        
+        for smt_key, smt_feature in list(self.active_features['smt'].items()):
+            if self._is_feature_expired(smt_feature):
+                continue
+                
+            smt_data = smt_feature['smt_data']
+            
+            # Check if this SMT already has PSP
+            if smt_feature['psp_data']:
+                # Already has PSP, check if we should send signal
+                signal_data = {
+                    'pair_group': self.pair_group,
+                    'direction': smt_data['direction'],
+                    'confluence_type': 'SMT_PSP_PRE_CONFIRMED',
+                    'smt': smt_data,
+                    'psp': smt_feature['psp_data'],
+                    'timestamp': datetime.now(NY_TZ),
+                    'signal_key': f"SMT_PSP_PRE_{smt_key}",
+                    'description': f"PRE-CONFIRMED: {smt_data['cycle']} {smt_data['direction']} SMT + PSP"
+                }
+                
+                if self._send_immediate_signal(signal_data):
+                    self._remove_feature('smt', smt_key)
+                    signals_sent += 1
+        
+        return signals_sent > 0
+    
+    def _check_crt_smt_confluence(self):
+        """Check CRT + SMT confluence"""
+        signals_sent = 0
+        
+        for crt_key, crt_feature in list(self.active_features['crt'].items()):
+            if self._is_feature_expired(crt_feature):
+                continue
+                
+            crt_data = crt_feature['crt_data']
+            
+            for smt_key, smt_feature in list(self.active_features['smt'].items()):
+                if self._is_feature_expired(smt_feature):
+                    continue
+                    
+                smt_data = smt_feature['smt_data']
+                
+                # Check direction match
+                if crt_data['direction'] == smt_data['direction']:
+                    signal_data = {
+                        'pair_group': self.pair_group,
+                        'direction': crt_data['direction'],
+                        'confluence_type': 'CRT_SMT_IMMEDIATE',
+                        'crt': crt_data,
+                        'smt': smt_data,
+                        'timestamp': datetime.now(NY_TZ),
+                        'signal_key': f"CRT_SMT_{crt_key}_{smt_key}",
+                        'description': f"IMMEDIATE: {crt_data['timeframe']} CRT + {smt_data['cycle']} SMT"
+                    }
+                    
+                    if self._send_immediate_signal(signal_data):
+                        self._remove_feature('crt', crt_key)
+                        self._remove_feature('smt', smt_key)
+                        signals_sent += 1
+                        break  # One signal per CRT
+        
+        return signals_sent > 0
+    
+    def _check_triple_confluence(self):
+        """Check CRT + PSP + SMT triple confluence"""
+        for crt_key, crt_feature in list(self.active_features['crt'].items()):
+            if self._is_feature_expired(crt_feature):
+                continue
+                
+            crt_data = crt_feature['crt_data']
+            
+            # Check if CRT has PSP
+            if not crt_feature['psp_data']:
+                continue
+                
+            for smt_key, smt_feature in list(self.active_features['smt'].items()):
+                if self._is_feature_expired(smt_feature):
+                    continue
+                    
+                smt_data = smt_feature['smt_data']
+                
+                # Check direction match
+                if crt_data['direction'] == smt_data['direction']:
+                    signal_data = {
+                        'pair_group': self.pair_group,
+                        'direction': crt_data['direction'],
+                        'confluence_type': 'TRIPLE_CONFLUENCE_IMMEDIATE',
+                        'crt': crt_data,
+                        'crt_psp': crt_feature['psp_data'],
+                        'smt': smt_data,
+                        'timestamp': datetime.now(NY_TZ),
+                        'signal_key': f"TRIPLE_{crt_key}_{smt_key}",
+                        'description': f"ULTIMATE TRIPLE: CRT + PSP + {smt_data['cycle']} SMT"
+                    }
+                    
+                    if self._send_immediate_signal(signal_data):
+                        self._remove_feature('crt', crt_key)
+                        self._remove_feature('smt', smt_key)
+                        return True
+        
+        return False
+    
+    def _send_immediate_signal(self, signal_data):
+        """Send signal immediately with duplicate prevention"""
+        signal_key = signal_data['signal_key']
+        
+        # Strong duplicate prevention
+        if self.timing_manager.is_duplicate_signal(signal_key, self.pair_group, cooldown_minutes=30):
+            logger.info(f"⏳ IMMEDIATE SIGNAL BLOCKED (duplicate): {signal_key}")
+            return False
+        
+        # Format and send message
+        message = self._format_immediate_signal_message(signal_data)
+        success = send_telegram(message, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID)
+        
+        if success:
+            logger.info(f"🚀 IMMEDIATE SIGNAL SENT: {signal_data['description']}")
+            self.sent_signals[signal_key] = datetime.now(NY_TZ)
+            return True
+        else:
+            logger.error(f"❌ FAILED to send immediate signal: {signal_key}")
+            return False
+    
+    def _format_immediate_signal_message(self, signal_data):
+        """Format immediate signal for Telegram"""
+        direction = signal_data['direction'].upper()
+        confluence_type = signal_data['confluence_type']
+        description = signal_data['description']
+        
+        message = f"⚡ *IMMEDIATE SIGNAL* ⚡\n\n"
+        message += f"*Pair Group:* {self.pair_group.replace('_', ' ').title()}\n"
+        message += f"*Direction:* {direction}\n"
+        message += f"*Confluence:* {confluence_type}\n"
+        message += f"*Description:* {description}\n\n"
+        
+        if 'smt' in signal_data:
+            smt = signal_data['smt']
+            message += f"*SMT Details:*\n"
+            message += f"• Cycle: {smt['cycle']} {smt['quarters']}\n"
+            message += f"• {smt['asset1_action']}\n"
+            message += f"• {smt['asset2_action']}\n\n"
+        
+        if 'crt' in signal_data:
+            crt = signal_data['crt']
+            message += f"*CRT Details:*\n"
+            message += f"• Timeframe: {crt['timeframe']}\n"
+            message += f"• Time: {crt['timestamp'].strftime('%H:%M')}\n\n"
+        
+        if 'psp' in signal_data:
+            psp = signal_data['psp']
+            message += f"*PSP Details:*\n"
+            message += f"• Timeframe: {psp['timeframe']}\n"
+            message += f"• Colors: {psp['asset1_color']}/{psp['asset2_color']}\n"
+            message += f"• Time: {psp['formation_time'].strftime('%H:%M')}\n\n"
+        
+        message += f"*Detection Time:* {signal_data['timestamp'].strftime('%Y-%m-%d %H:%M:%S')}\n"
+        message += f"*Latency:* IMMEDIATE\n\n"
+        message += f"#ImmediateSignal #{self.pair_group} #{direction}"
+        
+        return message
+    
+    def _is_feature_expired(self, feature):
+        """Check if feature has expired"""
+        return datetime.now(NY_TZ) > feature['expiration']
+    
+    def _remove_feature(self, feature_type, feature_key):
+        """Remove feature from tracking"""
+        if feature_key in self.active_features[feature_type]:
+            del self.active_features[feature_type][feature_key]
+            logger.debug(f"🗑️ Removed {feature_type}: {feature_key}")
+    
+    def cleanup_expired_features(self):
+        """Remove expired features periodically"""
+        current_time = datetime.now(NY_TZ)
+        
+        for feature_type in self.active_features:
+            for feature_key, feature in list(self.active_features[feature_type].items()):
+                if current_time > feature['expiration']:
+                    logger.info(f"🧹 Expired {feature_type}: {feature_key}")
+                    del self.active_features[feature_type][feature_key]
+    
+    def get_active_features_summary(self):
+        """Get summary of currently active features"""
+        summary = {
+            'smt_count': len(self.active_features['smt']),
+            'crt_count': len(self.active_features['crt']),
+            'psp_count': len(self.active_features['psp']),
+            'active_smts': [],
+            'active_crts': []
+        }
+        
+        for smt_key, smt_feature in self.active_features['smt'].items():
+            if not self._is_feature_expired(smt_feature):
+                smt_data = smt_feature['smt_data']
+                summary['active_smts'].append({
+                    'cycle': smt_data['cycle'],
+                    'direction': smt_data['direction'],
+                    'quarters': smt_data['quarters'],
+                    'has_psp': smt_feature['psp_data'] is not None
+                })
+        
+        for crt_key, crt_feature in self.active_features['crt'].items():
+            if not self._is_feature_expired(crt_feature):
+                crt_data = crt_feature['crt_data']
+                summary['active_crts'].append({
+                    'timeframe': crt_data['timeframe'],
+                    'direction': crt_data['direction'],
+                    'has_psp': crt_feature['psp_data'] is not None
+                })
+        
+        return summary
+
 # ================================
 # ULTIMATE TRADING SYSTEM WITH TRIPLE CONFLUENCE
 # ================================
@@ -2387,7 +2782,8 @@ class UltimateTradingSystem:
         self.quarter_manager = RobustQuarterManager()
         self.crt_detector = RobustCRTDetector(self.timing_manager)
         self.smt_detector = UltimateSMTDetector(pair_config, self.timing_manager)
-        self.signal_builder = UltimateSignalBuilder(pair_group, self.timing_manager)
+        # REPLACE signal_builder with Feature Box
+        self.feature_box = RealTimeFeatureBox(pair_group, self.timing_manager)
         
         # Data storage for all instruments
         self.market_data = {inst: {} for inst in self.instruments}
@@ -2395,33 +2791,58 @@ class UltimateTradingSystem:
         logger.info(f"🎯 Initialized ULTIMATE trading system for {pair_group}: {', '.join(self.instruments)}")
     
     async def run_ultimate_analysis(self, api_key):
-        """Run ultimate analysis with better error handling"""
+        """Run analysis with REAL-TIME feature tracking"""
         try:
-            current_status = self.signal_builder.get_progress_status()
-            logger.info(f"📊 {self.pair_group}: Current status - {current_status}")
+            # Cleanup expired features first
+            self.feature_box.cleanup_expired_features()
             
-            # Fetch ALL data needed for analysis
+            # Fetch data
             await self._fetch_all_data(api_key)
-    
-            # For triads (3 instruments), analyze all pairs: AB, AC, BC
-            if len(self.instruments) == 3:
-                result = await self._analyze_triad(api_key)
-                if result and self._validate_triad_signal(result):
-                    return result
-                return None
-                
-            # For pairs (2 instruments), use existing logic
-            elif len(self.instruments) == 2:
-                return await self._analyze_pair(api_key)
-            else:
-                logger.error(f"❌ Unsupported number of instruments: {len(self.instruments)}")
-                return None
-                
+            
+            # Scan for new features and add to Feature Box
+            await self._scan_and_add_features()
+            
+            # Get current feature summary
+            summary = self.feature_box.get_active_features_summary()
+            logger.info(f"📊 {self.pair_group} Feature Summary: {summary['smt_count']} SMTs, {summary['crt_count']} CRTs, {summary['psp_count']} PSPs")
+            
+            return None  # Signals are now sent immediately via Feature Box
+            
         except Exception as e:
-            logger.error(f"❌ Error in ultimate analysis for {self.pair_group}: {str(e)}")
-            import traceback
-            logger.error(f"Traceback: {traceback.format_exc()}")
+            logger.error(f"❌ Error in real-time analysis for {self.pair_group}: {str(e)}")
             return None
+    
+    async def _scan_and_add_features(self):
+        """Scan for all features and add to Feature Box immediately"""
+        # Scan for SMTs
+        await self._scan_all_smt_for_feature_box()
+        
+        # Scan for CRTs  
+        await self._scan_crt_signals_for_feature_box()
+        
+        # Scan for PSPs for existing SMTs
+        await self._scan_psp_for_existing_smts_feature_box()
+    
+    async def _scan_all_smt_for_feature_box(self):
+        """Scan for SMTs and add to Feature Box immediately"""
+        cycles = ['monthly', 'weekly', 'daily', '90min']
+        
+        for cycle in cycles:
+            timeframe = self.pair_config['timeframe_mapping'][cycle]
+            asset1_data = self.market_data[self.instruments[0]].get(timeframe)
+            asset2_data = self.market_data[self.instruments[1]].get(timeframe)
+            
+            if not asset1_data or not asset2_data:
+                continue
+            
+            smt_signal = self.smt_detector.detect_smt_all_cycles(asset1_data, asset2_data, cycle)
+            
+            if smt_signal:
+                # Check for PSP immediately
+                psp_signal = self.smt_detector.check_psp_for_smt(smt_signal, asset1_data, asset2_data)
+                
+                # Add to Feature Box (triggers immediate confluence check)
+                self.feature_box.add_smt(smt_signal, psp_signal)
     
     async def _analyze_triad(self, api_key):
         """Analyze triad of 3 instruments - check all pair combinations with better error handling"""
