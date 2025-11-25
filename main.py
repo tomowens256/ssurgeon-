@@ -2824,7 +2824,7 @@ class UltimateTradingSystem:
         await self._scan_psp_for_existing_smts_feature_box()
     
     async def _scan_all_smt_for_feature_box(self):
-        """Scan for SMTs and add to Feature Box immediately"""
+        """Scan for SMTs and add to Feature Box immediately - FIXED"""
         cycles = ['monthly', 'weekly', 'daily', '90min']
         
         for cycle in cycles:
@@ -2832,9 +2832,13 @@ class UltimateTradingSystem:
             asset1_data = self.market_data[self.instruments[0]].get(timeframe)
             asset2_data = self.market_data[self.instruments[1]].get(timeframe)
             
-            if not asset1_data or not asset2_data:
+            # ✅ FIXED: Explicit DataFrame checking
+            if (asset1_data is None or not isinstance(asset1_data, pd.DataFrame) or asset1_data.empty or
+                asset2_data is None or not isinstance(asset2_data, pd.DataFrame) or asset2_data.empty):
+                logger.debug(f"⚠️ No data for {cycle} ({timeframe}) - skipping SMT scan")
                 continue
             
+            logger.info(f"🔍 Scanning {cycle} cycle ({timeframe}) for SMT...")
             smt_signal = self.smt_detector.detect_smt_all_cycles(asset1_data, asset2_data, cycle)
             
             if smt_signal:
