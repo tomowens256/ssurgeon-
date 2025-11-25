@@ -2395,7 +2395,7 @@ class UltimateTradingSystem:
         logger.info(f"🎯 Initialized ULTIMATE trading system for {pair_group}: {', '.join(self.instruments)}")
     
     async def run_ultimate_analysis(self, api_key):
-        """Run ultimate analysis with TRIAD support"""
+        """Run ultimate analysis with better error handling"""
         try:
             current_status = self.signal_builder.get_progress_status()
             logger.info(f"📊 {self.pair_group}: Current status - {current_status}")
@@ -2405,7 +2405,11 @@ class UltimateTradingSystem:
     
             # For triads (3 instruments), analyze all pairs: AB, AC, BC
             if len(self.instruments) == 3:
-                return await self._analyze_triad(api_key)
+                result = await self._analyze_triad(api_key)
+                if result and self._validate_triad_signal(result):
+                    return result
+                return None
+                
             # For pairs (2 instruments), use existing logic
             elif len(self.instruments) == 2:
                 return await self._analyze_pair(api_key)
@@ -2415,6 +2419,8 @@ class UltimateTradingSystem:
                 
         except Exception as e:
             logger.error(f"❌ Error in ultimate analysis for {self.pair_group}: {str(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return None
     
     async def _analyze_triad(self, api_key):
