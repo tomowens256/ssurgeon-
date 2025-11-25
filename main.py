@@ -2525,23 +2525,51 @@ class UltimateTradingSystem:
         return proven_counts.get(timeframe, 100)
     
     def _find_triad_confluence(self, signals):
-        """Find confluence across triad pairs"""
+        """Find confluence across triad pairs - FIXED UNPACKING"""
+        if not signals:
+            logger.info(f"🔍 {self.pair_group}: No signals for triad confluence")
+            return None
+            
         if len(signals) < 2:
             logger.info(f"🔍 {self.pair_group}: No triad confluence (only {len(signals)} signals)")
             return None
         
-        # Count directions
+        # Count directions - FIXED: Properly unpack the signals
         bullish_count = 0
         bearish_count = 0
         signal_details = []
         
-        for combo, signal in signals:
-            direction = signal.get('direction')
+        for signal_tuple in signals:
+            # Each signal_tuple should be (combo_name, signal_dict)
+            if len(signal_tuple) != 2:
+                logger.error(f"❌ Invalid signal tuple format: {signal_tuple}")
+                continue
+                
+            combo_name, signal_dict = signal_tuple  # ← PROPER UNPACKING
+            
+            if not isinstance(signal_dict, dict):
+                logger.error(f"❌ Signal is not a dictionary: {signal_dict}")
+                continue
+                
+            direction = signal_dict.get('direction')
+            if not direction:
+                logger.error(f"❌ Signal missing direction: {signal_dict}")
+                continue
+                
             if direction == 'bullish':
                 bullish_count += 1
             elif direction == 'bearish':
                 bearish_count += 1
-            signal_details.append(f"{combo}: {direction}")
+            else:
+                logger.warning(f"⚠️ Unknown direction: {direction}")
+                continue
+                
+            signal_details.append(f"{combo_name}: {direction}")
+        
+        # Check if we have enough valid signals
+        if bullish_count + bearish_count < 2:
+            logger.info(f"🔍 {self.pair_group}: Insufficient valid signals for confluence")
+            return None
         
         # Check for confluence (at least 2 pairs agreeing)
         if bullish_count >= 2:
