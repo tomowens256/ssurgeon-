@@ -2371,12 +2371,8 @@ class UltimateSignalBuilder:
 # ================================
 
 class RealTimeFeatureBox:
-    """
-    Real-time feature tracking system that immediately triggers signals
-    when confluence criteria are met
-    """
-    
-    def __init__(self, pair_group, timing_manager, telegram_token, telegram_chat_id):
+    def __init__(self, pair_group, timing_manager, telegram_token=None, telegram_chat_id=None):
+        # Store all parameters as instance variables
         self.pair_group = pair_group
         self.timing_manager = timing_manager
         self.telegram_token = telegram_token
@@ -2395,11 +2391,12 @@ class RealTimeFeatureBox:
         # Feature expiration times (minutes)
         self.expiration_times = {
             'smt': 240,    # 4 hours for SMT
-            'crt': 240,    # 2 hours for CRT  
+            'crt': 120,    # 2 hours for CRT  
             'psp': 60      # 1 hour for PSP
         }
         
         logger.info(f"🎯 RealTimeFeatureBox initialized for {pair_group}")
+
     
     def add_smt(self, smt_data, psp_data=None):
         """Add SMT feature to tracking - triggers immediate confluence check"""
@@ -2888,11 +2885,14 @@ class RealTimeFeatureBox:
 # ================================
 
 class UltimateTradingSystem:
-    def __init__(self, pair_group, pair_config):
+    def __init__(self, pair_group, pair_config, telegram_token=None, telegram_chat_id=None):
+        # Store the parameters as instance variables
         self.pair_group = pair_group
         self.pair_config = pair_config
-        self.telegram_token = telegram_token
-        self.telegram_chat_id = telegram_chat_id
+        
+        # Handle Telegram credentials
+        self.telegram_token = telegram_token or os.getenv("TELEGRAM_BOT_TOKEN")
+        self.telegram_chat_id = telegram_chat_id or os.getenv("TELEGRAM_CHAT_ID")
         
         # BACKWARD COMPATIBLE: Handle both old and new structures
         if 'instruments' in pair_config:
@@ -2907,13 +2907,21 @@ class UltimateTradingSystem:
         self.quarter_manager = RobustQuarterManager()
         self.crt_detector = RobustCRTDetector(self.timing_manager)
         self.smt_detector = UltimateSMTDetector(pair_config, self.timing_manager)
-        # REPLACE signal_builder with Feature Box
-        self.feature_box = RealTimeFeatureBox(pair_group, self.timing_manager)
+        
+        # ✅ CORRECT: Now we can use self.pair_group because we're inside __init__
+        self.feature_box = RealTimeFeatureBox(
+            self.pair_group, 
+            self.timing_manager, 
+            self.telegram_token, 
+            self.telegram_chat_id
+        )
         
         # Data storage for all instruments
         self.market_data = {inst: {} for inst in self.instruments}
         
-        logger.info(f"🎯 Initialized ULTIMATE trading system for {pair_group}: {', '.join(self.instruments)}")
+        logger.info(f"🎯 Initialized ULTIMATE trading system for {self.pair_group}: {', '.join(self.instruments)}")
+    
+
     self.feature_box = RealTimeFeatureBox(pair_group, self.timing_manager, telegram_token, telegram_chat_id)
     async def run_ultimate_analysis(self, api_key):
         """Run analysis with REAL-TIME feature tracking - FIXED"""
