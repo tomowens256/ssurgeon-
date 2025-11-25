@@ -2610,6 +2610,93 @@ class RealTimeFeatureBox:
                         break  # One signal per CRT
         
         return signals_sent > 0
+
+    def _check_multiple_smts_confluence(self):
+        """Check for multiple SMTs confluence (2+ SMTs in same direction)"""
+        signals_sent = 0
+        
+        # Group SMTs by direction
+        bullish_smts = []
+        bearish_smts = []
+        
+        for smt_key, smt_feature in list(self.active_features['smt'].items()):
+            if self._is_feature_expired(smt_feature):
+                continue
+                
+            smt_data = smt_feature['smt_data']
+            
+            if smt_data['direction'] == 'bullish':
+                bullish_smts.append((smt_key, smt_data))
+            elif smt_data['direction'] == 'bearish':
+                bearish_smts.append((smt_key, smt_data))
+        
+        # Check for multiple bullish SMTs
+        if len(bullish_smts) >= 2:
+            logger.info(f"🎯 MULTIPLE BULLISH SMTs detected: {len(bullish_smts)} SMTs")
+            
+            # Get the SMT details for the signal
+            smt_details = []
+            smt_keys_used = []
+            
+            for smt_key, smt_data in bullish_smts[:2]:  # Use first 2 for signal
+                smt_details.append({
+                    'cycle': smt_data['cycle'],
+                    'quarters': smt_data['quarters'],
+                    'timeframe': smt_data.get('timeframe', 'unknown')
+                })
+                smt_keys_used.append(smt_key)
+            
+            signal_data = {
+                'pair_group': self.pair_group,
+                'direction': 'bullish',
+                'confluence_type': 'MULTIPLE_SMTS_BULLISH',
+                'multiple_smts': smt_details,
+                'smt_count': len(bullish_smts),
+                'timestamp': datetime.now(NY_TZ),
+                'signal_key': f"MULTI_SMT_BULLISH_{datetime.now().strftime('%H%M')}",
+                'description': f"MULTIPLE BULLISH SMTs: {len(bullish_smts)} cycles confirming"
+            }
+            
+            if self._send_immediate_signal(signal_data):
+                # Remove the used SMTs
+                for smt_key in smt_keys_used:
+                    self._remove_feature('smt', smt_key)
+                signals_sent += 1
+        
+        # Check for multiple bearish SMTs  
+        elif len(bearish_smts) >= 2:
+            logger.info(f"🎯 MULTIPLE BEARISH SMTs detected: {len(bearish_smts)} SMTs")
+            
+            # Get the SMT details for the signal
+            smt_details = []
+            smt_keys_used = []
+            
+            for smt_key, smt_data in bearish_smts[:2]:  # Use first 2 for signal
+                smt_details.append({
+                    'cycle': smt_data['cycle'],
+                    'quarters': smt_data['quarters'],
+                    'timeframe': smt_data.get('timeframe', 'unknown')
+                })
+                smt_keys_used.append(smt_key)
+            
+            signal_data = {
+                'pair_group': self.pair_group,
+                'direction': 'bearish',
+                'confluence_type': 'MULTIPLE_SMTS_BEARISH',
+                'multiple_smts': smt_details,
+                'smt_count': len(bearish_smts),
+                'timestamp': datetime.now(NY_TZ),
+                'signal_key': f"MULTI_SMT_BEARISH_{datetime.now().strftime('%H%M')}",
+                'description': f"MULTIPLE BEARISH SMTs: {len(bearish_smts)} cycles confirming"
+            }
+            
+            if self._send_immediate_signal(signal_data):
+                # Remove the used SMTs
+                for smt_key in smt_keys_used:
+                    self._remove_feature('smt', smt_key)
+                signals_sent += 1
+        
+        return signals_sent > 0
     
     def _check_triple_confluence(self):
         """Check CRT + PSP + SMT triple confluence"""
