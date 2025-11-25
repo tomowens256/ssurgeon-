@@ -2763,6 +2763,8 @@ class RealTimeFeatureBox:
 # ================================
 # ULTIMATE TRADING SYSTEM WITH TRIPLE CONFLUENCE
 # ================================
+# ULTIMATE TRADING SYSTEM WITH TRIPLE CONFLUENCE
+# ================================
 
 class UltimateTradingSystem:
     def __init__(self, pair_group, pair_config):
@@ -2789,10 +2791,13 @@ class UltimateTradingSystem:
         self.market_data = {inst: {} for inst in self.instruments}
         
         logger.info(f"🎯 Initialized ULTIMATE trading system for {pair_group}: {', '.join(self.instruments)}")
-    
+
     async def run_ultimate_analysis(self, api_key):
-        """Run analysis with REAL-TIME feature tracking"""
+        """Run analysis with REAL-TIME feature tracking - FIXED"""
         try:
+            # Debug data structure first
+            self.debug_data_structure()
+            
             # Cleanup expired features first
             self.feature_box.cleanup_expired_features()
             
@@ -2809,7 +2814,7 @@ class UltimateTradingSystem:
             return None  # Signals are now sent immediately via Feature Box
             
         except Exception as e:
-            logger.error(f"❌ Error in real-time analysis for {self.pair_group}: {str(e)}")
+            logger.error(f"❌ Error in real-time analysis for {self.pair_group}: {str(e)}", exc_info=True)
             return None
     
     async def _scan_and_add_features(self):
@@ -2817,11 +2822,12 @@ class UltimateTradingSystem:
         # Scan for SMTs
         await self._scan_all_smt_for_feature_box()
         
+        # TODO: Add these methods when ready
         # Scan for CRTs  
-        await self._scan_crt_signals_for_feature_box()
+        # await self._scan_crt_signals_for_feature_box()
         
         # Scan for PSPs for existing SMTs
-        await self._scan_psp_for_existing_smts_feature_box()
+        # await self._scan_psp_for_existing_smts_feature_box()
     
     async def _scan_all_smt_for_feature_box(self):
         """Scan for SMTs and add to Feature Box immediately - FIXED"""
@@ -2847,83 +2853,7 @@ class UltimateTradingSystem:
                 
                 # Add to Feature Box (triggers immediate confluence check)
                 self.feature_box.add_smt(smt_signal, psp_signal)
-    
-    async def _analyze_triad(self, api_key):
-        """Analyze triad of 3 instruments - check all pair combinations with better error handling"""
-        if len(self.instruments) != 3:
-            logger.error(f"❌ _analyze_triad called but only {len(self.instruments)} instruments")
-            return None
-            
-        instrument_a, instrument_b, instrument_c = self.instruments
-        
-        # Analyze all pairs: AB, AC, BC
-        signals = []
-        
-        try:
-            # Pair AB
-            signal_ab = await self._analyze_pair_combo(instrument_a, instrument_b, "AB")
-            if signal_ab and isinstance(signal_ab, dict):
-                signals.append(('AB', signal_ab))
-            else:
-                logger.debug(f"🔍 No valid signal for AB pair")
-        
-            # Pair AC  
-            signal_ac = await self._analyze_pair_combo(instrument_a, instrument_c, "AC")
-            if signal_ac and isinstance(signal_ac, dict):
-                signals.append(('AC', signal_ac))
-            else:
-                logger.debug(f"🔍 No valid signal for AC pair")
-        
-            # Pair BC
-            signal_bc = await self._analyze_pair_combo(instrument_b, instrument_c, "BC")
-            if signal_bc and isinstance(signal_bc, dict):
-                signals.append(('BC', signal_bc))
-            else:
-                logger.debug(f"🔍 No valid signal for BC pair")
-        
-        except Exception as e:
-            logger.error(f"❌ Error in triad analysis for {self.pair_group}: {str(e)}")
-            return None
-        
-        # Find confluence - at least 2 pairs agreeing on direction
-        return self._find_triad_confluence(signals)
-    
-    async def _analyze_pair_combo(self, inst1, inst2, combo_name):
-        """Analyze a specific pair combination"""
-        logger.info(f"🔍 Analyzing {combo_name} ({inst1}/{inst2})")
-        
-        # Reset signal builder for this pair
-        self.signal_builder.reset()
-        
-        # Get data for this pair
-        asset1_data = self.market_data[inst1]
-        asset2_data = self.market_data[inst2]
-        
-        if not asset1_data or not asset2_data:
-            return None
-        
-        # Step 1: Check SMT invalidations and PSP tracking
-        await self._check_smt_tracking()
-        
-        # Step 2: Scan for NEW SMT signals
-        await self._scan_all_smt()
-        
-        # Step 3: Check for PSP for existing SMTs
-        await self._check_psp_for_existing_smts()
-        
-        # Step 4: Scan for CRT signals
-        await self._scan_crt_signals()
-        
-        # Check if signal is complete
-        if self.signal_builder.is_signal_ready() and not self.signal_builder.has_serious_conflict():
-            signal = self.signal_builder.get_signal_details()
-            if signal and not self.timing_manager.is_duplicate_signal(signal['signal_key'], self.pair_group):
-                logger.info(f"🎯 {combo_name}: SIGNAL COMPLETE via {signal['path']}")
-                return signal
-        
-        return None
 
-    # Update data fetching for multiple instruments
     async def _fetch_all_data(self, api_key):
         """Fetch data with PROVEN candle counts - FIXED DataFrame checks"""
         
@@ -2969,7 +2899,21 @@ class UltimateTradingSystem:
                             
                 except Exception as e:
                     logger.error(f"❌ Error fetching {instrument} {tf}: {str(e)}")
-    
+
+    def debug_data_structure(self):
+        """Debug method to check data structure and identify problems"""
+        logger.info(f"🔧 DEBUG: Checking data structure for {self.pair_group}")
+        
+        for instrument in self.instruments:
+            logger.info(f"🔧 DEBUG: Instrument {instrument} has {len(self.market_data.get(instrument, {}))} timeframes")
+            
+            for tf, data in self.market_data.get(instrument, {}).items():
+                status = "❌ NULL" if data is None else f"✅ DataFrame({data.shape})" if isinstance(data, pd.DataFrame) else f"⚠️ {type(data)}"
+                logger.info(f"🔧 DEBUG:   {tf}: {status}")
+                
+                if isinstance(data, pd.DataFrame):
+                    logger.info(f"🔧 DEBUG:     Columns: {list(data.columns)}, Empty: {data.empty}")
+
     def _get_proven_count(self, timeframe):
         """Get proven candle counts"""
         proven_counts = {
@@ -2980,6 +2924,89 @@ class UltimateTradingSystem:
             'H2': 100, 'H3': 100, 'H6': 100, 'H8': 100, 'H12': 100
         }
         return proven_counts.get(timeframe, 100)
+
+    # KEEPING ONLY ONE VERSION OF TRIAD METHODS (the better one)
+    async def _analyze_triad(self, api_key):
+        """Analyze triad of 3 instruments - check all pair combinations with better error handling"""
+        if len(self.instruments) != 3:
+            logger.error(f"❌ _analyze_triad called but only {len(self.instruments)} instruments")
+            return None
+            
+        instrument_a, instrument_b, instrument_c = self.instruments
+        
+        # Analyze all pairs: AB, AC, BC
+        signals = []
+        
+        try:
+            # Pair AB
+            signal_ab = await self._analyze_pair_combo(instrument_a, instrument_b, "AB")
+            if signal_ab and isinstance(signal_ab, dict):
+                signals.append(('AB', signal_ab))
+            else:
+                logger.debug(f"🔍 No valid signal for AB pair")
+        
+            # Pair AC  
+            signal_ac = await self._analyze_pair_combo(instrument_a, instrument_c, "AC")
+            if signal_ac and isinstance(signal_ac, dict):
+                signals.append(('AC', signal_ac))
+            else:
+                logger.debug(f"🔍 No valid signal for AC pair")
+        
+            # Pair BC
+            signal_bc = await self._analyze_pair_combo(instrument_b, instrument_c, "BC")
+            if signal_bc and isinstance(signal_bc, dict):
+                signals.append(('BC', signal_bc))
+            else:
+                logger.debug(f"🔍 No valid signal for BC pair")
+        
+        except Exception as e:
+            logger.error(f"❌ Error in triad analysis for {self.pair_group}: {str(e)}")
+            return None
+        
+        # Find confluence - at least 2 pairs agreeing on direction
+        return self._find_triad_confluence(signals)
+    
+    async def _analyze_pair_combo(self, inst1, inst2, combo_name):
+        """Analyze a specific pair combination"""
+        logger.info(f"🔍 Analyzing {combo_name} ({inst1}/{inst2})")
+        
+        # TODO: This method still uses signal_builder - need to update to use feature_box
+        # For now, just return None since we're using feature_box approach
+        return None
+        
+        # OLD CODE (commented out for now):
+        """
+        # Reset signal builder for this pair
+        self.signal_builder.reset()
+        
+        # Get data for this pair
+        asset1_data = self.market_data[inst1]
+        asset2_data = self.market_data[inst2]
+        
+        if not asset1_data or not asset2_data:
+            return None
+        
+        # Step 1: Check SMT invalidations and PSP tracking
+        await self._check_smt_tracking()
+        
+        # Step 2: Scan for NEW SMT signals
+        await self._scan_all_smt()
+        
+        # Step 3: Check for PSP for existing SMTs
+        await self._check_psp_for_existing_smts()
+        
+        # Step 4: Scan for CRT signals
+        await self._scan_crt_signals()
+        
+        # Check if signal is complete
+        if self.signal_builder.is_signal_ready() and not self.signal_builder.has_serious_conflict():
+            signal = self.signal_builder.get_signal_details()
+            if signal and not self.timing_manager.is_duplicate_signal(signal['signal_key'], self.pair_group):
+                logger.info(f"🎯 {combo_name}: SIGNAL COMPLETE via {signal['path']}")
+                return signal
+        
+        return None
+        """
     
     def _find_triad_confluence(self, signals):
         """Find confluence across triad pairs - FIXED UNPACKING"""
@@ -3054,325 +3081,6 @@ class UltimateTradingSystem:
                    f"({max(bullish_count, bearish_count)}/3 pairs agreeing)")
         
         return triad_signal
-    
-    async def _scan_all_smt(self):
-        """Scan for SMT on ALL cycles - UPDATED for new structure"""
-        cycles = self.signal_builder.get_required_cycles()
-        
-        for cycle in cycles:
-            timeframe = self.pair_config['timeframe_mapping'][cycle]
-            asset1_data = self.market_data[self.instruments[0]].get(timeframe)  # ← FIXED: Use instruments[0]
-            asset2_data = self.market_data[self.instruments[1]].get(timeframe)  # ← FIXED: Use instruments[1]
-            
-            if (asset1_data is None or not isinstance(asset1_data, pd.DataFrame) or asset1_data.empty or
-                asset2_data is None or not isinstance(asset2_data, pd.DataFrame) or asset2_data.empty):
-                logger.warning(f"⚠️ No data for {cycle} ({timeframe})")
-                continue
-            
-            logger.info(f"🔍 Scanning {cycle} cycle ({timeframe}) for SMT...")
-            smt_signal = self.smt_detector.detect_smt_all_cycles(asset1_data, asset2_data, cycle)
-            
-            if smt_signal:
-                # Check for PSP immediately for this new SMT
-                psp_signal = self.smt_detector.check_psp_for_smt(smt_signal, asset1_data, asset2_data)
-                
-                # Add SMT with PSP if found
-                self.signal_builder.add_smt_signal(smt_signal, psp_signal)
-
-    async def _scan_crt_signals(self):
-        """Scan for CRT signals on all timeframes - UPDATED for new structure"""
-        crt_detected = False
-        
-        for timeframe in CRT_TIMEFRAMES:
-            asset1_data = self.market_data[self.instruments[0]].get(timeframe)  # ← FIXED: Use instruments[0]
-            asset2_data = self.market_data[self.instruments[1]].get(timeframe)  # ← FIXED: Use instruments[1]
-            
-            if (asset1_data is None or not isinstance(asset1_data, pd.DataFrame) or asset1_data.empty or
-                asset2_data is None or not isinstance(asset2_data, pd.DataFrame) or asset2_data.empty):
-                continue
-            
-            # UPDATED: CRT detection now includes PSP checking
-            crt_signal = self.crt_detector.calculate_crt_current_candle(
-                asset1_data, asset1_data, asset2_data, timeframe
-            )
-            
-            if crt_signal and self.signal_builder.set_crt_signal(crt_signal, timeframe, crt_signal.get('psp_signal')):
-                logger.info(f"🔷 {self.pair_group}: Fresh CRT detected on {timeframe}")
-                if crt_signal.get('psp_signal'):
-                    logger.info(f"🎯 {self.pair_group}: CRT with PSP confluence detected!")
-                crt_detected = True
-                break
-        
-        if not crt_detected:
-            logger.debug(f"🔍 {self.pair_group}: No CRT signals detected this cycle")
-    
-    async def _check_smt_tracking(self):
-        """Check SMT invalidations and update PSP tracking - UPDATED for new structure"""
-        if not self.signal_builder.active_smts:
-            return
-            
-        for cycle, smt in list(self.signal_builder.active_smts.items()):
-            timeframe = smt['timeframe']
-            asset1_data = self.market_data[self.instruments[0]].get(timeframe)  # ← FIXED: Use instruments[0]
-            asset2_data = self.market_data[self.instruments[1]].get(timeframe)  # ← FIXED: Use instruments[1]
-            
-            # Check invalidation
-            if self.smt_detector.check_smt_invalidation(smt, asset1_data, asset2_data):
-                # Remove from signal builder
-                if cycle in self.signal_builder.active_smts:
-                    del self.signal_builder.active_smts[cycle]
-                logger.info(f"🔄 Removed invalidated SMT: {cycle}")
-                continue
-            
-            # Check if we should keep tracking this SMT for PSP
-            if not self.smt_detector.should_keep_checking_smt(smt):
-                logger.info(f"⏹️ Stopping PSP tracking for SMT: {cycle}")
-                continue
-    
-    async def _check_psp_for_existing_smts(self):
-        """Check for PSP confirmation for existing SMTs - UPDATED for new structure"""
-        if not self.signal_builder.active_smts:
-            return
-            
-        for cycle, smt in self.signal_builder.active_smts.items():
-            # Skip if already has PSP
-            if cycle in self.signal_builder.psp_for_smts:
-                continue
-                
-            timeframe = smt['timeframe']
-            asset1_data = self.market_data[self.instruments[0]].get(timeframe)  # ← FIXED: Use instruments[0]
-            asset2_data = self.market_data[self.instruments[1]].get(timeframe)  # ← FIXED: Use instruments[1]
-            
-            if (asset1_data is None or not isinstance(asset1_data, pd.DataFrame) or asset1_data.empty or
-                asset2_data is None or not isinstance(asset2_data, pd.DataFrame) or asset2_data.empty):
-                continue
-            
-            # Check for PSP in last 5 candles
-            psp_signal = self.smt_detector.check_psp_for_smt(smt, asset1_data, asset2_data)
-            
-            if psp_signal:
-                self.signal_builder.set_psp_for_smt(cycle, psp_signal)
-    
-    async def _fetch_all_data(self, api_key):
-        """Fetch data with PROVEN candle counts from working script"""
-        
-        # PROVEN CANDLE COUNTS from the working script
-        proven_counts = {
-            # Monthly: keep existing (H4)
-            'H4': 100,  # Monthly timeframe
-            
-            # Weekly: H1 with 120 candles (5 days * 24 hours)
-            'H1': 120,  # Weekly timeframe  
-            
-            # Daily: M15 with 96 candles (24 hours * 4 candles/hour)
-            'M15': 96,  # Daily timeframe
-            
-            # 90min: M5 with 72 candles (6 hours * 12 candles/hour)  
-            'M5': 72,   # 90min timeframe
-            
-            # CRT timeframes - keep existing
-            'H2': 100, 'H3': 100, 'H6': 100, 'H8': 100, 'H12': 100
-        }
-        
-        required_timeframes = list(self.pair_config['timeframe_mapping'].values())
-        
-        # ALWAYS include CRT timeframes for better detection
-        for tf in CRT_TIMEFRAMES:
-            if tf not in required_timeframes:
-                required_timeframes.append(tf)
-        
-        # FIXED: Use self.instruments instead of [self.pair1, self.pair2]
-        for instrument in self.instruments:
-            for tf in required_timeframes:
-                # Use proven count if available, otherwise default to 100
-                count = proven_counts.get(tf, 100)
-                
-                try:
-                    df = await asyncio.get_event_loop().run_in_executor(
-                        None, fetch_candles, instrument, tf, count, api_key
-                    )
-                    if df is not None and not df.empty:
-                        self.market_data[instrument][tf] = df
-                        logger.debug(f"📥 Fetched {len(df)} {tf} candles for {instrument} (requested: {count})")
-                    else:
-                        logger.warning(f"⚠️ No data received for {instrument} {tf}")
-                except Exception as e:
-                    logger.error(f"❌ Error fetching {instrument} {tf}: {str(e)}")
-    
-    async def _scan_all_smt(self):
-        """Scan for SMT on ALL cycles"""
-        cycles = self.signal_builder.get_required_cycles()
-        
-        for cycle in cycles:
-            timeframe = self.pair_config['timeframe_mapping'][cycle]
-            # FIXED: Use instruments[0] and instruments[1] instead of pair1 and pair2
-            asset1_data = self.market_data[self.instruments[0]].get(timeframe)
-            asset2_data = self.market_data[self.instruments[1]].get(timeframe)
-            
-            if (asset1_data is None or not isinstance(asset1_data, pd.DataFrame) or asset1_data.empty or
-                asset2_data is None or not isinstance(asset2_data, pd.DataFrame) or asset2_data.empty):
-                logger.warning(f"⚠️ No data for {cycle} ({timeframe})")
-                continue
-            
-            logger.info(f"🔍 Scanning {cycle} cycle ({timeframe}) for SMT...")
-            smt_signal = self.smt_detector.detect_smt_all_cycles(asset1_data, asset2_data, cycle)
-            
-            if smt_signal:
-                # Check for PSP immediately for this new SMT
-                psp_signal = self.smt_detector.check_psp_for_smt(smt_signal, asset1_data, asset2_data)
-                
-                # Add SMT with PSP if found
-                self.signal_builder.add_smt_signal(smt_signal, psp_signal)
-    
-    async def _scan_crt_signals(self):
-        """Scan for CRT signals on all timeframes - ENHANCED WITH PSP DETECTION"""
-        crt_detected = False
-        
-        for timeframe in CRT_TIMEFRAMES:
-            # FIXED: Use instruments[0] and instruments[1] instead of pair1 and pair2
-            asset1_data = self.market_data[self.instruments[0]].get(timeframe)
-            asset2_data = self.market_data[self.instruments[1]].get(timeframe)
-            
-            if (asset1_data is None or not isinstance(asset1_data, pd.DataFrame) or asset1_data.empty or
-                asset2_data is None or not isinstance(asset2_data, pd.DataFrame) or asset2_data.empty):
-                continue
-            
-            # UPDATED: CRT detection now includes PSP checking
-            crt_signal = self.crt_detector.calculate_crt_current_candle(
-                asset1_data, asset1_data, asset2_data, timeframe
-            )
-            
-            if crt_signal and self.signal_builder.set_crt_signal(crt_signal, timeframe, crt_signal.get('psp_signal')):
-                logger.info(f"🔷 {self.pair_group}: Fresh CRT detected on {timeframe}")
-                if crt_signal.get('psp_signal'):
-                    logger.info(f"🎯 {self.pair_group}: CRT with PSP confluence detected!")
-                crt_detected = True
-                break
-        
-        if not crt_detected:
-            logger.debug(f"🔍 {self.pair_group}: No CRT signals detected this cycle")
-    
-    def get_sleep_time(self):
-        """Calculate sleep time until next relevant candle"""
-        sleep_cycle = self.signal_builder.get_sleep_cycle()
-        
-        if sleep_cycle:
-            sleep_time = self.timing_manager.get_sleep_time_for_cycle(sleep_cycle)
-            timeframe = CYCLE_SLEEP_TIMEFRAMES.get(sleep_cycle, 'M5')
-            next_candle = datetime.now(NY_TZ) + timedelta(seconds=sleep_time)
-            logger.info(f"⏰ {self.pair_group}: Sleeping {sleep_time:.1f}s until next {timeframe} candle at {next_candle.strftime('%H:%M:%S')}")
-            return sleep_time
-        elif self.signal_builder.active_crt and self.signal_builder.crt_timeframe:
-            sleep_time = self.timing_manager.get_sleep_time_for_crt(self.signal_builder.crt_timeframe)
-            next_candle = datetime.now(NY_TZ) + timedelta(seconds=sleep_time)
-            logger.info(f"⏰ {self.pair_group}: Sleeping {sleep_time:.1f}s until next {self.signal_builder.crt_timeframe} CRT candle at {next_candle.strftime('%H:%M:%S')}")
-            return sleep_time
-        else:
-            sleep_time = BASE_INTERVAL
-            logger.info(f"⏰ {self.pair_group}: Default sleep {sleep_time}s")
-            return sleep_time
-
-    async def _analyze_triad(self, api_key):
-        """Analyze triad of 3 instruments - check all pair combinations"""
-        if len(self.instruments) != 3:
-            logger.error(f"❌ _analyze_triad called but only {len(self.instruments)} instruments")
-            return None
-            
-        instrument_a, instrument_b, instrument_c = self.instruments
-        
-        # Analyze all pairs: AB, AC, BC
-        signals = []
-        
-        # Pair AB
-        signal_ab = await self._analyze_pair_combo(instrument_a, instrument_b, "AB")
-        if signal_ab:
-            signals.append(('AB', signal_ab))
-        
-        # Pair AC  
-        signal_ac = await self._analyze_pair_combo(instrument_a, instrument_c, "AC")
-        if signal_ac:
-            signals.append(('AC', signal_ac))
-        
-        # Pair BC
-        signal_bc = await self._analyze_pair_combo(instrument_b, instrument_c, "BC")
-        if signal_bc:
-            signals.append(('BC', signal_bc))
-        
-        # Find confluence - at least 2 pairs agreeing on direction
-        return self._find_triad_confluence(signals)
-    
-    def _find_triad_confluence(self, signals):
-        """Find confluence across triad pairs"""
-        if len(signals) < 2:
-            logger.info(f"🔍 {self.pair_group}: No triad confluence (only {len(signals)} signals)")
-            return None
-        
-        # Count directions
-        bullish_count = 0
-        bearish_count = 0
-        signal_details = []
-        
-        for combo, signal in signals:
-            direction = signal.get('direction')
-            if direction == 'bullish':
-                bullish_count += 1
-            elif direction == 'bearish':
-                bearish_count += 1
-            signal_details.append(f"{combo}: {direction}")
-        
-        # Check for confluence (at least 2 pairs agreeing)
-        if bullish_count >= 2:
-            confluence_direction = 'bullish'
-        elif bearish_count >= 2:
-            confluence_direction = 'bearish'
-        else:
-            logger.info(f"🔍 {self.pair_group}: No clear confluence - Bullish: {bullish_count}, Bearish: {bearish_count}")
-            return None
-        
-        # Create triad signal
-        triad_signal = {
-            'pair_group': self.pair_group,
-            'direction': confluence_direction,
-            'confluence_strength': max(bullish_count, bearish_count),
-            'total_pairs': len(signals),
-            'signal_details': signal_details,
-            'instruments': self.instruments,
-            'timestamp': datetime.now(NY_TZ),
-            'signal_key': f"TRIAD_{self.pair_group}_{confluence_direction}_{datetime.now().strftime('%H%M')}",
-            'description': f"TRIAD CONFLUENCE: {confluence_direction.upper()} ({max(bullish_count, bearish_count)}/3 pairs)"
-        }
-        
-        logger.info(f"🎯 TRIAD CONFLUENCE DETECTED: {self.pair_group} {confluence_direction.upper()} "
-                   f"({max(bullish_count, bearish_count)}/3 pairs agreeing)")
-        
-        return triad_signal
-    
-    async def _analyze_pair(self, api_key):
-        """Analyze 2-instrument pair (original logic)"""
-        # Reset signal builder
-        self.signal_builder.reset()
-        
-        # Get data for this pair
-        asset1_data = self.market_data[self.instruments[0]]
-        asset2_data = self.market_data[self.instruments[1]]
-        
-        if not asset1_data or not asset2_data:
-            return None
-        
-        # Your existing analysis steps...
-        await self._check_smt_tracking()
-        await self._scan_all_smt()
-        await self._check_psp_for_existing_smts()
-        await self._scan_crt_signals()
-        
-        # Check if signal is complete
-        if self.signal_builder.is_signal_ready() and not self.signal_builder.has_serious_conflict():
-            signal = self.signal_builder.get_signal_details()
-            if signal and not self.timing_manager.is_duplicate_signal(signal['signal_key'], self.pair_group):
-                logger.info(f"🎯 {self.pair_group}: SIGNAL COMPLETE via {signal['path']}")
-                return signal
-        
-        return None
 
 # ================================
 # ULTIMATE MAIN MANAGER
