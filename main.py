@@ -3115,11 +3115,11 @@ class UltimateTradingSystem:
         
         # PROVEN CANDLE COUNTS from the working script
         proven_counts = {
-            'H4': 100,   # Monthly timeframe
-            'H1': 120,   # Weekly timeframe  
-            'M15': 96,   # Daily timeframe
-            'M5': 72,    # 90min timeframe
-            'H2': 100, 'H3': 100, 'H6': 100, 'H8': 100, 'H12': 100
+            'H4': 40,   # Monthly timeframe
+            'H1': 40,   # Weekly timeframe  
+            'M15': 40,   # Daily timeframe
+            'M5': 40,    # 90min timeframe
+            'H2': 10, 'H3': 10, 'H6': 10, 'H8': 10, 'H12': 10
         }
         
         required_timeframes = list(self.pair_config['timeframe_mapping'].values())
