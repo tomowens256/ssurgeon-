@@ -1704,8 +1704,8 @@ class UltimateSMTDetector:
         
         return None
     
-    def _find_bullish_smt_with_tolerance(self, asset1_prev_lows, asset1_curr_lows, asset2_prev_lows, asset2_curr_lows, asset1_combined_data, timeframe_minutes):
-        """Find bullish SMT with 3-CANDLE TOLERANCE - FIXED VARIABLE NAMES"""
+    def _find_bullish_smt_with_tolerance(self, asset1_prev_lows, asset1_curr_lows, asset2_prev_lows, asset2_curr_lows, asset1_combined_data, asset2_combined_data, timeframe_minutes):
+        """Find bullish SMT with 3-CANDLE TOLERANCE - VALIDATES BOTH ASSETS"""
         # Find aligned previous swings with tolerance
         aligned_prev_lows = self.swing_detector.find_aligned_swings(
             asset1_prev_lows, asset2_prev_lows,
@@ -1721,30 +1721,38 @@ class UltimateSMTDetector:
         logger.debug(f"🔍 Bullish SMT: {len(aligned_prev_lows)} aligned prev lows, {len(aligned_curr_lows)} aligned curr lows")
         
         for prev_pair in aligned_prev_lows:
-            asset1_prev, asset2_prev, prev_time_diff = prev_pair  # ← SINGULAR: asset1_prev
-                
+            asset1_prev, asset2_prev, prev_time_diff = prev_pair
+                    
             for curr_pair in aligned_curr_lows:
-                asset1_curr, asset2_curr, curr_time_diff = curr_pair  # ← SINGULAR: asset1_curr
+                asset1_curr, asset2_curr, curr_time_diff = curr_pair
                 
                 # Check SMT conditions
                 asset1_ll = asset1_curr['price'] < asset1_prev['price']  # Lower low
                 asset2_hl = asset2_curr['price'] >= asset2_prev['price']  # Higher low
                 
-                # CRITICAL: Check interim price validation for bullish SMT - FIXED VARIABLE NAMES
-                interim_valid = self.swing_detector.validate_interim_price_action(
-                    asset1_combined_data, asset1_prev, asset1_curr, "bullish", "low"  # ← SINGULAR: asset1_prev, asset1_curr
+                # CRITICAL: Check interim price validation for BOTH ASSETS
+                asset1_interim_valid = self.swing_detector.validate_interim_price_action(
+                    asset1_combined_data, asset1_prev, asset1_curr, "bullish", "low"
                 )
                 
-                if asset1_ll and asset2_hl and interim_valid:
+                asset2_interim_valid = self.swing_detector.validate_interim_price_action(
+                    asset2_combined_data, asset2_prev, asset2_curr, "bullish", "low"
+                )
+                
+                if asset1_ll and asset2_hl and asset1_interim_valid and asset2_interim_valid:
                     logger.info(f"✅ BULLISH SMT FOUND with 3-candle tolerance:")
                     logger.info(f"   Prev swings: {asset1_prev['time'].strftime('%H:%M')} & {asset2_prev['time'].strftime('%H:%M')} (diff: {prev_time_diff:.1f}min)")
                     logger.info(f"   Curr swings: {asset1_curr['time'].strftime('%H:%M')} & {asset2_curr['time'].strftime('%H:%M')} (diff: {curr_time_diff:.1f}min)")
                     logger.info(f"   Asset1: Lower Low ({asset1_prev['price']:.4f} → {asset1_curr['price']:.4f})")
                     logger.info(f"   Asset2: Higher Low ({asset2_prev['price']:.4f} → {asset2_curr['price']:.4f})")
-                    logger.info(f"   Interim validation: ✅ PASSED")
+                    logger.info(f"   Asset1 interim validation: ✅ PASSED")
+                    logger.info(f"   Asset2 interim validation: ✅ PASSED")
                     return (asset1_prev, asset1_curr, asset2_prev, asset2_curr)
-                elif asset1_ll and asset2_hl and not interim_valid:
-                    logger.warning(f"❌ BULLISH SMT REJECTED - Interim price invalid")
+                elif asset1_ll and asset2_hl and (not asset1_interim_valid or not asset2_interim_valid):
+                    if not asset1_interim_valid:
+                        logger.warning(f"❌ BULLISH SMT REJECTED - Asset1 interim price invalid")
+                    if not asset2_interim_valid:
+                        logger.warning(f"❌ BULLISH SMT REJECTED - Asset2 interim price invalid")
         
         return None
     
