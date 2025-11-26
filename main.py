@@ -996,7 +996,7 @@ class RobustCRTDetector:
                 
                 #logger.info(f"🔷 {direction.upper()} CRT DETECTED: {timeframe} candle at {c3['time'].strftime('%H:%M')}")
                 if psp_signal:
-                   # logger.info(f"🎯 PSP FOUND for CRT: {psp_signal['asset1_color']}/{psp_signal['asset2_color']} at {psp_signal['formation_time'].strftime('%H:%M')}")
+                    logger.info(f"🎯 PSP FOUND for CRT: {psp_signal['asset1_color']}/{psp_signal['asset2_color']} at {psp_signal['formation_time'].strftime('%H:%M')}")
                 
                 return {
                     'direction': direction, 
