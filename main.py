@@ -2845,7 +2845,7 @@ class RealTimeFeatureBox:
             logger.info(f"    - {smt_data['cycle']} {smt_data['direction']} {smt_data['quarters']} {has_psp} (expires in {expires_in:.1f}m)")
         
         # Log active CRTs
-        logger.info(f"  Active CRTs ({len(self.active_features['crt']}):")
+        logger.info(f"  Active SMTs ({len(self.active_features['smt'])}):")
         for key, feature in self.active_features['crt'].items():
             crt_data = feature['crt_data']
             has_psp = "✅ WITH PSP" if feature['psp_data'] else "❌ NO PSP"
