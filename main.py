@@ -2387,6 +2387,7 @@ class RealTimeFeatureBox:
         
         # Signal cooldown to prevent duplicates
         self.sent_signals = {}
+        self.signals_sent_count = 0
         
         # Feature expiration times (minutes)
         self.expiration_times = {
@@ -2396,6 +2397,8 @@ class RealTimeFeatureBox:
         }
         
         logger.info(f"🎯 RealTimeFeatureBox initialized for {pair_group}")
+    
+        
 
     
     def add_smt(self, smt_data, psp_data=None):
@@ -2745,13 +2748,15 @@ class RealTimeFeatureBox:
             logger.info(f"⏳ IMMEDIATE SIGNAL BLOCKED (duplicate): {signal_key}")
             return False
         
-        # Format and send message - NOW USING INSTANCE VARIABLES
+        # Format and send message
         message = self._format_immediate_signal_message(signal_data)
         success = send_telegram(message, self.telegram_token, self.telegram_chat_id)
         
         if success:
             logger.info(f"🚀 IMMEDIATE SIGNAL SENT: {signal_data['description']}")
             self.sent_signals[signal_key] = datetime.now(NY_TZ)
+            self.signals_sent_count += 1  # ✅ ADD THIS
+            logger.info(f"📈 TOTAL SIGNALS SENT: {self.signals_sent_count}")
             return True
         else:
             logger.error(f"❌ FAILED to send immediate signal: {signal_key}")
@@ -2826,6 +2831,40 @@ class RealTimeFeatureBox:
         message += f"#ImmediateSignal #{self.pair_group} #{direction}"
         
         return message
+
+    def log_detailed_status(self):
+        """Log detailed status of all active features and recent signals"""
+        logger.info(f"📋 FEATURE BOX DETAILED STATUS for {self.pair_group}")
+        
+        # Log active SMTs
+        logger.info(f"  Active SMTs ({len(self.active_features['smt']}):")
+        for key, feature in self.active_features['smt'].items():
+            smt_data = feature['smt_data']
+            has_psp = "✅ WITH PSP" if feature['psp_data'] else "❌ NO PSP"
+            expires_in = (feature['expiration'] - datetime.now(NY_TZ)).total_seconds() / 60
+            logger.info(f"    - {smt_data['cycle']} {smt_data['direction']} {smt_data['quarters']} {has_psp} (expires in {expires_in:.1f}m)")
+        
+        # Log active CRTs
+        logger.info(f"  Active CRTs ({len(self.active_features['crt']}):")
+        for key, feature in self.active_features['crt'].items():
+            crt_data = feature['crt_data']
+            has_psp = "✅ WITH PSP" if feature['psp_data'] else "❌ NO PSP"
+            expires_in = (feature['expiration'] - datetime.now(NY_TZ)).total_seconds() / 60
+            logger.info(f"    - {crt_data['timeframe']} {crt_data['direction']} {has_psp} (expires in {expires_in:.1f}m)")
+        
+        # Log active PSPs
+        logger.info(f"  Active PSPs ({len(self.active_features['psp']}):")
+        for key, feature in self.active_features['psp'].items():
+            psp_data = feature['psp_data']
+            associated = f"→ {feature['associated_smt']}" if feature['associated_smt'] else "→ STANDALONE"
+            expires_in = (feature['expiration'] - datetime.now(NY_TZ)).total_seconds() / 60
+            logger.info(f"    - {psp_data['timeframe']} {psp_data['asset1_color']}/{psp_data['asset2_color']} {associated} (expires in {expires_in:.1f}m)")
+        
+        # Log recent signals
+        logger.info(f"  Recent Signals ({len(self.sent_signals)}):")
+        for signal_key, sent_time in list(self.sent_signals.items())[-5:]:  # Last 5 signals
+            time_ago = (datetime.now(NY_TZ) - sent_time).total_seconds() / 60
+            logger.info(f"    - {signal_key} ({time_ago:.1f}m ago)")
     
     def _is_feature_expired(self, feature):
         """Check if feature has expired"""
@@ -2878,6 +2917,28 @@ class RealTimeFeatureBox:
         
         return summary
 
+    def debug_confluence_checks(self):
+        """Temporary debug method to see why signals aren't firing"""
+        logger.info(f"🔧 DEBUG: Checking why no signals for {self.pair_group}")
+        
+        # Check multiple SMTs
+        bullish = []
+        bearish = []
+        
+        for key, feature in self.active_features['smt'].items():
+            if feature['smt_data']['direction'] == 'bullish':
+                bullish.append(key)
+            else:
+                bearish.append(key)
+        
+        logger.info(f"🔧 DEBUG: Bullish SMTs: {bullish}")
+        logger.info(f"🔧 DEBUG: Bearish SMTs: {bearish}")
+        
+        if len(bullish) >= 2:
+            logger.info(f"🔧 DEBUG: SHOULD TRIGGER MULTIPLE BULLISH SMTs!")
+        if len(bearish) >= 2:
+            logger.info(f"🔧 DEBUG: SHOULD TRIGGER MULTIPLE BEARISH SMTs!")
+
 # ================================
 # ULTIMATE TRADING SYSTEM WITH TRIPLE CONFLUENCE
 # ================================
@@ -2924,11 +2985,8 @@ class UltimateTradingSystem:
 
         self.feature_box = RealTimeFeatureBox(pair_group, self.timing_manager, telegram_token, telegram_chat_id)
     async def run_ultimate_analysis(self, api_key):
-        """Run analysis with REAL-TIME feature tracking - FIXED"""
+        """Run analysis with REAL-TIME feature tracking"""
         try:
-            # Debug data structure first
-            self.debug_data_structure()
-            
             # Cleanup expired features first
             self.feature_box.cleanup_expired_features()
             
@@ -2941,6 +2999,10 @@ class UltimateTradingSystem:
             # Get current feature summary
             summary = self.feature_box.get_active_features_summary()
             logger.info(f"📊 {self.pair_group} Feature Summary: {summary['smt_count']} SMTs, {summary['crt_count']} CRTs, {summary['psp_count']} PSPs")
+            
+            # ✅ ADD THIS: Detailed feature box logging
+            self.feature_box.log_detailed_status()
+            self.feature_box.debug_confluence_checks()
             
             return None  # Signals are now sent immediately via Feature Box
             
@@ -3152,11 +3214,11 @@ class UltimateTradingSystem:
         
         if summary['smt_count'] > 0 or summary['crt_count'] > 0:
             # We have active features, check more frequently
-            sleep_time = 30  # 30 seconds
+            sleep_time = 60  # 30 seconds
             logger.info(f"⏰ {self.pair_group}: Active features detected - sleeping {sleep_time}s")
         else:
             # No active features, use normal interval
-            sleep_time = 60  # 60 seconds
+            sleep_time = 299  # 60 seconds
             logger.info(f"⏰ {self.pair_group}: No active features - sleeping {sleep_time}s")
         
         return sleep_time
