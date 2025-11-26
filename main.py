@@ -2390,6 +2390,8 @@ class RealTimeFeatureBox:
         # Signal cooldown to prevent duplicates
         self.sent_signals = {}
         self.signals_sent_count = 0
+        self.sent_signal_signatures = {}  # key: signature_hash, value: timestamp
+        self.signature_expiry_hours = 24  # Keep signatures for 24 hours
         
         # Feature expiration times (minutes)
         self.expiration_times = {
@@ -2549,7 +2551,7 @@ class RealTimeFeatureBox:
         return False
     
     def _check_smt_psp_confluence_global(self):
-        """Check all SMT+PSP combinations"""
+        """Check all SMT+PSP combinations - USING SIGNATURE DUPLICATE PREVENTION"""
         signals_sent = 0
         
         for smt_key, smt_feature in list(self.active_features['smt'].items()):
@@ -2560,7 +2562,6 @@ class RealTimeFeatureBox:
             
             # Check if this SMT already has PSP
             if smt_feature['psp_data']:
-                # Already has PSP, check if we should send signal
                 signal_data = {
                     'pair_group': self.pair_group,
                     'direction': smt_data['direction'],
@@ -2568,12 +2569,12 @@ class RealTimeFeatureBox:
                     'smt': smt_data,
                     'psp': smt_feature['psp_data'],
                     'timestamp': datetime.now(NY_TZ),
-                    'signal_key': f"SMT_PSP_PRE_{smt_key}",
+                    'signal_key': f"SMT_PSP_PRE_{smt_key}_{datetime.now().strftime('%H%M%S')}",
                     'description': f"PRE-CONFIRMED: {smt_data['cycle']} {smt_data['direction']} SMT + PSP"
                 }
                 
+                # The duplicate prevention now happens in _send_immediate_signal via signature check
                 if self._send_immediate_signal(signal_data):
-                    self._remove_feature('smt', smt_key)
                     signals_sent += 1
         
         return signals_sent > 0
@@ -2758,31 +2759,61 @@ class RealTimeFeatureBox:
         return False
     
     def _send_immediate_signal(self, signal_data):
-        """Send signal immediately with duplicate prevention"""
+        """Send signal with IMPROVED duplicate prevention using signatures"""
         signal_key = signal_data['signal_key']
         
-        logger.info(f"🔍 _send_immediate_signal called for: {signal_key}")
+        # 1. Check signature-based duplicate prevention (CONTENT-based)
+        if self._is_duplicate_signal_signature(signal_data):
+            logger.info(f"⏳ SIGNATURE BLOCKED: {signal_data['description']}")
+            return False
         
-        # Strong duplicate prevention
+        # 2. Check timing-based duplicate prevention (KEY-based)
         if self.timing_manager.is_duplicate_signal(signal_key, self.pair_group, cooldown_minutes=30):
-            logger.info(f"⏳ IMMEDIATE SIGNAL BLOCKED (duplicate): {signal_key}")
+            logger.info(f"⏳ TIMING BLOCKED: {signal_key}")
+            return False
+        
+        # 3. Validate signal has content
+        if not self._validate_signal_content(signal_data):
+            logger.warning(f"⚠️ EMPTY SIGNAL BLOCKED: {signal_key}")
             return False
         
         # Format and send message
         message = self._format_immediate_signal_message(signal_data)
-        logger.info(f"🔍 Sending Telegram message: {signal_data['description']}")
-        
         success = send_telegram(message, self.telegram_token, self.telegram_chat_id)
         
         if success:
-            logger.info(f"🚀 IMMEDIATE SIGNAL SENT: {signal_data['description']}")
+            logger.info(f"🚀 SIGNAL SENT: {signal_data['description']}")
             self.sent_signals[signal_key] = datetime.now(NY_TZ)
-            self.signals_sent_count += 1
-            logger.info(f"📈 TOTAL SIGNALS SENT: {self.signals_sent_count}")
             return True
         else:
-            logger.error(f"❌ FAILED to send immediate signal: {signal_key}")
+            logger.error(f"❌ FAILED to send signal: {signal_key}")
             return False
+    
+    def _validate_signal_content(self, signal_data):
+        """Validate that signal has meaningful content"""
+        if 'multiple_smts' in signal_data:
+            # For multiple SMTs, check we have at least 2 valid SMTs
+            smts = signal_data['multiple_smts']
+            if len(smts) < 2:
+                return False
+            
+            # Check each SMT has basic data
+            for smt in smts:
+                if not smt.get('cycle') or not smt.get('quarters'):
+                    return False
+            return True
+        
+        elif 'smt' in signal_data:
+            # For single SMT, check basic data
+            smt = signal_data['smt']
+            return bool(smt.get('cycle') and smt.get('quarters'))
+        
+        elif 'crt' in signal_data:
+            # For CRT, check basic data
+            crt = signal_data['crt']
+            return bool(crt.get('timeframe') and crt.get('direction'))
+        
+        return False
     def _check_crt_psp_confluence(self):
         """Check CRT + PSP confluence"""
         signals_sent = 0
@@ -3017,6 +3048,77 @@ class RealTimeFeatureBox:
         logger.info(f"🔧 Chat ID value: {'SET' if self.telegram_chat_id else 'MISSING'}")
         if self.telegram_chat_id:
             logger.info(f"🔧 Chat ID: {self.telegram_chat_id}")
+
+    def _create_signal_signature(self, signal_data):
+        """Create a unique signature for a signal based on its content"""
+        # Extract the essence of the signal (what matters for duplicates)
+        if signal_data['confluence_type'] == 'SMT_PSP_PRE_CONFIRMED':
+            # For SMT+PSP: use SMT key + PSP timeframe + direction
+            smt_key = signal_data['smt']['signal_key']
+            psp_timeframe = signal_data['psp']['timeframe']
+            direction = signal_data['direction']
+            signature = f"SMT_PSP_{smt_key}_{psp_timeframe}_{direction}"
+        
+        elif signal_data['confluence_type'].startswith('MULTIPLE_SMTS'):
+            # For multiple SMTs: use sorted SMT keys + direction
+            smt_keys = []
+            for smt in signal_data['multiple_smts']:
+                # Create a unique identifier for each SMT
+                smt_id = f"{smt['cycle']}_{smt['quarters']}"
+                smt_keys.append(smt_id)
+            
+            # Sort to make order consistent
+            smt_keys.sort()
+            direction = signal_data['direction']
+            signature = f"MULTI_SMT_{'_'.join(smt_keys)}_{direction}"
+        
+        elif signal_data['confluence_type'] == 'CRT_SMT_IMMEDIATE':
+            # For CRT+SMT: use CRT key + SMT key
+            crt_key = signal_data['crt']['signal_key']
+            smt_key = signal_data['smt']['signal_key']
+            signature = f"CRT_SMT_{crt_key}_{smt_key}"
+        
+        else:
+            # Fallback: use the signal key
+            signature = signal_data['signal_key']
+        
+        return signature
+    
+    def _is_duplicate_signal_signature(self, signal_data):
+        """Check if we've already sent a signal with the same signature"""
+        signature = self._create_signal_signature(signal_data)
+        current_time = datetime.now(NY_TZ)
+        
+        # Clean up old signatures first
+        self._cleanup_old_signatures()
+        
+        if signature in self.sent_signal_signatures:
+            last_sent = self.sent_signal_signatures[signature]
+            hours_since_sent = (current_time - last_sent).total_seconds() / 3600
+            
+            if hours_since_sent < self.signature_expiry_hours:
+                logger.info(f"⏳ SIGNATURE DUPLICATE BLOCKED: {signature} (sent {hours_since_sent:.1f}h ago)")
+                return True
+        
+        # Not a duplicate - store the signature
+        self.sent_signal_signatures[signature] = current_time
+        return False
+    
+    def _cleanup_old_signatures(self):
+        """Remove signatures older than expiry time"""
+        current_time = datetime.now(NY_TZ)
+        expired_signatures = []
+        
+        for signature, sent_time in self.sent_signal_signatures.items():
+            hours_since_sent = (current_time - sent_time).total_seconds() / 3600
+            if hours_since_sent >= self.signature_expiry_hours:
+                expired_signatures.append(signature)
+        
+        for signature in expired_signatures:
+            del self.sent_signal_signatures[signature]
+        
+        if expired_signatures:
+            logger.debug(f"🧹 Cleaned up {len(expired_signatures)} old signal signatures")
 
 # ================================
 # ULTIMATE TRADING SYSTEM WITH TRIPLE CONFLUENCE
