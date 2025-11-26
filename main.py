@@ -1,11 +1,5 @@
 #!/usr/bin/env python3
-"""
-ROBUST SMT TRADING SYSTEM - CRT+PSP+SMT CONFLUENCE VERSION
-- Detects CRT + PSP + SMT triple confluence
-- ALL possible quarter pairs
-- 3-candle tolerance for swing alignment
-- Enhanced timing validation
-"""
+
 
 import asyncio
 import traceback
