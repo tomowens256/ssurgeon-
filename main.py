@@ -3000,6 +3000,19 @@ class RealTimeFeatureBox:
             result = self._check_multiple_smts_confluence()
             logger.info(f"🔍 _check_multiple_smts_confluence returned: {result}")
 
+    def debug_telegram_credentials(self):
+        """Debug Telegram credential flow"""
+        logger.info(f"🔧 TELEGRAM CREDENTIALS DEBUG for {self.pair_group}")
+        logger.info(f"🔧 Telegram token type: {type(self.telegram_token)}")
+        logger.info(f"🔧 Telegram token value: {'SET' if self.telegram_token else 'MISSING'}")
+        if self.telegram_token:
+            logger.info(f"🔧 Token preview: {str(self.telegram_token)[:10]}...")
+        
+        logger.info(f"🔧 Chat ID type: {type(self.telegram_chat_id)}")
+        logger.info(f"🔧 Chat ID value: {'SET' if self.telegram_chat_id else 'MISSING'}")
+        if self.telegram_chat_id:
+            logger.info(f"🔧 Chat ID: {self.telegram_chat_id}")
+
 # ================================
 # ULTIMATE TRADING SYSTEM WITH TRIPLE CONFLUENCE
 # ================================
@@ -3013,8 +3026,8 @@ class UltimateTradingSystem:
         self.pair_config = pair_config
         
         # Handle Telegram credentials
-        self.telegram_token = telegram_token or os.getenv("TELEGRAM_BOT_TOKEN")
-        self.telegram_chat_id = telegram_chat_id or os.getenv("TELEGRAM_CHAT_ID")
+        self.telegram_token = telegram_token
+        self.telegram_chat_id = telegram_chat_id
         
         # BACKWARD COMPATIBLE: Handle both old and new structures
         if 'instruments' in pair_config:
@@ -3066,6 +3079,7 @@ class UltimateTradingSystem:
             
             # Log detailed status
             self.feature_box.log_detailed_status()
+            self.feature_box.debug_telegram_credentials()
             
             return None
             
