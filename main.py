@@ -1226,16 +1226,16 @@ class UltimateSMTDetector:
             if highs:
                 #logger.info("      🔺 High Swings:")
                 for h in highs[:5]:
-                    #logger.info(f"         • {h['time']} → {h['price']}")
+                    logger.info(f"         • {h['time']} → {h['price']}")
             else:
-                #logger.info("      🔺 High Swings: NONE")
+                logger.info("      🔺 High Swings: NONE")
     
             if lows:
                 #logger.info("      🔻 Low Swings:")
                 for l in lows[:5]:
-                    #logger.info(f"         • {l['time']} → {l['price']}")
+                    logger.info(f"         • {l['time']} → {l['price']}")
             else:
-                #logger.info("      🔻 Low Swings: NONE")
+                logger.info("      🔻 Low Swings: NONE")
 
 
     def check_data_quality(self, pair1_data, pair2_data, cycle_type):
@@ -1281,15 +1281,15 @@ class UltimateSMTDetector:
                 # q4 ends at 17:59, q1 starts at 18:00 (could be same day or next day)
                 expected_gap = 0.02  # ~1 minute gap is acceptable
                 if -1 <= time_gap <= 1:  # Allow small gaps around the boundary
-                    #print(f"   ✅ Q4→Q1 TRANSITION: {prev_end.strftime('%m-%d %H:%M')} → {curr_start.strftime('%m-%d %H:%M')} ({time_gap:+.1f}h)")
+                    print(f"   ✅ Q4→Q1 TRANSITION: {prev_end.strftime('%m-%d %H:%M')} → {curr_start.strftime('%m-%d %H:%M')} ({time_gap:+.1f}h)")
                 else:
-                    #print(f"   ⚠️ UNUSUAL Q4→Q1 GAP: {prev_end.strftime('%m-%d %H:%M')} → {curr_start.strftime('%m-%d %H:%M')} ({time_gap:+.1f}h)")
+                    print(f"   ⚠️ UNUSUAL Q4→Q1 GAP: {prev_end.strftime('%m-%d %H:%M')} → {curr_start.strftime('%m-%d %H:%M')} ({time_gap:+.1f}h)")
             elif time_gap < -1:
-                #print(f"   ❌ REVERSED TIME: Current quarter starts BEFORE previous quarter! ({time_gap:+.1f}h)")
+                print(f"   ❌ REVERSED TIME: Current quarter starts BEFORE previous quarter! ({time_gap:+.1f}h)")
             elif time_gap > 6:
-                #print(f"   ⚠️ LARGE GAP: {time_gap:.1f}h between quarters")
+                print(f"   ⚠️ LARGE GAP: {time_gap:.1f}h between quarters")
             else:
-                #print(f"   ✅ Reasonable gap: {time_gap:.1f}h")
+                print(f"   ✅ Reasonable gap: {time_gap:.1f}h")
 
     def filter_valid_quarter_pairs(self, cycle_type, asset1_quarters, asset2_quarters, adjacent_pairs):
         """Filter out quarter pairs that have overlapping time ranges"""
