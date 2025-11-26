@@ -2836,33 +2836,39 @@ class RealTimeFeatureBox:
         """Log detailed status of all active features and recent signals"""
         logger.info(f"📋 FEATURE BOX DETAILED STATUS for {self.pair_group}")
         
-        # Log active SMTs
-        logger.info(f"  Active SMTs ({len(self.active_features['smt']}):")
+        # Log active SMTs - FIXED SYNTAX
+        smt_count = len(self.active_features['smt'])
+        logger.info(f"  Active SMTs ({smt_count}):")
         for key, feature in self.active_features['smt'].items():
             smt_data = feature['smt_data']
             has_psp = "✅ WITH PSP" if feature['psp_data'] else "❌ NO PSP"
             expires_in = (feature['expiration'] - datetime.now(NY_TZ)).total_seconds() / 60
             logger.info(f"    - {smt_data['cycle']} {smt_data['direction']} {smt_data['quarters']} {has_psp} (expires in {expires_in:.1f}m)")
         
-        # Log active CRTs
-        logger.info(f"  Active SMTs ({len(self.active_features['smt'])}):")
+        # Log active CRTs - FIXED SYNTAX
+        crt_count = len(self.active_features['crt'])
+        logger.info(f"  Active CRTs ({crt_count}):")
         for key, feature in self.active_features['crt'].items():
             crt_data = feature['crt_data']
             has_psp = "✅ WITH PSP" if feature['psp_data'] else "❌ NO PSP"
             expires_in = (feature['expiration'] - datetime.now(NY_TZ)).total_seconds() / 60
             logger.info(f"    - {crt_data['timeframe']} {crt_data['direction']} {has_psp} (expires in {expires_in:.1f}m)")
         
-        # Log active PSPs
-        logger.info(f"  Active PSPs ({len(self.active_features['psp']}):")
+        # Log active PSPs - FIXED SYNTAX
+        psp_count = len(self.active_features['psp'])
+        logger.info(f"  Active PSPs ({psp_count}):")
         for key, feature in self.active_features['psp'].items():
             psp_data = feature['psp_data']
             associated = f"→ {feature['associated_smt']}" if feature['associated_smt'] else "→ STANDALONE"
             expires_in = (feature['expiration'] - datetime.now(NY_TZ)).total_seconds() / 60
             logger.info(f"    - {psp_data['timeframe']} {psp_data['asset1_color']}/{psp_data['asset2_color']} {associated} (expires in {expires_in:.1f}m)")
         
-        # Log recent signals
-        logger.info(f"  Recent Signals ({len(self.sent_signals)}):")
-        for signal_key, sent_time in list(self.sent_signals.items())[-5:]:  # Last 5 signals
+        # Log recent signals - FIXED SYNTAX
+        signal_count = len(self.sent_signals)
+        logger.info(f"  Recent Signals ({signal_count}):")
+        # Get last 5 signals (or all if less than 5)
+        recent_signals = list(self.sent_signals.items())[-5:]
+        for signal_key, sent_time in recent_signals:
             time_ago = (datetime.now(NY_TZ) - sent_time).total_seconds() / 60
             logger.info(f"    - {signal_key} ({time_ago:.1f}m ago)")
     
