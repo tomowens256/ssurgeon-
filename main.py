@@ -2615,6 +2615,8 @@ class RealTimeFeatureBox:
 
     def _check_multiple_smts_confluence(self):
         """Check for multiple SMTs confluence (2+ SMTs in same direction)"""
+        logger.info(f"🔍 _check_multiple_smts_confluence ENTERED")
+        
         signals_sent = 0
         
         # Group SMTs by direction
@@ -2623,6 +2625,7 @@ class RealTimeFeatureBox:
         
         for smt_key, smt_feature in list(self.active_features['smt'].items()):
             if self._is_feature_expired(smt_feature):
+                logger.info(f"🔍 SMT {smt_key} expired in confluence check")
                 continue
                 
             smt_data = smt_feature['smt_data']
@@ -2631,6 +2634,8 @@ class RealTimeFeatureBox:
                 bullish_smts.append((smt_key, smt_data))
             elif smt_data['direction'] == 'bearish':
                 bearish_smts.append((smt_key, smt_data))
+        
+        logger.info(f"🔍 In confluence check: {len(bullish_smts)} bullish, {len(bearish_smts)} bearish")
         
         # Check for multiple bullish SMTs
         if len(bullish_smts) >= 2:
@@ -2655,15 +2660,20 @@ class RealTimeFeatureBox:
                 'multiple_smts': smt_details,
                 'smt_count': len(bullish_smts),
                 'timestamp': datetime.now(NY_TZ),
-                'signal_key': f"MULTI_SMT_BULLISH_{datetime.now().strftime('%H%M')}",
+                'signal_key': f"MULTI_SMT_BULLISH_{datetime.now().strftime('%H%M%S')}",
                 'description': f"MULTIPLE BULLISH SMTs: {len(bullish_smts)} cycles confirming"
             }
             
+            logger.info(f"🔍 About to send signal: {signal_data['description']}")
+            
             if self._send_immediate_signal(signal_data):
+                logger.info(f"🔍 Signal sent successfully, removing SMTs: {smt_keys_used}")
                 # Remove the used SMTs
                 for smt_key in smt_keys_used:
                     self._remove_feature('smt', smt_key)
                 signals_sent += 1
+            else:
+                logger.info(f"🔍 Signal was NOT sent (might be duplicate or Telegram failed)")
         
         # Check for multiple bearish SMTs  
         elif len(bearish_smts) >= 2:
@@ -2688,16 +2698,22 @@ class RealTimeFeatureBox:
                 'multiple_smts': smt_details,
                 'smt_count': len(bearish_smts),
                 'timestamp': datetime.now(NY_TZ),
-                'signal_key': f"MULTI_SMT_BEARISH_{datetime.now().strftime('%H%M')}",
+                'signal_key': f"MULTI_SMT_BEARISH_{datetime.now().strftime('%H%M%S')}",
                 'description': f"MULTIPLE BEARISH SMTs: {len(bearish_smts)} cycles confirming"
             }
             
+            logger.info(f"🔍 About to send signal: {signal_data['description']}")
+            
             if self._send_immediate_signal(signal_data):
+                logger.info(f"🔍 Signal sent successfully, removing SMTs: {smt_keys_used}")
                 # Remove the used SMTs
                 for smt_key in smt_keys_used:
                     self._remove_feature('smt', smt_key)
                 signals_sent += 1
+            else:
+                logger.info(f"🔍 Signal was NOT sent (might be duplicate or Telegram failed)")
         
+        logger.info(f"🔍 _check_multiple_smts_confluence EXITED, signals_sent: {signals_sent}")
         return signals_sent > 0
     
     def _check_triple_confluence(self):
@@ -2743,6 +2759,8 @@ class RealTimeFeatureBox:
         """Send signal immediately with duplicate prevention"""
         signal_key = signal_data['signal_key']
         
+        logger.info(f"🔍 _send_immediate_signal called for: {signal_key}")
+        
         # Strong duplicate prevention
         if self.timing_manager.is_duplicate_signal(signal_key, self.pair_group, cooldown_minutes=30):
             logger.info(f"⏳ IMMEDIATE SIGNAL BLOCKED (duplicate): {signal_key}")
@@ -2750,18 +2768,19 @@ class RealTimeFeatureBox:
         
         # Format and send message
         message = self._format_immediate_signal_message(signal_data)
+        logger.info(f"🔍 Sending Telegram message: {signal_data['description']}")
+        
         success = send_telegram(message, self.telegram_token, self.telegram_chat_id)
         
         if success:
             logger.info(f"🚀 IMMEDIATE SIGNAL SENT: {signal_data['description']}")
             self.sent_signals[signal_key] = datetime.now(NY_TZ)
-            self.signals_sent_count += 1  # ✅ ADD THIS
+            self.signals_sent_count += 1
             logger.info(f"📈 TOTAL SIGNALS SENT: {self.signals_sent_count}")
             return True
         else:
             logger.error(f"❌ FAILED to send immediate signal: {signal_key}")
             return False
-
     def _check_crt_psp_confluence(self):
         """Check CRT + PSP confluence"""
         signals_sent = 0
@@ -2945,6 +2964,45 @@ class RealTimeFeatureBox:
         if len(bearish) >= 2:
             logger.info(f"🔧 DEBUG: SHOULD TRIGGER MULTIPLE BEARISH SMTs!")
 
+    def debug_confluence_checks_detailed(self):
+        """Detailed debug to see exactly why signals aren't firing"""
+        logger.info(f"🔍 DETAILED DEBUG: Checking confluence for {self.pair_group}")
+        
+        # Check multiple SMTs confluence in detail
+        bullish_smts = []
+        bearish_smts = []
+        
+        for key, feature in self.active_features['smt'].items():
+            if self._is_feature_expired(feature):
+                logger.info(f"🔍 SMT {key} is EXPIRED - skipping")
+                continue
+                
+            smt_data = feature['smt_data']
+            if smt_data['direction'] == 'bullish':
+                bullish_smts.append((key, smt_data))
+            else:
+                bearish_smts.append((key, smt_data))
+        
+        logger.info(f"🔍 Valid bullish SMTs: {len(bullish_smts)}")
+        logger.info(f"🔍 Valid bearish SMTs: {len(bearish_smts)}")
+        
+        # Check if multiple SMTs confluence should trigger
+        if len(bullish_smts) >= 2:
+            logger.info(f"🎯 MULTIPLE BULLISH SMTs CONFLUENCE SHOULD TRIGGER!")
+            logger.info(f"🔍 Calling _check_multiple_smts_confluence...")
+            
+            # Manually call the method to see what happens
+            result = self._check_multiple_smts_confluence()
+            logger.info(f"🔍 _check_multiple_smts_confluence returned: {result}")
+            
+        if len(bearish_smts) >= 2:
+            logger.info(f"🎯 MULTIPLE BEARISH SMTs CONFLUENCE SHOULD TRIGGER!")
+            logger.info(f"🔍 Calling _check_multiple_smts_confluence...")
+            
+            # Manually call the method to see what happens
+            result = self._check_multiple_smts_confluence()
+            logger.info(f"🔍 _check_multiple_smts_confluence returned: {result}")
+
 # ================================
 # ULTIMATE TRADING SYSTEM WITH TRIPLE CONFLUENCE
 # ================================
@@ -3006,11 +3064,13 @@ class UltimateTradingSystem:
             summary = self.feature_box.get_active_features_summary()
             logger.info(f"📊 {self.pair_group} Feature Summary: {summary['smt_count']} SMTs, {summary['crt_count']} CRTs, {summary['psp_count']} PSPs")
             
-            # ✅ ADD THIS: Detailed feature box logging
-            self.feature_box.log_detailed_status()
-            self.feature_box.debug_confluence_checks()
+            # ✅ REPLACE with detailed debug
+            self.feature_box.debug_confluence_checks_detailed()
             
-            return None  # Signals are now sent immediately via Feature Box
+            # Log detailed status
+            self.feature_box.log_detailed_status()
+            
+            return None
             
         except Exception as e:
             logger.error(f"❌ Error in real-time analysis for {self.pair_group}: {str(e)}", exc_info=True)
@@ -3116,11 +3176,11 @@ class UltimateTradingSystem:
     def _get_proven_count(self, timeframe):
         """Get proven candle counts"""
         proven_counts = {
-            'H4': 100,  # Monthly
-            'H1': 60,  # Weekly
-            'M15': 60,  # Daily
-            'M5': 50,  # 90min
-            'H2': 100, 'H3': 100, 'H6': 100, 'H8': 100, 'H12': 100
+            'H4': 40,  # Monthly
+            'H1': 40,  # Weekly
+            'M15': 40,  # Daily
+            'M5': 30,  # 90min
+            'H2': 10, 'H3': 10, 'H6': 10, 'H8': 10, 'H12': 10
         }
         return proven_counts.get(timeframe, 100)
 
