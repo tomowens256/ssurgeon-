@@ -264,33 +264,30 @@ class RobustTimingManager:
         self.ny_tz = pytz.timezone('America/New_York')  # UTC-4
         self.sent_signals = {}  # Track sent signals to prevent duplicates
         
-    def is_duplicate_signal(self, signal_key, pair_group, cooldown_minutes=60):
-        """STRONG duplicate prevention - 60 minute cooldown"""
-        current_time = datetime.now(self.ny_tz)
+    def is_duplicate_signal(self, signal_key, pair_group, cooldown_minutes=30):
+        """Check if signal is a duplicate with cooldown period"""
+        current_time = datetime.now(NY_TZ)
         
+        # Initialize if not exists
         if pair_group not in self.sent_signals:
             self.sent_signals[pair_group] = {}
-            
-        # Check for exact matches first
-        if signal_key in self.sent_signals[pair_group]:
-            last_sent = self.sent_signals[pair_group][signal_key]
-            time_diff = (current_time - last_sent).total_seconds() / 60
-            if time_diff < cooldown_minutes:
-                logger.info(f"⏳ STRONG DUPLICATE PREVENTION: {signal_key} (sent {time_diff:.1f} min ago)")
-                return True
+            return False
         
-        # Check for similar signals (same direction and cycles)
-        for existing_key, last_sent in list(self.sent_signals[pair_group].keys()):
-            time_diff = (current_time - last_sent).total_seconds() / 60
-            
-            if self._signals_are_very_similar(signal_key, existing_key) and time_diff < cooldown_minutes:
-                logger.info(f"⏳ SIMILAR SIGNAL BLOCKED: {signal_key} similar to {existing_key} (sent {time_diff:.1f} min ago)")
-                return True
-                
-        self.sent_signals[pair_group][signal_key] = current_time
+        # ✅ FIX THIS LINE: Change .keys() to .items()
+        for existing_key, last_sent in list(self.sent_signals[pair_group].items()):  # ← FIXED
+            # Check if same signal key (exact duplicate)
+            if existing_key == signal_key:
+                time_diff = (current_time - last_sent).total_seconds() / 60
+                if time_diff < cooldown_minutes:
+                    logger.info(f"⏳ STRONG DUPLICATE PREVENTION: {signal_key} (sent {time_diff:.1f} min ago)")
+                    return True
         
-        # Clean old entries
-        self._clean_old_entries()
+        # Clean up old signals (older than cooldown)
+        self.sent_signals[pair_group] = {
+            key: time for key, time in self.sent_signals[pair_group].items() 
+            if (current_time - time).total_seconds() / 60 < cooldown_minutes
+        }
+        
         return False
     
     def _signals_are_very_similar(self, signal1, signal2):
