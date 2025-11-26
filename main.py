@@ -2922,7 +2922,7 @@ class UltimateTradingSystem:
         logger.info(f"🎯 Initialized ULTIMATE trading system for {self.pair_group}: {', '.join(self.instruments)}")
     
 
-    self.feature_box = RealTimeFeatureBox(pair_group, self.timing_manager, telegram_token, telegram_chat_id)
+        self.feature_box = RealTimeFeatureBox(pair_group, self.timing_manager, telegram_token, telegram_chat_id)
     async def run_ultimate_analysis(self, api_key):
         """Run analysis with REAL-TIME feature tracking - FIXED"""
         try:
