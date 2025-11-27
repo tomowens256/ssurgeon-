@@ -2567,7 +2567,7 @@ class RealTimeFeatureBox:
         return False
     
     def _check_smt_psp_confluence_global(self):
-        """Check all SMT+PSP combinations - USING SIGNATURE DUPLICATE PREVENTION"""
+        """Check SMT+PSP combinations - DO NOT DELETE SMTs"""
         signals_sent = 0
         
         for smt_key, smt_feature in list(self.active_features['smt'].items()):
@@ -2576,8 +2576,14 @@ class RealTimeFeatureBox:
                 
             smt_data = smt_feature['smt_data']
             
-            # Check if this SMT already has PSP
+            # Check if this SMT has PSP
             if smt_feature['psp_data']:
+                signal_key = f"SMT_PSP_PRE_{smt_key}"
+                
+                # Check duplicate prevention
+                if self.timing_manager.is_duplicate_signal(signal_key, self.pair_group, cooldown_minutes=240):
+                    continue
+                
                 signal_data = {
                     'pair_group': self.pair_group,
                     'direction': smt_data['direction'],
@@ -2585,13 +2591,16 @@ class RealTimeFeatureBox:
                     'smt': smt_data,
                     'psp': smt_feature['psp_data'],
                     'timestamp': datetime.now(NY_TZ),
-                    'signal_key': f"SMT_PSP_PRE_{smt_key}_{datetime.now().strftime('%H%M%S')}",
+                    'signal_key': signal_key,
                     'description': f"PRE-CONFIRMED: {smt_data['cycle']} {smt_data['direction']} SMT + PSP"
                 }
                 
-                # The duplicate prevention now happens in _send_immediate_signal via signature check
                 if self._send_immediate_signal(signal_data):
+                    # ✅ CRITICAL CHANGE: DO NOT REMOVE THE SMT
+                    # Just mark that we sent this specific confluence
+                    logger.info(f"✅ SMT+PSP signal sent - SMT KEPT for other confluences")
                     signals_sent += 1
+                    # The SMT remains active for CRT+SMT, multiple SMTs, etc.
         
         return signals_sent > 0
     
@@ -2686,10 +2695,8 @@ class RealTimeFeatureBox:
             logger.info(f"🔍 About to send signal: {signal_data['description']}")
             
             if self._send_immediate_signal(signal_data):
-                logger.info(f"🔍 Signal sent successfully, removing SMTs: {smt_keys_used}")
-                # Remove the used SMTs
-                for smt_key in smt_keys_used:
-                    self._remove_feature('smt', smt_key)
+                # ✅ DON'T remove SMTs - they can still form other confluences
+                logger.info(f"✅ Multiple SMTs signal sent - SMTs KEPT for other confluences")
                 signals_sent += 1
             else:
                 logger.info(f"🔍 Signal was NOT sent (might be duplicate or Telegram failed)")
@@ -2724,16 +2731,11 @@ class RealTimeFeatureBox:
             logger.info(f"🔍 About to send signal: {signal_data['description']}")
             
             if self._send_immediate_signal(signal_data):
-                logger.info(f"🔍 Signal sent successfully, removing SMTs: {smt_keys_used}")
-                # Remove the used SMTs
-                for smt_key in smt_keys_used:
-                    self._remove_feature('smt', smt_key)
+                # ✅ DON'T remove features - they might form other confluences
+                logger.info(f"✅ CRT+SMT signal sent - features KEPT for other confluences")
                 signals_sent += 1
-            else:
-                logger.info(f"🔍 Signal was NOT sent (might be duplicate or Telegram failed)")
-        
-        logger.info(f"🔍 _check_multiple_smts_confluence EXITED, signals_sent: {signals_sent}")
-        return signals_sent > 0
+            
+            return signals_sent > 0
     
     def _check_triple_confluence(self):
         """Check CRT + PSP + SMT triple confluence"""
