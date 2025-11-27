@@ -2769,22 +2769,17 @@ class RealTimeFeatureBox:
         return False
     
     def _send_immediate_signal(self, signal_data):
-        """Send signal with IMPROVED duplicate prevention using signatures"""
+        """Send signal with content validation"""
         signal_key = signal_data['signal_key']
         
-        # 1. Check signature-based duplicate prevention (CONTENT-based)
-        if self._is_duplicate_signal_signature(signal_data):
-            logger.info(f"⏳ SIGNATURE BLOCKED: {signal_data['description']}")
+        # 1. Validate signal content
+        if not self._validate_signal_before_sending(signal_data):
+            logger.warning(f"⏳ SIGNAL BLOCKED (invalid content): {signal_key}")
             return False
         
-        # 2. Check timing-based duplicate prevention (KEY-based)
+        # 2. Check duplicate prevention
         if self.timing_manager.is_duplicate_signal(signal_key, self.pair_group, cooldown_minutes=30):
-            logger.info(f"⏳ TIMING BLOCKED: {signal_key}")
-            return False
-        
-        # 3. Validate signal has content
-        if not self._validate_signal_content(signal_data):
-            logger.warning(f"⚠️ EMPTY SIGNAL BLOCKED: {signal_key}")
+            logger.info(f"⏳ SIGNAL BLOCKED (duplicate): {signal_key}")
             return False
         
         # Format and send message
@@ -2798,6 +2793,43 @@ class RealTimeFeatureBox:
         else:
             logger.error(f"❌ FAILED to send signal: {signal_key}")
             return False
+
+    def _validate_signal_before_sending(self, signal_data):
+        """Validate signal has meaningful content before sending"""
+        confluence_type = signal_data.get('confluence_type', '')
+        
+        if confluence_type.startswith('MULTIPLE_SMTS'):
+            # For multiple SMTs, check we have valid SMT details
+            multiple_smts = signal_data.get('multiple_smts', [])
+            if not multiple_smts:
+                logger.warning(f"⚠️ BLOCKED EMPTY MULTIPLE SMTs signal")
+                return False
+            
+            valid_smts = [smt for smt in multiple_smts 
+                         if smt.get('cycle') and smt.get('quarters')]
+            
+            if len(valid_smts) < 2:
+                logger.warning(f"⚠️ BLOCKED: Only {len(valid_smts)} valid SMTs in multiple SMTs signal")
+                return False
+                
+            return True
+        
+        elif confluence_type == 'SMT_PSP_PRE_CONFIRMED':
+            # For SMT+PSP, check both exist
+            if not signal_data.get('smt') or not signal_data.get('psp'):
+                logger.warning(f"⚠️ BLOCKED INCOMPLETE SMT+PSP signal")
+                return False
+            return True
+        
+        elif confluence_type == 'CRT_SMT_IMMEDIATE':
+            # For CRT+SMT, check both exist
+            if not signal_data.get('crt') or not signal_data.get('smt'):
+                logger.warning(f"⚠️ BLOCKED INCOMPLETE CRT+SMT signal")
+                return False
+            return True
+        
+        # Default: allow other signal types
+        return True
     
     def _validate_signal_content(self, signal_data):
         """Validate that signal has meaningful content"""
