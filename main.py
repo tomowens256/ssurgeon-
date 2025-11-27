@@ -3631,7 +3631,10 @@ class UltimateTradingManager:
                         name=f"ultimate_analysis_{pair_group}"
                     )
                     tasks.append(task)
-                    sleep_times.append(system.get_sleep_time())
+                    
+                    # Get sleep time for the fastest cycle (usually '90min')
+                    sleep_time = system.get_sleep_time_for_cycle('90min')  # or whichever cycle type you want
+                    sleep_times.append(sleep_time)
                 
                 results = await asyncio.gather(*tasks, return_exceptions=True)
                 
