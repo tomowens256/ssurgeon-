@@ -2865,7 +2865,7 @@ class RealTimeFeatureBox:
         return signals_sent > 0
     
     def _format_immediate_signal_message(self, signal_data):
-        """Format immediate signal for Telegram"""
+        """Format immediate signal for Telegram - FIXED EMPTY MULTIPLE SMTs"""
         direction = signal_data['direction'].upper()
         confluence_type = signal_data['confluence_type']
         description = signal_data['description']
@@ -2876,25 +2876,62 @@ class RealTimeFeatureBox:
         message += f"*Confluence:* {confluence_type}\n"
         message += f"*Description:* {description}\n\n"
         
-        if 'smt' in signal_data:
+        # Single SMT details
+        if 'smt' in signal_data and signal_data['smt']:
             smt = signal_data['smt']
             message += f"*SMT Details:*\n"
-            message += f"• Cycle: {smt['cycle']} {smt['quarters']}\n"
-            message += f"• {smt['asset1_action']}\n"
-            message += f"• {smt['asset2_action']}\n\n"
+            message += f"• Cycle: {smt.get('cycle', 'Unknown')} {smt.get('quarters', '')}\n"
+            if smt.get('asset1_action'):
+                message += f"• {smt['asset1_action']}\n"
+            if smt.get('asset2_action'):
+                message += f"• {smt['asset2_action']}\n"
+            message += f"\n"
         
-        if 'crt' in signal_data:
+        # Multiple SMTs details - FIXED: Check if data exists and is valid
+        if 'multiple_smts' in signal_data and signal_data['multiple_smts']:
+            valid_smts = [smt for smt in signal_data['multiple_smts'] 
+                         if smt.get('cycle') and smt.get('quarters')]
+            
+            if valid_smts:
+                message += f"*Multiple SMTs Details ({len(valid_smts)}):*\n"
+                for i, smt in enumerate(valid_smts, 1):
+                    message += f"• {smt['cycle']} {smt.get('quarters', '')}\n"
+                    if smt.get('asset1_action'):
+                        message += f"  - {smt['asset1_action']}\n"
+                    if smt.get('asset2_action'):
+                        message += f"  - {smt['asset2_action']}\n"
+                message += f"\n"
+            else:
+                logger.warning(f"⚠️ Multiple SMTs signal has no valid SMT details")
+        
+        # CRT details
+        if 'crt' in signal_data and signal_data['crt']:
             crt = signal_data['crt']
             message += f"*CRT Details:*\n"
-            message += f"• Timeframe: {crt['timeframe']}\n"
-            message += f"• Time: {crt['timestamp'].strftime('%H:%M')}\n\n"
+            message += f"• Timeframe: {crt.get('timeframe', 'Unknown')}\n"
+            if crt.get('timestamp'):
+                message += f"• Time: {crt['timestamp'].strftime('%H:%M')}\n"
+            message += f"\n"
         
-        if 'psp' in signal_data:
+        # PSP details
+        if 'psp' in signal_data and signal_data['psp']:
             psp = signal_data['psp']
             message += f"*PSP Details:*\n"
-            message += f"• Timeframe: {psp['timeframe']}\n"
-            message += f"• Colors: {psp['asset1_color']}/{psp['asset2_color']}\n"
-            message += f"• Time: {psp['formation_time'].strftime('%H:%M')}\n\n"
+            message += f"• Timeframe: {psp.get('timeframe', 'Unknown')}\n"
+            message += f"• Colors: {psp.get('asset1_color', 'Unknown')}/{psp.get('asset2_color', 'Unknown')}\n"
+            if psp.get('formation_time'):
+                message += f"• Time: {psp['formation_time'].strftime('%H:%M')}\n"
+            message += f"\n"
+        
+        # CRT+PSP details
+        if 'crt_psp' in signal_data and signal_data['crt_psp']:
+            crt_psp = signal_data['crt_psp']
+            message += f"*CRT PSP Details:*\n"
+            message += f"• Timeframe: {crt_psp.get('timeframe', 'Unknown')}\n"
+            message += f"• Colors: {crt_psp.get('asset1_color', 'Unknown')}/{crt_psp.get('asset2_color', 'Unknown')}\n"
+            if crt_psp.get('formation_time'):
+                message += f"• Time: {crt_psp['formation_time'].strftime('%H:%M')}\n"
+            message += f"\n"
         
         message += f"*Detection Time:* {signal_data['timestamp'].strftime('%Y-%m-%d %H:%M:%S')}\n"
         message += f"*Latency:* IMMEDIATE\n\n"
