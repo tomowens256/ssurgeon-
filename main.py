@@ -3414,11 +3414,11 @@ class UltimateTradingSystem:
         
         if summary['smt_count'] > 0 or summary['crt_count'] > 0:
             # We have active features, check more frequently
-            sleep_time = 60  # 30 seconds
+            sleep_time = 30  # 30 seconds
             logger.info(f"⏰ {self.pair_group}: Active features detected - sleeping {sleep_time}s")
         else:
             # No active features, use normal interval
-            sleep_time = 299  # 60 seconds
+            sleep_time = 60  # 60 seconds
             logger.info(f"⏰ {self.pair_group}: No active features - sleeping {sleep_time}s")
         
         return sleep_time
