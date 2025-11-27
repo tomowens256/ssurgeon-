@@ -2642,10 +2642,9 @@ class RealTimeFeatureBox:
         return signals_sent > 0
 
     def _check_multiple_smts_confluence(self):
-        """Check for multiple SMTs confluence (2+ SMTs in same direction)"""
-        logger.info(f"🔍 _check_multiple_smts_confluence ENTERED")
-        
+        """Check for multiple SMTs confluence - FIXED DATA INCLUSION"""
         signals_sent = 0
+        current_time = datetime.now(NY_TZ)
         
         # Group SMTs by direction
         bullish_smts = []
@@ -2653,7 +2652,6 @@ class RealTimeFeatureBox:
         
         for smt_key, smt_feature in list(self.active_features['smt'].items()):
             if self._is_feature_expired(smt_feature):
-                logger.info(f"🔍 SMT {smt_key} expired in confluence check")
                 continue
                 
             smt_data = smt_feature['smt_data']
@@ -2663,23 +2661,23 @@ class RealTimeFeatureBox:
             elif smt_data['direction'] == 'bearish':
                 bearish_smts.append((smt_key, smt_data))
         
-        logger.info(f"🔍 In confluence check: {len(bullish_smts)} bullish, {len(bearish_smts)} bearish")
+        logger.info(f"🔍 Multiple SMTs check: {len(bullish_smts)} bullish, {len(bearish_smts)} bearish")
         
         # Check for multiple bullish SMTs
         if len(bullish_smts) >= 2:
             logger.info(f"🎯 MULTIPLE BULLISH SMTs detected: {len(bullish_smts)} SMTs")
             
-            # Get the SMT details for the signal
+            # Get ALL SMT details - FIXED: Include ALL data from SMT
             smt_details = []
-            smt_keys_used = []
-            
-            for smt_key, smt_data in bullish_smts[:2]:  # Use first 2 for signal
+            for smt_key, smt_data in bullish_smts:
                 smt_details.append({
-                    'cycle': smt_data['cycle'],
-                    'quarters': smt_data['quarters'],
-                    'timeframe': smt_data.get('timeframe', 'unknown')
+                    'cycle': smt_data.get('cycle', 'Unknown'),
+                    'quarters': smt_data.get('quarters', ''),
+                    'timeframe': smt_data.get('timeframe', 'Unknown'),
+                    'asset1_action': smt_data.get('asset1_action', ''),
+                    'asset2_action': smt_data.get('asset2_action', ''),
+                    'signal_key': smt_data.get('signal_key', '')
                 })
-                smt_keys_used.append(smt_key)
             
             signal_data = {
                 'pair_group': self.pair_group,
@@ -2687,35 +2685,31 @@ class RealTimeFeatureBox:
                 'confluence_type': 'MULTIPLE_SMTS_BULLISH',
                 'multiple_smts': smt_details,
                 'smt_count': len(bullish_smts),
-                'timestamp': datetime.now(NY_TZ),
-                'signal_key': f"MULTI_SMT_BULLISH_{datetime.now().strftime('%H%M%S')}",
+                'timestamp': current_time,
+                'signal_key': f"MULTI_SMT_BULLISH_{current_time.strftime('%H%M%S')}",
                 'description': f"MULTIPLE BULLISH SMTs: {len(bullish_smts)} cycles confirming"
             }
             
-            logger.info(f"🔍 About to send signal: {signal_data['description']}")
+            logger.info(f"🔍 Multiple Bullish SMTs details: {[s['cycle'] for s in smt_details]}")
             
             if self._send_immediate_signal(signal_data):
-                # ✅ DON'T remove SMTs - they can still form other confluences
-                logger.info(f"✅ Multiple SMTs signal sent - SMTs KEPT for other confluences")
                 signals_sent += 1
-            else:
-                logger.info(f"🔍 Signal was NOT sent (might be duplicate or Telegram failed)")
         
         # Check for multiple bearish SMTs  
         elif len(bearish_smts) >= 2:
             logger.info(f"🎯 MULTIPLE BEARISH SMTs detected: {len(bearish_smts)} SMTs")
             
-            # Get the SMT details for the signal
+            # Get ALL SMT details - FIXED: Include ALL data from SMT
             smt_details = []
-            smt_keys_used = []
-            
-            for smt_key, smt_data in bearish_smts[:2]:  # Use first 2 for signal
+            for smt_key, smt_data in bearish_smts:
                 smt_details.append({
-                    'cycle': smt_data['cycle'],
-                    'quarters': smt_data['quarters'],
-                    'timeframe': smt_data.get('timeframe', 'unknown')
+                    'cycle': smt_data.get('cycle', 'Unknown'),
+                    'quarters': smt_data.get('quarters', ''),
+                    'timeframe': smt_data.get('timeframe', 'Unknown'),
+                    'asset1_action': smt_data.get('asset1_action', ''),
+                    'asset2_action': smt_data.get('asset2_action', ''),
+                    'signal_key': smt_data.get('signal_key', '')
                 })
-                smt_keys_used.append(smt_key)
             
             signal_data = {
                 'pair_group': self.pair_group,
@@ -2723,19 +2717,17 @@ class RealTimeFeatureBox:
                 'confluence_type': 'MULTIPLE_SMTS_BEARISH',
                 'multiple_smts': smt_details,
                 'smt_count': len(bearish_smts),
-                'timestamp': datetime.now(NY_TZ),
-                'signal_key': f"MULTI_SMT_BEARISH_{datetime.now().strftime('%H%M%S')}",
+                'timestamp': current_time,
+                'signal_key': f"MULTI_SMT_BEARISH_{current_time.strftime('%H%M%S')}",
                 'description': f"MULTIPLE BEARISH SMTs: {len(bearish_smts)} cycles confirming"
             }
             
-            logger.info(f"🔍 About to send signal: {signal_data['description']}")
+            logger.info(f"🔍 Multiple Bearish SMTs details: {[s['cycle'] for s in smt_details]}")
             
             if self._send_immediate_signal(signal_data):
-                # ✅ DON'T remove features - they might form other confluences
-                logger.info(f"✅ CRT+SMT signal sent - features KEPT for other confluences")
                 signals_sent += 1
-            
-            return signals_sent > 0
+        
+        return signals_sent > 0
     
     def _check_triple_confluence(self):
         """Check CRT + PSP + SMT triple confluence"""
