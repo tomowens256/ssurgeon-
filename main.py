@@ -3499,6 +3499,89 @@ class UltimateTradingSystem:
         
         return triad_signal
 
+    async def _scan_crt_signals_for_feature_box(self):
+        """Scan for CRT signals and add to Feature Box"""
+        logger.info(f"🔷 Scanning CRT signals for {self.pair_group}")
+        
+        crt_detected = False
+        
+        for timeframe in CRT_TIMEFRAMES:
+            asset1_data = self.market_data[self.instruments[0]].get(timeframe)
+            asset2_data = self.market_data[self.instruments[1]].get(timeframe)
+            
+            if (asset1_data is None or asset1_data.empty or 
+                asset2_data is None or asset2_data.empty):
+                continue
+            
+            # Detect CRT
+            crt_signal = self.crt_detector.calculate_crt_current_candle(
+                asset1_data, asset1_data, asset2_data, timeframe
+            )
+            
+            if crt_signal:
+                # Check for PSP for this CRT
+                psp_signal = self._check_psp_for_crt(asset1_data, asset2_data, timeframe)
+                
+                # Add CRT to Feature Box
+                self.feature_box.add_crt(crt_signal, psp_signal)
+                crt_detected = True
+                logger.info(f"🔷 CRT detected on {timeframe} for {self.pair_group}")
+        
+        if not crt_detected:
+            logger.debug(f"🔷 No CRT signals for {self.pair_group}")
+    
+    def _check_psp_for_crt(self, asset1_data, asset2_data, timeframe):
+        """Check for PSP confirmation for CRT"""
+        try:
+            # Use the same PSP detection logic but for CRT timeframe
+            psp_signal = self.smt_detector.detect_price_swing_points(
+                asset1_data, asset2_data, timeframe, lookback=5
+            )
+            return psp_signal
+        except Exception as e:
+            logger.error(f"❌ Error checking PSP for CRT: {e}")
+            return None
+    
+    async def _scan_psp_for_existing_smts_feature_box(self):
+        """Scan for PSP confirmation for existing SMTs in Feature Box"""
+        active_smts = self.feature_box.get_active_features_summary()['smt_count']
+        
+        if active_smts == 0:
+            return
+        
+        logger.info(f"🔄 Scanning PSP for {active_smts} existing SMTs in {self.pair_group}")
+        
+        psp_updates = 0
+        for smt_key, smt_feature in list(self.feature_box.active_features['smt'].items()):
+            # Skip if already has PSP
+            if smt_feature['psp_data']:
+                continue
+                
+            smt_data = smt_feature['smt_data']
+            timeframe = smt_data.get('timeframe')
+            
+            if not timeframe:
+                continue
+                
+            asset1_data = self.market_data[self.instruments[0]].get(timeframe)
+            asset2_data = self.market_data[self.instruments[1]].get(timeframe)
+            
+            if (asset1_data is None or asset1_data.empty or 
+                asset2_data is None or asset2_data.empty):
+                continue
+            
+            # Check for PSP in recent candles
+            psp_signal = self.smt_detector.check_psp_for_smt(smt_data, asset1_data, asset2_data)
+            
+            if psp_signal:
+                # Update the SMT with PSP in Feature Box
+                smt_feature['psp_data'] = psp_signal
+                psp_updates += 1
+                logger.info(f"✅ PSP confirmed for {smt_data['cycle']} {smt_data['direction']}")
+        
+        if psp_updates > 0:
+            logger.info(f"🔄 Updated {psp_updates} SMTs with PSP confirmation")
+
 # ================================
 # ULTIMATE MAIN MANAGER
 # ================================
