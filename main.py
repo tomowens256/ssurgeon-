@@ -3217,12 +3217,12 @@ class UltimateTradingSystem:
         # Scan for SMTs
         await self._scan_all_smt_for_feature_box()
         
-        # TODO: Add these methods when ready
+        # ✅ UNCOMMENT THESE LINES!
         # Scan for CRTs  
-        # await self._scan_crt_signals_for_feature_box()
+        await self._scan_crt_signals_for_feature_box()
         
         # Scan for PSPs for existing SMTs
-        # await self._scan_psp_for_existing_smts_feature_box()
+        await self._scan_psp_for_existing_smts_feature_box()
     
     async def _scan_all_smt_for_feature_box(self):
         """Scan for SMTs and add to Feature Box immediately - FIXED"""
