@@ -2567,7 +2567,7 @@ class RealTimeFeatureBox:
         return False
     
     def _check_smt_psp_confluence_global(self):
-        """Check SMT+PSP combinations - DO NOT DELETE SMTs"""
+        """Check SMT+PSP with ENHANCED CRITERIA"""
         signals_sent = 0
         
         for smt_key, smt_feature in list(self.active_features['smt'].items()):
@@ -2578,9 +2578,14 @@ class RealTimeFeatureBox:
             
             # Check if this SMT has PSP
             if smt_feature['psp_data']:
-                signal_key = f"SMT_PSP_PRE_{smt_key}"
+                # ENHANCED: For 90min SMT+PSP, require daily SMT in same direction
+                if smt_data['cycle'] == '90min':
+                    if not self._has_daily_smt_confirmation(smt_data['direction']):
+                        logger.info(f"⚠️ 90min SMT+PSP requires daily confirmation - skipping")
+                        continue
                 
                 # Check duplicate prevention
+                signal_key = f"SMT_PSP_PRE_{smt_key}"
                 if self.timing_manager.is_duplicate_signal(signal_key, self.pair_group, cooldown_minutes=240):
                     continue
                 
@@ -2596,13 +2601,23 @@ class RealTimeFeatureBox:
                 }
                 
                 if self._send_immediate_signal(signal_data):
-                    # ✅ CRITICAL CHANGE: DO NOT REMOVE THE SMT
-                    # Just mark that we sent this specific confluence
-                    logger.info(f"✅ SMT+PSP signal sent - SMT KEPT for other confluences")
+                    # DON'T remove the SMT - keep it for other confluence checks
+                    logger.info(f"✅ SMT+PSP signal sent - SMT kept for further confluence")
                     signals_sent += 1
-                    # The SMT remains active for CRT+SMT, multiple SMTs, etc.
         
         return signals_sent > 0
+    
+    def _has_daily_smt_confirmation(self, direction):
+        """Check if we have a daily SMT in the same direction"""
+        for smt_key, smt_feature in self.active_features['smt'].items():
+            if self._is_feature_expired(smt_feature):
+                continue
+                
+            smt_data = smt_feature['smt_data']
+            if smt_data['cycle'] == 'daily' and smt_data['direction'] == direction:
+                return True
+        
+        return False
     
     def _check_crt_smt_confluence(self):
         """Check CRT + SMT confluence"""
