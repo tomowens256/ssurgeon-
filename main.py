@@ -4046,17 +4046,18 @@ class UltimateTradingSystem:
         )
         
         # NEW: Enhanced FVG Analysis
-        self.fvg_analyzer = EnhancedFVGAnalyzer(self.timing_manager, self.feature_box)
-        self.fvg_ideas_sent = {}  # Track sent FVG ideas
+        
         
         # Data storage for all instruments
         self.market_data = {inst: {} for inst in self.instruments}
         
         logger.info(f"🎯 Initialized ULTIMATE trading system for {self.pair_group}: {', '.join(self.instruments)}")
         logger.info(f"🎯 FVG Analyzer initialized for {pair_group}")
+        self.fvg_analyzer = EnhancedFVGAnalyzer(self.timing_manager, self.feature_box)
+        self.fvg_ideas_sent = {}
     
     async def run_ultimate_analysis(self, api_key):
-        """Run analysis with FVG trade ideas"""
+        """Run analysis with FVG-SMT confluence"""
         try:
             # Cleanup expired features first
             self.feature_box.cleanup_expired_features()
@@ -4067,16 +4068,12 @@ class UltimateTradingSystem:
             # Scan for new features and add to Feature Box
             await self._scan_and_add_features()
             
-            # NEW: Scan for FVG trade ideas
-            fvg_idea_sent = self._scan_fvg_trade_ideas()
+            # UPDATED: Scan for FVG-SMT confluence
+            fvg_idea_sent = self._scan_fvg_smt_confluence()
             
             # Get current feature summary
             summary = self.feature_box.get_active_features_summary()
             logger.info(f"📊 {self.pair_group} Feature Summary: {summary['smt_count']} SMTs, {summary['crt_count']} CRTs, {summary['psp_count']} PSPs")
-            
-            # Existing debug logging...
-            self.feature_box.debug_confluence_checks_detailed()
-            self.feature_box.log_detailed_status()
             
             return None
             
@@ -4084,83 +4081,88 @@ class UltimateTradingSystem:
             logger.error(f"❌ Error in real-time analysis for {self.pair_group}: {str(e)}", exc_info=True)
             return None
     
-    def _scan_fvg_trade_ideas(self):
+    def _scan_fvg_smt_confluence(self):
         """
-        Scan for FVG-based trade ideas with SMT confluence
+        Scan for FVG-SMT confluence trade ideas
         """
         try:
-            # Scan for FVG trade ideas across all timeframes
-            trade_ideas = self.fvg_analyzer.scan_all_timeframes(
+            # Scan for FVG-SMT confluence
+            trade_ideas = self.fvg_analyzer.scan_smt_fvg_confluence(
                 self.market_data, self.pair_group, self.instruments
             )
             
-            # Send the best idea
+            # Send only high-confidence ideas
             if trade_ideas:
                 best_idea = trade_ideas[0]  # Already sorted by confidence
                 
-                # Only send if confidence is high enough and not recently sent
-                if best_idea['confidence'] >= 0.7:
+                # Only send if confidence is high enough
+                if best_idea['confidence'] >= 0.8:  # Higher threshold for quality
                     return self._send_fvg_trade_idea(best_idea)
             
             return False
             
         except Exception as e:
-            logger.error(f"❌ Error scanning FVG trade ideas: {str(e)}")
+            logger.error(f"❌ Error scanning FVG-SMT confluence: {str(e)}")
             return False
     
     def _send_fvg_trade_idea(self, trade_idea):
-        """Send formatted FVG trade idea"""
+        """Send formatted FVG-SMT confluence trade idea"""
         idea_key = trade_idea['idea_key']
         
-        # Check if we recently sent similar idea (1 hour cooldown)
+        # Check cooldown
         if idea_key in self.fvg_ideas_sent:
             last_sent = self.fvg_ideas_sent[idea_key]
             if (datetime.now(NY_TZ) - last_sent).total_seconds() < 3600:
-                logger.debug(f"⏳ FVG idea recently sent: {idea_key}")
                 return False
         
-        # Format and send the message
-        message = self._format_fvg_idea_message(trade_idea)
+        # Format and send message
+        message = self._format_fvg_smt_idea_message(trade_idea)
         
         if self._send_telegram_message(message):
             self.fvg_ideas_sent[idea_key] = datetime.now(NY_TZ)
-            logger.info(f"🎯 FVG TRADE IDEA SENT: {trade_idea['fvg_name']} "
-                       f"(Confidence: {trade_idea['confidence']:.1%})")
+            logger.info(f"🎯 FVG-SMT CONFLUENCE: {trade_idea['fvg_name']} "
+                       f"(Score: {trade_idea['confluence_score']}, Confidence: {trade_idea['confidence']:.1%})")
             return True
         
         return False
     
-    def _format_fvg_idea_message(self, idea):
-        """Format FVG trade idea for Telegram"""
+    def _format_fvg_smt_idea_message(self, idea):
+        """Format FVG-SMT confluence trade idea"""
         direction_emoji = "🔴" if idea['direction'] == 'bearish' else "🟢"
         confidence_stars = "★" * int(idea['confidence'] * 5)
         formation_time = idea['formation_time'].strftime('%m/%d %H:%M')
+        tap_time = idea.get('tap_time', idea['formation_time']).strftime('%m/%d %H:%M')
         
         message = f"""
-        ⚡ *FVG TRADE IDEA* ⚡
-        
-        *Pair Group:* {idea['pair_group'].replace('_', ' ').title()}
-        *Direction:* {idea['direction'].upper()} {direction_emoji}
-        *Timeframe:* {idea['timeframe']}
-        *Asset:* {idea['asset']}
-        *Confidence:* {confidence_stars} ({idea['confidence']:.1%})
-        
-        *FVG Details:*
-        • Name: {idea['fvg_name']}
-        • Type: {idea['fvg_type'].replace('_', ' ').title()}
-        • Levels: {idea['fvg_levels']}
-        • Formation: {formation_time}
-        • Fibonacci Zone: {idea['fib_zone'].replace('_', ' ').title()}
-        
-        *Confluence Reasoning:*
-        {idea['reasoning']}
-        
-        *SMT Cycles Matched:* {', '.join(idea['smt_confluence']['cycles_matched'])}
-        
-        *Detection Time:* {idea['timestamp'].strftime('%Y-%m-%d %H:%M:%S')}
-        
-        #FVGTradeIdea #{idea['pair_group']} #{idea['direction']} #{idea['timeframe']}
-        """
+            ⚡ *FVG-SMT CONFLUENCE* ⚡
+            
+            *Pair Group:* {idea['pair_group'].replace('_', ' ').title()}
+            *Direction:* {idea['direction'].upper()} {direction_emoji}
+            *Timeframe:* {idea['timeframe']}
+            *Asset:* {idea['asset']}
+            *Confluence Score:* {idea['confluence_score']}/10
+            *Confidence:* {confidence_stars} ({idea['confidence']:.1%})
+            
+            *FVG Details:*
+            • Name: {idea['fvg_name']}
+            • Type: {idea['fvg_type'].replace('_', ' ').title()}
+            • Levels: {idea['fvg_levels']}
+            • Formation: {formation_time}
+            • Tap Time: {tap_time}
+            • Fibonacci: {idea['fib_zone'].replace('_', ' ').title()}
+            • HP FVG: {'✅ YES' if idea['is_hp_fvg'] else '❌ NO'}
+            
+            *SMT Confluence:*
+            • Cycle: {idea['smt_cycle']}
+            • PSP: ✅ Confirmed
+            
+            *Reasoning:*
+            {idea['reasoning']}
+            
+            *Detection Time:* {idea['timestamp'].strftime('%Y-%m-%d %H:%M:%S')}
+            
+            #FVGSMTConfluence #{idea['pair_group']} #{idea['direction']} #{idea['timeframe']}
+            """
         return message
     
     def _send_telegram_message(self, message):
