@@ -82,7 +82,7 @@ TRADING_PAIRS = {
     }
 }
 
-CRT_TIMEFRAMES = ['H1', 'H2', 'H3', 'H4', 'H6', 'H8', 'H12']
+CRT_TIMEFRAMES = [ 'H4', 'H6', 'H12']
 
 CYCLE_SLEEP_TIMEFRAMES = {
     'monthly': 'H4',
