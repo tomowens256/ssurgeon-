@@ -3237,6 +3237,292 @@ class RealTimeFeatureBox:
         if expired_signatures:
             logger.debug(f"🧹 Cleaned up {len(expired_signatures)} old signal signatures")
 
+class EnhancedFVGAnalyzer:
+    """
+    Comprehensive FVG analyzer with multi-timeframe scanning
+    and SMT confluence detection
+    """
+    
+    def __init__(self, timing_manager, feature_box):
+        self.timing_manager = timing_manager
+        self.feature_box = feature_box
+        
+        # Timeframe configuration
+        self.timeframes = ['H4', 'H1', 'M15']  # 1D, 4H, 1H equivalent
+        self.timeframe_cycle_map = {
+            'H4': ['monthly', 'weekly'],    # 4H uses monthly + weekly cycles
+            'H1': ['weekly', 'daily'],      # 1H uses weekly + daily cycles  
+            'M15': ['daily', '90min']       # 15M uses daily + 90min cycles
+        }
+        
+        # FVG detection parameters per timeframe
+        self.fvg_params = {
+            'H4': {'lookback_bars': 40, 'inversion_max_belta': 20},
+            'H1': {'lookback_bars': 50, 'inversion_max_belta': 25},
+            'M15': {'lookback_bars': 60, 'inversion_max_belta': 30}
+        }
+        
+        # Track last scan times and detected FVGs
+        self.last_scan_time = {}
+        self.detected_fvgs = {}  # Track FVGs to avoid duplicates
+        self.fvg_scanners = {}
+        
+        # Initialize scanners for each timeframe
+        for tf in self.timeframes:
+            params = self.fvg_params[tf]
+            self.fvg_scanners[tf] = FVGAnalyzer(
+                lookback_bars=params['lookback_bars'],
+                inversion_max_belta=params['inversion_max_belta'],
+                fib_lookback=45
+            )
+            self.last_scan_time[tf] = None
+            self.detected_fvgs[tf] = []
+    
+    def should_scan_timeframe(self, timeframe, current_time):
+        """
+        Determine if we should scan this timeframe based on candle completion
+        """
+        if timeframe == 'H4':
+            # Scan every 4 hours
+            if self.last_scan_time[timeframe] is None:
+                return True
+            time_diff = (current_time - self.last_scan_time[timeframe]).total_seconds()
+            return time_diff >= 4 * 3600  # 4 hours
+            
+        elif timeframe == 'H1':
+            # Scan every hour
+            if self.last_scan_time[timeframe] is None:
+                return True
+            time_diff = (current_time - self.last_scan_time[timeframe]).total_seconds()
+            return time_diff >= 3600  # 1 hour
+            
+        elif timeframe == 'M15':
+            # Scan every 15 minutes
+            if self.last_scan_time[timeframe] is None:
+                return True
+            time_diff = (current_time - self.last_scan_time[timeframe]).total_seconds()
+            return time_diff >= 900  # 15 minutes
+        
+        return False
+    
+    def scan_all_timeframes(self, market_data, pair_group, instruments):
+        """
+        Scan all timeframes for FVGs with proper timing
+        """
+        current_time = datetime.now(NY_TZ)
+        all_trade_ideas = []
+        
+        for timeframe in self.timeframes:
+            if self.should_scan_timeframe(timeframe, current_time):
+                logger.info(f"🔄 Scanning {timeframe} for FVGs...")
+                
+                # Get data for both instruments
+                asset1_data = market_data[instruments[0]].get(timeframe)
+                asset2_data = market_data[instruments[1]].get(timeframe)
+                
+                if self._is_valid_data(asset1_data) and self._is_valid_data(asset2_data):
+                    timeframe_ideas = self._scan_timeframe_fvgs(
+                        asset1_data, asset2_data, timeframe, pair_group, instruments
+                    )
+                    all_trade_ideas.extend(timeframe_ideas)
+                    
+                    # Update last scan time
+                    self.last_scan_time[timeframe] = current_time
+        
+        return self._filter_and_prioritize_ideas(all_trade_ideas)
+    
+    def _is_valid_data(self, df):
+        """Check if dataframe is valid for FVG analysis"""
+        return (df is not None and 
+                isinstance(df, pd.DataFrame) and 
+                not df.empty and 
+                len(df) >= 10)
+    
+    def _scan_timeframe_fvgs(self, asset1_data, asset2_data, timeframe, pair_group, instruments):
+        """
+        Scan for FVGs on specific timeframe with SMT confluence
+        """
+        scanner = self.fvg_scanners[timeframe]
+        
+        # Analyze FVGs for both assets
+        asset1_fvgs = scanner.analyze_fvgs(asset1_data, instruments[0], timeframe)
+        asset2_fvgs = scanner.analyze_fvgs(asset2_data, instruments[1], timeframe, asset1_fvgs)
+        
+        all_fvgs = asset1_fvgs + asset2_fvgs
+        
+        # Get relevant SMT cycles for this timeframe
+        relevant_cycles = self.timeframe_cycle_map[timeframe]
+        
+        trade_ideas = []
+        for fvg in all_fvgs:
+            # Determine which asset this FVG belongs to
+            asset = instruments[0] if fvg in asset1_fvgs else instruments[1]
+            
+            # Generate unique FVG name
+            fvg_name = self._generate_fvg_name(fvg, asset, timeframe)
+            
+            # Check if we've already processed this FVG
+            if self._is_duplicate_fvg(fvg_name, timeframe):
+                continue
+            
+            # Check SMT confluence for relevant cycles
+            smt_confluence = self._check_smt_confluence(relevant_cycles, fvg['direction'])
+            
+            if smt_confluence['has_confluence']:
+                idea = self._create_fvg_trade_idea(
+                    fvg, asset, timeframe, pair_group, smt_confluence, fvg_name
+                )
+                trade_ideas.append(idea)
+                
+                # Mark this FVG as processed
+                self.detected_fvgs[timeframe].append(fvg_name)
+        
+        return trade_ideas
+    
+    def _generate_fvg_name(self, fvg, asset, timeframe):
+        """
+        Generate FVG name: asset_timeframe_MDDHHMM_type
+        Example: XAU_USD_H4_120512_regular_fvg
+        """
+        formation_time = fvg['formation_time']
+        time_str = formation_time.strftime('%m%d%H%M')  # MonthDayHourMinute
+        fvg_type = fvg['classification'].replace('_fvg', '')
+        return f"{asset}_{timeframe}_{time_str}_{fvg_type}"
+    
+    def _is_duplicate_fvg(self, fvg_name, timeframe):
+        """Check if we've already detected this FVG"""
+        return fvg_name in self.detected_fvgs[timeframe]
+    
+    def _check_smt_confluence(self, cycles, direction):
+        """
+        Check SMT confluence from active features in FeatureBox
+        """
+        confluence = {
+            'has_confluence': False,
+            'cycles_matched': [],
+            'details': []
+        }
+        
+        active_smts = self.feature_box.active_features['smt']
+        
+        for smt_key, smt_feature in active_smts.items():
+            # Check if SMT is expired
+            if self.feature_box._is_feature_expired(smt_feature):
+                continue
+                
+            smt_data = smt_feature['smt_data']
+            smt_cycle = smt_data.get('cycle')
+            smt_direction = smt_data.get('direction')
+            
+            # Check if this SMT cycle is relevant and direction matches
+            if smt_cycle in cycles and smt_direction == direction:
+                confluence['cycles_matched'].append(smt_cycle)
+                confluence['details'].append(f"{smt_cycle} cycle {smt_direction} SMT")
+        
+        confluence['has_confluence'] = len(confluence['cycles_matched']) > 0
+        return confluence
+    
+    def _create_fvg_trade_idea(self, fvg, asset, timeframe, pair_group, smt_confluence, fvg_name):
+        """
+        Create comprehensive FVG trade idea
+        """
+        direction = fvg['direction']
+        fvg_type = fvg['classification']
+        fib_zone = fvg['fib_context']
+        
+        # Determine idea type based on FVG type and Fibonacci zone
+        if fib_zone == 'premium_zone' and direction == 'bearish':
+            idea_type = 'PREMIUM_BEARISH_REVERSAL'
+        elif fib_zone == 'discount_zone' and direction == 'bullish':
+            idea_type = 'DISCOUNT_BULLISH_REVERSAL'
+        elif 'inversion' in fvg_type:
+            idea_type = f'INVERSION_{direction.upper()}_REVERSAL'
+        elif 'hp_fvg' in fvg_type:
+            idea_type = f'HP_{direction.upper()}_FVG'
+        else:
+            idea_type = f'REGULAR_{direction.upper()}_FVG'
+        
+        idea = {
+            'type': idea_type,
+            'pair_group': pair_group,
+            'direction': direction,
+            'asset': asset,
+            'timeframe': timeframe,
+            'fvg_name': fvg_name,
+            'fvg_type': fvg_type,
+            'fvg_levels': f"{fvg['fvg_low']:.4f} - {fvg['fvg_high']:.4f}",
+            'formation_time': fvg['formation_time'],
+            'fib_zone': fib_zone,
+            'smt_confluence': smt_confluence,
+            'confidence': self._calculate_confidence(fvg, smt_confluence),
+            'reasoning': self._generate_reasoning(fvg, smt_confluence),
+            'timestamp': datetime.now(NY_TZ),
+            'idea_key': f"FVG_{pair_group}_{asset}_{timeframe}_{direction}_{datetime.now(NY_TZ).strftime('%H%M')}"
+        }
+        
+        return idea
+    
+    def _calculate_confidence(self, fvg, smt_confluence):
+        """Calculate confidence score for trade idea"""
+        confidence = 0.5  # Base confidence
+        
+        # FVG type bonuses
+        if 'hp_fvg' in fvg['classification']:
+            confidence += 0.2
+        if 'inversion' in fvg['classification']:
+            confidence += 0.15
+        
+        # Fibonacci zone bonus
+        if (fvg['fib_context'] == 'premium_zone' and fvg['direction'] == 'bearish') or \
+           (fvg['fib_context'] == 'discount_zone' and fvg['direction'] == 'bullish'):
+            confidence += 0.15
+        
+        # SMT confluence bonus
+        confidence += (len(smt_confluence['cycles_matched']) * 0.1)
+        
+        return min(confidence, 1.0)  # Cap at 1.0
+    
+    def _generate_reasoning(self, fvg, smt_confluence):
+        """Generate detailed reasoning for trade idea"""
+        reasons = []
+        
+        # FVG context
+        fvg_type_pretty = fvg['classification'].replace('_', ' ').upper()
+        reasons.append(f"{fvg_type_pretty} in Fibonacci {fvg['fib_context']} zone")
+        
+        # SMT confluence
+        if smt_confluence['cycles_matched']:
+            cycles_str = ", ".join(smt_confluence['cycles_matched'])
+            reasons.append(f"{fvg['direction']} SMT confluence from {cycles_str} cycles")
+        
+        # Special conditions
+        if 'inversion' in fvg['classification']:
+            reasons.append("FVG inversion confirms reversal level")
+        elif 'hp_fvg' in fvg['classification']:
+            reasons.append("High Probability FVG (single asset only)")
+        
+        # Fibonacci context
+        if fvg['fib_context'] == 'premium_zone':
+            reasons.append("Premium zone ideal for bearish reversals")
+        else:
+            reasons.append("Discount zone ideal for bullish reversals")
+        
+        return ". ".join(reasons)
+    
+    def _filter_and_prioritize_ideas(self, ideas):
+        """Filter and prioritize trade ideas"""
+        if not ideas:
+            return []
+        
+        # Filter by minimum confidence
+        filtered_ideas = [idea for idea in ideas if idea['confidence'] >= 0.6]
+        
+        # Sort by confidence (descending)
+        filtered_ideas.sort(key=lambda x: x['confidence'], reverse=True)
+        
+        # Return top ideas only (avoid spam)
+        return filtered_ideas[:2]  # Max 2 ideas per scan
+
 # ================================
 # ULTIMATE TRADING SYSTEM WITH TRIPLE CONFLUENCE
 # ================================
@@ -3277,13 +3563,17 @@ class UltimateTradingSystem:
         
         # Data storage for all instruments
         self.market_data = {inst: {} for inst in self.instruments}
+        self.fvg_analyzer = EnhancedFVGAnalyzer(self.timing_manager, self.feature_box)
+        self.fvg_ideas_sent = {}  # Track sent FVG ideas
+        
+        logger.info(f"🎯 FVG Analyzer initialized for {pair_group}")
         
         logger.info(f"🎯 Initialized ULTIMATE trading system for {self.pair_group}: {', '.join(self.instruments)}")
     
 
         self.feature_box = RealTimeFeatureBox(pair_group, self.timing_manager, telegram_token, telegram_chat_id)
     async def run_ultimate_analysis(self, api_key):
-        """Run analysis with REAL-TIME feature tracking"""
+        """Run analysis with FVG trade ideas"""
         try:
             # Cleanup expired features first
             self.feature_box.cleanup_expired_features()
@@ -3294,22 +3584,114 @@ class UltimateTradingSystem:
             # Scan for new features and add to Feature Box
             await self._scan_and_add_features()
             
+            # NEW: Scan for FVG trade ideas
+            fvg_idea_sent = self._scan_fvg_trade_ideas()
+            
             # Get current feature summary
             summary = self.feature_box.get_active_features_summary()
             logger.info(f"📊 {self.pair_group} Feature Summary: {summary['smt_count']} SMTs, {summary['crt_count']} CRTs, {summary['psp_count']} PSPs")
             
-            # ✅ REPLACE with detailed debug
+            # Existing debug logging...
             self.feature_box.debug_confluence_checks_detailed()
-            
-            # Log detailed status
             self.feature_box.log_detailed_status()
-            self.feature_box.debug_telegram_credentials()
             
             return None
             
         except Exception as e:
             logger.error(f"❌ Error in real-time analysis for {self.pair_group}: {str(e)}", exc_info=True)
             return None
+    
+    def _scan_fvg_trade_ideas(self):
+        """
+        Scan for FVG-based trade ideas with SMT confluence
+        """
+        try:
+            # Scan for FVG trade ideas across all timeframes
+            trade_ideas = self.fvg_analyzer.scan_all_timeframes(
+                self.market_data, self.pair_group, self.instruments
+            )
+            
+            # Send the best idea
+            if trade_ideas:
+                best_idea = trade_ideas[0]  # Already sorted by confidence
+                
+                # Only send if confidence is high enough and not recently sent
+                if best_idea['confidence'] >= 0.7:
+                    return self._send_fvg_trade_idea(best_idea)
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"❌ Error scanning FVG trade ideas: {str(e)}")
+            return False
+    
+    def _send_fvg_trade_idea(self, trade_idea):
+        """Send formatted FVG trade idea"""
+        idea_key = trade_idea['idea_key']
+        
+        # Check if we recently sent similar idea (1 hour cooldown)
+        if idea_key in self.fvg_ideas_sent:
+            last_sent = self.fvg_ideas_sent[idea_key]
+            if (datetime.now(NY_TZ) - last_sent).total_seconds() < 3600:
+                logger.debug(f"⏳ FVG idea recently sent: {idea_key}")
+                return False
+        
+        # Format and send the message
+        message = self._format_fvg_idea_message(trade_idea)
+        
+        if self._send_telegram_message(message):
+            self.fvg_ideas_sent[idea_key] = datetime.now(NY_TZ)
+            logger.info(f"🎯 FVG TRADE IDEA SENT: {trade_idea['fvg_name']} "
+                       f"(Confidence: {trade_idea['confidence']:.1%})")
+            return True
+        
+        return False
+    
+    def _format_fvg_idea_message(self, idea):
+        """Format FVG trade idea for Telegram"""
+        direction_emoji = "🔴" if idea['direction'] == 'bearish' else "🟢"
+        confidence_stars = "★" * int(idea['confidence'] * 5)
+        formation_time = idea['formation_time'].strftime('%m/%d %H:%M')
+        
+        message = f"""
+        ⚡ *FVG TRADE IDEA* ⚡
+        
+        *Pair Group:* {idea['pair_group'].replace('_', ' ').title()}
+        *Direction:* {idea['direction'].upper()} {direction_emoji}
+        *Timeframe:* {idea['timeframe']}
+        *Asset:* {idea['asset']}
+        *Confidence:* {confidence_stars} ({idea['confidence']:.1%})
+        
+        *FVG Details:*
+        • Name: {idea['fvg_name']}
+        • Type: {idea['fvg_type'].replace('_', ' ').title()}
+        • Levels: {idea['fvg_levels']}
+        • Formation: {formation_time}
+        • Fibonacci Zone: {idea['fib_zone'].replace('_', ' ').title()}
+        
+        *Confluence Reasoning:*
+        {idea['reasoning']}
+        
+        *SMT Cycles Matched:* {', '.join(idea['smt_confluence']['cycles_matched'])}
+        
+        *Detection Time:* {idea['timestamp'].strftime('%Y-%m-%d %H:%M:%S')}
+        
+        #FVGTradeIdea #{idea['pair_group']} #{idea['direction']} #{idea['timeframe']}
+        """
+        return message
+    
+    def _send_telegram_message(self, message):
+        """Send message via Telegram (using your existing method)"""
+        try:
+            # Use your existing Telegram sending logic
+            if hasattr(self, 'telegram_token') and hasattr(self, 'telegram_chat_id'):
+                return send_telegram(message, self.telegram_token, self.telegram_chat_id)
+            else:
+                logger.warning("⚠️ Telegram credentials not available")
+                return False
+        except Exception as e:
+            logger.error(f"❌ Error sending Telegram message: {str(e)}")
+            return False
     
     async def _scan_and_add_features(self):
         """Scan for all features and add to Feature Box immediately"""
