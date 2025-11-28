@@ -3237,6 +3237,246 @@ class RealTimeFeatureBox:
         if expired_signatures:
             logger.debug(f"🧹 Cleaned up {len(expired_signatures)} old signal signatures")
 
+
+
+import pandas as pd
+import pytz
+from datetime import datetime, timedelta
+import logging
+
+logger = logging.getLogger(__name__)
+
+class FVGAnalyzer:
+    """
+    Basic FVG Detection and Classification System
+    with Fibonacci Integration
+    """
+    
+    def __init__(self, lookback_bars=30, inversion_max_belta=15, fib_lookback=45):
+        self.lookback_bars = lookback_bars
+        self.inversion_max_belta = inversion_max_belta
+        self.fib_lookback = fib_lookback
+        
+    def analyze_fvgs(self, df, asset_name, timeframe, paired_asset_fvgs=None):
+        """
+        Comprehensive FVG analysis for a single asset
+        """
+        if df is None or len(df) < max(self.lookback_bars, self.fib_lookback):
+            return []
+        
+        # Calculate Fibonacci levels
+        fib_levels = self._calculate_fib_levels(df)
+        
+        # Detect all FVGs in lookback range
+        all_fvgs = self._detect_all_fvgs(df, asset_name, timeframe)
+        
+        # Classify each FVG
+        classified_fvgs = []
+        for fvg in all_fvgs:
+            classified_fvg = self._classify_fvg(fvg, df, fib_levels, paired_asset_fvgs)
+            if classified_fvg:
+                classified_fvgs.append(classified_fvg)
+        
+        return classified_fvgs
+    
+    def _calculate_fib_levels(self, df):
+        """Calculate Fibonacci levels from last fib_lookback bars"""
+        recent_data = df.tail(self.fib_lookback)
+        
+        high = recent_data['high'].max()
+        low = recent_data['low'].min()
+        total_range = high - low
+        
+        levels = {
+            '0.0': low,
+            '0.236': low + (total_range * 0.236),
+            '0.382': low + (total_range * 0.382),
+            '0.5': low + (total_range * 0.5),  # Key level
+            '0.618': low + (total_range * 0.618),
+            '0.786': low + (total_range * 0.786),
+            '1.0': high,
+            'total_range': total_range
+        }
+        
+        return levels
+    
+    def _detect_all_fvgs(self, df, asset_name, timeframe):
+        """Detect all FVGs in the lookback period"""
+        fvgs = []
+        
+        # We need at least 3 candles for FVG detection
+        if len(df) < 3:
+            return fvgs
+        
+        # Look through recent candles for FVG patterns
+        for i in range(2, min(self.lookback_bars, len(df))):
+            current_idx = len(df) - i - 1
+            
+            # Check for bullish FVG (gap up)
+            bullish_fvg = self._detect_bullish_fvg(df, current_idx)
+            if bullish_fvg:
+                fvgs.append(bullish_fvg)
+            
+            # Check for bearish FVG (gap down)  
+            bearish_fvg = self._detect_bearish_fvg(df, current_idx)
+            if bearish_fvg:
+                fvgs.append(bearish_fvg)
+        
+        return fvgs
+    
+    def _detect_bullish_fvg(self, df, idx):
+        """Detect bullish FVG pattern"""
+        if idx < 2 or idx >= len(df) - 1:
+            return None
+        
+        candle_a = df.iloc[idx - 2]  # First candle
+        candle_b = df.iloc[idx - 1]  # Gap candle  
+        candle_c = df.iloc[idx]      # Current/confirmation candle
+        
+        # Bullish FVG: Candle B low > Candle A high
+        if (candle_b['low'] > candle_a['high'] and 
+            candle_c['low'] > candle_a['high']):  # Confirmation
+            
+            fvg_low = candle_a['high']  # Bottom of gap
+            fvg_high = candle_b['low']  # Top of gap
+            
+            return {
+                'type': 'bullish_fvg',
+                'direction': 'bullish',
+                'fvg_low': fvg_low,
+                'fvg_high': fvg_high,
+                'formation_time': candle_b['time'],
+                'candle_a_time': candle_a['time'],
+                'candle_b_time': candle_b['time'],
+                'current_price': df.iloc[-1]['close'],
+                'bars_since_formation': len(df) - idx - 1,
+                'touched': False,
+                'inverted': False
+            }
+        
+        return None
+    
+    def _detect_bearish_fvg(self, df, idx):
+        """Detect bearish FVG pattern"""
+        if idx < 2 or idx >= len(df) - 1:
+            return None
+        
+        candle_a = df.iloc[idx - 2]  # First candle
+        candle_b = df.iloc[idx - 1]  # Gap candle
+        candle_c = df.iloc[idx]      # Current/confirmation candle
+        
+        # Bearish FVG: Candle B high < Candle A low
+        if (candle_b['high'] < candle_a['low'] and 
+            candle_c['high'] < candle_a['low']):  # Confirmation
+            
+            fvg_low = candle_b['high']  # Bottom of gap
+            fvg_high = candle_a['low']  # Top of gap
+            
+            return {
+                'type': 'bearish_fvg', 
+                'direction': 'bearish',
+                'fvg_low': fvg_low,
+                'fvg_high': fvg_high,
+                'formation_time': candle_b['time'],
+                'candle_a_time': candle_a['time'],
+                'candle_b_time': candle_b['time'],
+                'current_price': df.iloc[-1]['close'],
+                'bars_since_formation': len(df) - idx - 1,
+                'touched': False,
+                'inverted': False
+            }
+        
+        return None
+    
+    def _classify_fvg(self, fvg, df, fib_levels, paired_asset_fvgs=None):
+        """Classify FVG type and determine trading context"""
+        current_price = df.iloc[-1]['close']
+        fvg_midpoint = (fvg['fvg_low'] + fvg['fvg_high']) / 2
+        
+        # 1. Check if FVG has been touched
+        fvg['touched'] = self._is_fvg_touched(fvg, df)
+        
+        # 2. Check for inversion (price went through FVG)
+        fvg['inverted'] = self._is_fvg_inverted(fvg, df)
+        
+        # 3. Determine Fibonacci context
+        fvg['fib_context'] = self._get_fib_context(fvg_midpoint, fib_levels)
+        
+        # 4. Check for HP FVG (cross-asset)
+        fvg['is_hp_fvg'] = self._is_hp_fvg(fvg, paired_asset_fvgs)
+        
+        # 5. Final classification
+        fvg['classification'] = self._determine_final_classification(fvg)
+        
+        return fvg
+    
+    def _is_fvg_touched(self, fvg, df):
+        """Check if price has entered the FVG zone"""
+        current_price = df.iloc[-1]['close']
+        
+        if fvg['direction'] == 'bullish':
+            # For bullish FVG, touched if price <= fvg_high
+            return current_price <= fvg['fvg_high']
+        else:  # bearish
+            # For bearish FVG, touched if price >= fvg_low
+            return current_price >= fvg['fvg_low']
+    
+    def _is_fvg_inverted(self, fvg, df):
+        """Check if FVG has been inverted (price went through it)"""
+        formation_idx = df[df['time'] == fvg['formation_time']].index[0]
+        
+        # Only check recent price action (within inversion_max_belta)
+        check_start = max(formation_idx + 1, len(df) - self.inversion_max_belta)
+        
+        for idx in range(check_start, len(df)):
+            candle = df.iloc[idx]
+            
+            if fvg['direction'] == 'bullish':
+                # Bullish FVG inverted if price went below fvg_low
+                if candle['low'] < fvg['fvg_low']:
+                    return True
+            else:  # bearish
+                # Bearish FVG inverted if price went above fvg_high
+                if candle['high'] > fvg['fvg_high']:
+                    return True
+        
+        return False
+    
+    def _get_fib_context(self, fvg_midpoint, fib_levels):
+        """Determine Fibonacci context for FVG"""
+        if fvg_midpoint > fib_levels['0.5']:
+            return 'premium_zone'  # Above 50% - for bearish reversals
+        else:
+            return 'discount_zone'  # Below 50% - for bullish reversals
+    
+    def _is_hp_fvg(self, fvg, paired_asset_fvgs):
+        """Check if this is a High Probability FVG"""
+        if paired_asset_fvgs is None:
+            return False
+        
+        # HP FVG: This asset has FVG, paired asset has NO FVG at same time
+        fvg_time = fvg['formation_time']
+        
+        # Check if paired asset has any FVG around the same time (±1 candle)
+        for paired_fvg in paired_asset_fvgs:
+            time_diff = abs((paired_fvg['formation_time'] - fvg_time).total_seconds())
+            if time_diff < 3600:  # Within 1 hour (adjust based on timeframe)
+                return False  # Both have FVGs, not HP
+        
+        return True  # Only this asset has FVG
+    
+    def _determine_final_classification(self, fvg):
+        """Determine the final FVG classification"""
+        if not fvg['touched'] and not fvg['inverted']:
+            return 'regular_fvg'
+        elif fvg['inverted']:
+            return f'inversion_fvg_{fvg["direction"]}'
+        elif fvg['is_hp_fvg']:
+            return f'hp_fvg_{fvg["direction"]}'
+        else:
+            return f'touched_fvg_{fvg["direction"]}'
+
+
 class EnhancedFVGAnalyzer:
     """
     Comprehensive FVG analyzer with multi-timeframe scanning
@@ -3561,17 +3801,16 @@ class UltimateTradingSystem:
             self.telegram_chat_id
         )
         
-        # Data storage for all instruments
-        self.market_data = {inst: {} for inst in self.instruments}
+        # NEW: Enhanced FVG Analysis
         self.fvg_analyzer = EnhancedFVGAnalyzer(self.timing_manager, self.feature_box)
         self.fvg_ideas_sent = {}  # Track sent FVG ideas
         
-        logger.info(f"🎯 FVG Analyzer initialized for {pair_group}")
+        # Data storage for all instruments
+        self.market_data = {inst: {} for inst in self.instruments}
         
         logger.info(f"🎯 Initialized ULTIMATE trading system for {self.pair_group}: {', '.join(self.instruments)}")
+        logger.info(f"🎯 FVG Analyzer initialized for {pair_group}")
     
-
-        self.feature_box = RealTimeFeatureBox(pair_group, self.timing_manager, telegram_token, telegram_chat_id)
     async def run_ultimate_analysis(self, api_key):
         """Run analysis with FVG trade ideas"""
         try:
@@ -3600,6 +3839,99 @@ class UltimateTradingSystem:
         except Exception as e:
             logger.error(f"❌ Error in real-time analysis for {self.pair_group}: {str(e)}", exc_info=True)
             return None
+    
+    def _scan_fvg_trade_ideas(self):
+        """
+        Scan for FVG-based trade ideas with SMT confluence
+        """
+        try:
+            # Scan for FVG trade ideas across all timeframes
+            trade_ideas = self.fvg_analyzer.scan_all_timeframes(
+                self.market_data, self.pair_group, self.instruments
+            )
+            
+            # Send the best idea
+            if trade_ideas:
+                best_idea = trade_ideas[0]  # Already sorted by confidence
+                
+                # Only send if confidence is high enough and not recently sent
+                if best_idea['confidence'] >= 0.7:
+                    return self._send_fvg_trade_idea(best_idea)
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"❌ Error scanning FVG trade ideas: {str(e)}")
+            return False
+    
+    def _send_fvg_trade_idea(self, trade_idea):
+        """Send formatted FVG trade idea"""
+        idea_key = trade_idea['idea_key']
+        
+        # Check if we recently sent similar idea (1 hour cooldown)
+        if idea_key in self.fvg_ideas_sent:
+            last_sent = self.fvg_ideas_sent[idea_key]
+            if (datetime.now(NY_TZ) - last_sent).total_seconds() < 3600:
+                logger.debug(f"⏳ FVG idea recently sent: {idea_key}")
+                return False
+        
+        # Format and send the message
+        message = self._format_fvg_idea_message(trade_idea)
+        
+        if self._send_telegram_message(message):
+            self.fvg_ideas_sent[idea_key] = datetime.now(NY_TZ)
+            logger.info(f"🎯 FVG TRADE IDEA SENT: {trade_idea['fvg_name']} "
+                       f"(Confidence: {trade_idea['confidence']:.1%})")
+            return True
+        
+        return False
+    
+    def _format_fvg_idea_message(self, idea):
+        """Format FVG trade idea for Telegram"""
+        direction_emoji = "🔴" if idea['direction'] == 'bearish' else "🟢"
+        confidence_stars = "★" * int(idea['confidence'] * 5)
+        formation_time = idea['formation_time'].strftime('%m/%d %H:%M')
+        
+        message = f"""
+        ⚡ *FVG TRADE IDEA* ⚡
+        
+        *Pair Group:* {idea['pair_group'].replace('_', ' ').title()}
+        *Direction:* {idea['direction'].upper()} {direction_emoji}
+        *Timeframe:* {idea['timeframe']}
+        *Asset:* {idea['asset']}
+        *Confidence:* {confidence_stars} ({idea['confidence']:.1%})
+        
+        *FVG Details:*
+        • Name: {idea['fvg_name']}
+        • Type: {idea['fvg_type'].replace('_', ' ').title()}
+        • Levels: {idea['fvg_levels']}
+        • Formation: {formation_time}
+        • Fibonacci Zone: {idea['fib_zone'].replace('_', ' ').title()}
+        
+        *Confluence Reasoning:*
+        {idea['reasoning']}
+        
+        *SMT Cycles Matched:* {', '.join(idea['smt_confluence']['cycles_matched'])}
+        
+        *Detection Time:* {idea['timestamp'].strftime('%Y-%m-%d %H:%M:%S')}
+        
+        #FVGTradeIdea #{idea['pair_group']} #{idea['direction']} #{idea['timeframe']}
+        """
+        return message
+    
+    def _send_telegram_message(self, message):
+        """Send message via Telegram (using your existing method)"""
+        try:
+            # Use your existing Telegram sending logic
+            if hasattr(self, 'telegram_token') and hasattr(self, 'telegram_chat_id'):
+                return send_telegram(message, self.telegram_token, self.telegram_chat_id)
+            else:
+                logger.warning("⚠️ Telegram credentials not available")
+                return False
+        except Exception as e:
+            logger.error(f"❌ Error sending Telegram message: {str(e)}")
+            return False
+
     
     def _scan_fvg_trade_ideas(self):
         """
