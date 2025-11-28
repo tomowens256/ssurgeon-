@@ -3248,8 +3248,7 @@ logger = logging.getLogger(__name__)
 
 class FVGAnalyzer:
     """
-    Basic FVG Detection and Classification System
-    with Fibonacci Integration
+    Basic FVG Detection with SMT Tap Analysis
     """
     
     def __init__(self, lookback_bars=30, inversion_max_belta=15, fib_lookback=45):
@@ -3257,9 +3256,9 @@ class FVGAnalyzer:
         self.inversion_max_belta = inversion_max_belta
         self.fib_lookback = fib_lookback
         
-    def analyze_fvgs(self, df, asset_name, timeframe, paired_asset_fvgs=None):
+    def analyze_fvgs_with_smt_taps(self, df, asset_name, timeframe, smt_data_list, paired_asset_fvgs=None):
         """
-        Comprehensive FVG analysis for a single asset
+        Find FVGs that were tapped during SMT formation (last 5 candles)
         """
         if df is None or len(df) < max(self.lookback_bars, self.fib_lookback):
             return []
@@ -3267,17 +3266,60 @@ class FVGAnalyzer:
         # Calculate Fibonacci levels
         fib_levels = self._calculate_fib_levels(df)
         
-        # Detect all FVGs in lookback range
+        # Detect all FVGs
         all_fvgs = self._detect_all_fvgs(df, asset_name, timeframe)
         
-        # Classify each FVG
-        classified_fvgs = []
+        # Check which FVGs were tapped during SMT formation
+        tapped_fvgs = []
         for fvg in all_fvgs:
-            classified_fvg = self._classify_fvg(fvg, df, fib_levels, paired_asset_fvgs)
-            if classified_fvg:
-                classified_fvgs.append(classified_fvg)
+            # Check if this FVG was tapped in the last 5 candles
+            was_tapped = self._was_fvg_tapped_recently(fvg, df, lookback_candles=5)
+            
+            if was_tapped:
+                # Check if any SMT formed during the tap period
+                smt_during_tap = self._find_smt_during_fvg_tap(fvg, smt_data_list, df)
+                
+                if smt_during_tap:
+                    classified_fvg = self._classify_fvg(fvg, df, fib_levels, paired_asset_fvgs, smt_during_tap)
+                    if classified_fvg:
+                        tapped_fvgs.append(classified_fvg)
         
-        return classified_fvgs
+        return tapped_fvgs
+    
+    def _was_fvg_tapped_recently(self, fvg, df, lookback_candles=5):
+        """Check if FVG was tapped in the last N candles"""
+        recent_candles = df.tail(lookback_candles)
+        
+        for idx, candle in recent_candles.iterrows():
+            if fvg['direction'] == 'bullish':
+                # Bullish FVG tapped if price entered the zone (low <= fvg_high)
+                if candle['low'] <= fvg['fvg_high']:
+                    fvg['tap_time'] = candle['time']
+                    fvg['tap_price'] = candle['low']
+                    return True
+            else:  # bearish
+                # Bearish FVG tapped if price entered the zone (high >= fvg_low)
+                if candle['high'] >= fvg['fvg_low']:
+                    fvg['tap_time'] = candle['time']
+                    fvg['tap_price'] = candle['high']
+                    return True
+        return False
+    
+    def _find_smt_during_fvg_tap(self, fvg, smt_data_list, df):
+        """Find SMT that formed around the FVG tap time"""
+        if not hasattr(fvg, 'tap_time'):
+            return None
+            
+        tap_time = fvg['tap_time']
+        
+        for smt_data in smt_data_list:
+            smt_time = smt_data.get('timestamp')  # SMT formation time
+            
+            # Check if SMT formed around the tap time (±2 candles)
+            if smt_time and abs((smt_time - tap_time).total_seconds()) <= 7200:  # 2 hours
+                return smt_data
+                
+        return None
     
     def _calculate_fib_levels(self, df):
         """Calculate Fibonacci levels from last fib_lookback bars"""
@@ -3479,8 +3521,7 @@ class FVGAnalyzer:
 
 class EnhancedFVGAnalyzer:
     """
-    Comprehensive FVG analyzer with multi-timeframe scanning
-    and SMT confluence detection
+    FVG-SMT Confluence: Finds FVGs tapped during SMT formation with PSP confirmation
     """
     
     def __init__(self, timing_manager, feature_box):
@@ -3488,14 +3529,14 @@ class EnhancedFVGAnalyzer:
         self.feature_box = feature_box
         
         # Timeframe configuration
-        self.timeframes = ['H4', 'H1', 'M15']  # 1D, 4H, 1H equivalent
+        self.timeframes = ['H4', 'H1', 'M15']
         self.timeframe_cycle_map = {
-            'H4': ['monthly', 'weekly'],    # 4H uses monthly + weekly cycles
-            'H1': ['weekly', 'daily'],      # 1H uses weekly + daily cycles  
-            'M15': ['daily', '90min']       # 15M uses daily + 90min cycles
+            'H4': ['monthly', 'weekly'],
+            'H1': ['weekly', 'daily'],  
+            'M15': ['daily', '90min']
         }
         
-        # FVG detection parameters per timeframe
+        # FVG detection parameters
         self.fvg_params = {
             'H4': {'lookback_bars': 40, 'inversion_max_belta': 20},
             'H1': {'lookback_bars': 50, 'inversion_max_belta': 25},
@@ -3504,10 +3545,10 @@ class EnhancedFVGAnalyzer:
         
         # Track last scan times and detected FVGs
         self.last_scan_time = {}
-        self.detected_fvgs = {}  # Track FVGs to avoid duplicates
+        self.detected_fvgs = {}
         self.fvg_scanners = {}
         
-        # Initialize scanners for each timeframe
+        # Initialize scanners
         for tf in self.timeframes:
             params = self.fvg_params[tf]
             self.fvg_scanners[tf] = FVGAnalyzer(
@@ -3517,6 +3558,209 @@ class EnhancedFVGAnalyzer:
             )
             self.last_scan_time[tf] = None
             self.detected_fvgs[tf] = []
+    
+    def scan_smt_fvg_confluence(self, market_data, pair_group, instruments):
+        """
+        Scan for FVG-SMT confluence: FVG tapped during SMT formation
+        """
+        current_time = datetime.now(NY_TZ)
+        all_trade_ideas = []
+        
+        # Get active SMTs with PSP from FeatureBox
+        active_smts_with_psp = self._get_active_smts_with_psp()
+        
+        for timeframe in self.timeframes:
+            if self.should_scan_timeframe(timeframe, current_time):
+                logger.info(f"🔄 Scanning {timeframe} for FVG-SMT confluence...")
+                
+                # Get data for both instruments
+                asset1_data = market_data[instruments[0]].get(timeframe)
+                asset2_data = market_data[instruments[1]].get(timeframe)
+                
+                if self._is_valid_data(asset1_data) and self._is_valid_data(asset2_data):
+                    # Get SMTs for relevant cycles
+                    relevant_cycles = self.timeframe_cycle_map[timeframe]
+                    relevant_smts = [smt for smt in active_smts_with_psp 
+                                   if smt['cycle'] in relevant_cycles]
+                    
+                    # Scan for FVG-SMT confluence on both assets
+                    asset1_ideas = self._scan_asset_fvg_smt(
+                        asset1_data, instruments[0], timeframe, pair_group, relevant_smts, 
+                        asset2_data, instruments[1]
+                    )
+                    asset2_ideas = self._scan_asset_fvg_smt(
+                        asset2_data, instruments[1], timeframe, pair_group, relevant_smts,
+                        asset1_data, instruments[0]  
+                    )
+                    
+                    all_trade_ideas.extend(asset1_ideas)
+                    all_trade_ideas.extend(asset2_ideas)
+                    
+                    self.last_scan_time[timeframe] = current_time
+        
+        return self._filter_and_prioritize_ideas(all_trade_ideas)
+    
+    def _get_active_smts_with_psp(self):
+        """Get active SMTs that have PSP confirmation"""
+        active_smts = []
+        
+        for smt_key, smt_feature in self.feature_box.active_features['smt'].items():
+            if self.feature_box._is_feature_expired(smt_feature):
+                continue
+                
+            smt_data = smt_feature['smt_data']
+            psp_data = smt_feature.get('psp_data')
+            
+            # Only include SMTs with PSP confirmation
+            if psp_data:
+                active_smts.append(smt_data)
+        
+        return active_smts
+    
+    def _scan_asset_fvg_smt(self, asset_data, asset_name, timeframe, pair_group, relevant_smts, paired_asset_data, paired_asset_name):
+        """
+        Scan for FVG-SMT confluence on a single asset
+        """
+        scanner = self.fvg_scanners[timeframe]
+        
+        # Get FVGs that were tapped during SMT formation
+        tapped_fvgs = scanner.analyze_fvgs_with_smt_taps(
+            asset_data, asset_name, timeframe, relevant_smts
+        )
+        
+        trade_ideas = []
+        for fvg in tapped_fvgs:
+            # Check if this is HP FVG (only one asset tapped)
+            is_hp_fvg = self._is_hp_fvg(fvg, paired_asset_data, paired_asset_name, timeframe)
+            
+            # Generate FVG name
+            fvg_name = self._generate_fvg_name(fvg, asset_name, timeframe)
+            
+            if self._is_duplicate_fvg(fvg_name, timeframe):
+                continue
+            
+            # Create trade idea with scoring
+            idea = self._create_smt_fvg_trade_idea(
+                fvg, asset_name, timeframe, pair_group, is_hp_fvg, fvg_name
+            )
+            trade_ideas.append(idea)
+            
+            self.detected_fvgs[timeframe].append(fvg_name)
+        
+        return trade_ideas
+    
+    def _is_hp_fvg(self, fvg, paired_asset_data, paired_asset_name, timeframe):
+        """Check if this is High Probability FVG (only one asset tapped)"""
+        if paired_asset_data is None:
+            return False
+            
+        # Check if paired asset has the same FVG tapped
+        scanner = self.fvg_scanners[timeframe]
+        paired_fvgs = scanner.analyze_fvgs_with_smt_taps(
+            paired_asset_data, paired_asset_name, timeframe, []
+        )
+        
+        # If paired asset has NO FVG tapped around the same time, it's HP
+        return len(paired_fvgs) == 0
+    
+    def _create_smt_fvg_trade_idea(self, fvg, asset, timeframe, pair_group, is_hp_fvg, fvg_name):
+        """Create FVG-SMT trade idea with proper scoring"""
+        direction = fvg['direction']
+        fvg_type = fvg['classification']
+        fib_zone = fvg['fib_context']
+        smt_data = fvg.get('smt_during_tap', {})
+        
+        # Calculate score based on your criteria
+        score = self._calculate_confluence_score(fvg, is_hp_fvg, smt_data)
+        
+        # Determine idea type and confidence
+        idea_type, confidence = self._determine_idea_type_and_confidence(score, is_hp_fvg, fvg_type)
+        
+        idea = {
+            'type': idea_type,
+            'pair_group': pair_group,
+            'direction': direction,
+            'asset': asset,
+            'timeframe': timeframe,
+            'fvg_name': fvg_name,
+            'fvg_type': fvg_type,
+            'fvg_levels': f"{fvg['fvg_low']:.4f} - {fvg['fvg_high']:.4f}",
+            'formation_time': fvg['formation_time'],
+            'tap_time': fvg.get('tap_time'),
+            'fib_zone': fib_zone,
+            'is_hp_fvg': is_hp_fvg,
+            'smt_cycle': smt_data.get('cycle', 'Unknown'),
+            'confluence_score': score,
+            'confidence': confidence,
+            'reasoning': self._generate_smt_fvg_reasoning(fvg, is_hp_fvg, smt_data),
+            'timestamp': datetime.now(NY_TZ),
+            'idea_key': f"SMT_FVG_{pair_group}_{asset}_{timeframe}_{direction}_{datetime.now(NY_TZ).strftime('%H%M')}"
+        }
+        
+        return idea
+    
+    def _calculate_confluence_score(self, fvg, is_hp_fvg, smt_data):
+        """Calculate confluence score based on your criteria"""
+        score = 0
+        
+        # HP FVG = 3 points
+        if is_hp_fvg:
+            score += 3
+        
+        # SMT that tapped FVG in one asset but not other = 2 points
+        if smt_data and is_hp_fvg:
+            score += 2
+        
+        # FVG tapped by SMT that is HP = 3 points
+        if 'hp_fvg' in fvg['classification'] and smt_data:
+            score += 3
+        
+        # SMT with PSP = 2 points (all SMTs here have PSP by filter)
+        if smt_data:
+            score += 2
+        
+        return score
+    
+    def _determine_idea_type_and_confidence(self, score, is_hp_fvg, fvg_type):
+        """Determine idea type and confidence based on score"""
+        if score >= 8:
+            return 'ULTRA_HIGH_PROBABILITY', 0.95
+        elif score >= 6:
+            return 'HIGH_PROBABILITY', 0.85
+        elif score >= 4:
+            return 'MEDIUM_PROBABILITY', 0.75
+        else:
+            return 'LOW_PROBABILITY', 0.65
+    
+    def _generate_smt_fvg_reasoning(self, fvg, is_hp_fvg, smt_data):
+        """Generate detailed reasoning for FVG-SMT confluence"""
+        reasons = []
+        
+        # FVG context
+        fvg_type_pretty = fvg['classification'].replace('_', ' ').upper()
+        reasons.append(f"{fvg_type_pretty} tapped during SMT formation")
+        
+        # HP FVG
+        if is_hp_fvg:
+            reasons.append("High Probability FVG (single asset only)")
+        
+        # SMT details
+        if smt_data:
+            reasons.append(f"SMT with PSP on {smt_data.get('cycle', 'Unknown')} cycle")
+        
+        # Fibonacci context
+        if fvg['fib_context'] == 'premium_zone':
+            reasons.append("Fibonacci premium zone for reversals")
+        else:
+            reasons.append("Fibonacci discount zone for reversals")
+        
+        # Tap timing
+        if fvg.get('tap_time'):
+            tap_str = fvg['tap_time'].strftime('%H:%M')
+            reasons.append(f"FVG tapped at {tap_str}")
+        
+        return ". ".join(reasons)
+    
     
     def should_scan_timeframe(self, timeframe, current_time):
         """
