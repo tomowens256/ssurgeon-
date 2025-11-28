@@ -2657,7 +2657,7 @@ class RealTimeFeatureBox:
         return signals_sent > 0
 
     def _check_multiple_smts_confluence(self):
-        """Check for multiple SMTs confluence - FIXED DATA INCLUSION"""
+        """Check for multiple SMTs confluence - FIXED DATA INCLUSION - ONLY DIFFERENT CYCLES"""
         signals_sent = 0
         current_time = datetime.now(NY_TZ)
         
@@ -2678,15 +2678,30 @@ class RealTimeFeatureBox:
         
         logger.info(f"🔍 Multiple SMTs check: {len(bullish_smts)} bullish, {len(bearish_smts)} bearish")
         
-        # Check for multiple bullish SMTs
-        if len(bullish_smts) >= 2:
-            logger.info(f"🎯 MULTIPLE BULLISH SMTs detected: {len(bullish_smts)} SMTs")
+        def _has_different_cycles(smt_list):
+            """Check if SMTs are from different cycles"""
+            if len(smt_list) < 2:
+                return False
+                
+            cycles = set()
+            for smt_key, smt_data in smt_list:
+                cycle = smt_data.get('cycle', 'Unknown')
+                cycles.add(cycle)
+                
+            return len(cycles) >= 2
+        
+        # Check for multiple bullish SMTs from DIFFERENT cycles
+        if len(bullish_smts) >= 2 and _has_different_cycles(bullish_smts):
+            logger.info(f"🎯 MULTIPLE BULLISH SMTs from different cycles: {len(bullish_smts)} SMTs")
             
             # Get ALL SMT details - FIXED: Include ALL data from SMT
             smt_details = []
+            cycles_used = set()
             for smt_key, smt_data in bullish_smts:
+                cycle = smt_data.get('cycle', 'Unknown')
+                cycles_used.add(cycle)
                 smt_details.append({
-                    'cycle': smt_data.get('cycle', 'Unknown'),
+                    'cycle': cycle,
                     'quarters': smt_data.get('quarters', ''),
                     'timeframe': smt_data.get('timeframe', 'Unknown'),
                     'asset1_action': smt_data.get('asset1_action', ''),
@@ -2697,28 +2712,32 @@ class RealTimeFeatureBox:
             signal_data = {
                 'pair_group': self.pair_group,
                 'direction': 'bullish',
-                'confluence_type': 'MULTIPLE_SMTS_BULLISH',
+                'confluence_type': 'MULTIPLE_SMTS_BULLISH_DIFFERENT_CYCLES',
                 'multiple_smts': smt_details,
                 'smt_count': len(bullish_smts),
+                'cycle_count': len(cycles_used),
                 'timestamp': current_time,
-                'signal_key': f"MULTI_SMT_BULLISH_{current_time.strftime('%H%M%S')}",
-                'description': f"MULTIPLE BULLISH SMTs: {len(bullish_smts)} cycles confirming"
+                'signal_key': f"MULTI_SMT_BULLISH_DIFF_CYCLES_{current_time.strftime('%H%M%S')}",
+                'description': f"MULTIPLE BULLISH SMTs: {len(bullish_smts)} SMTs from {len(cycles_used)} different cycles"
             }
             
-            logger.info(f"🔍 Multiple Bullish SMTs details: {[s['cycle'] for s in smt_details]}")
+            logger.info(f"🔍 Multiple Bullish SMTs from different cycles: {[s['cycle'] for s in smt_details]}")
             
             if self._send_immediate_signal(signal_data):
                 signals_sent += 1
         
-        # Check for multiple bearish SMTs  
-        elif len(bearish_smts) >= 2:
-            logger.info(f"🎯 MULTIPLE BEARISH SMTs detected: {len(bearish_smts)} SMTs")
+        # Check for multiple bearish SMTs from DIFFERENT cycles  
+        elif len(bearish_smts) >= 2 and _has_different_cycles(bearish_smts):
+            logger.info(f"🎯 MULTIPLE BEARISH SMTs from different cycles: {len(bearish_smts)} SMTs")
             
             # Get ALL SMT details - FIXED: Include ALL data from SMT
             smt_details = []
+            cycles_used = set()
             for smt_key, smt_data in bearish_smts:
+                cycle = smt_data.get('cycle', 'Unknown')
+                cycles_used.add(cycle)
                 smt_details.append({
-                    'cycle': smt_data.get('cycle', 'Unknown'),
+                    'cycle': cycle,
                     'quarters': smt_data.get('quarters', ''),
                     'timeframe': smt_data.get('timeframe', 'Unknown'),
                     'asset1_action': smt_data.get('asset1_action', ''),
@@ -2729,15 +2748,16 @@ class RealTimeFeatureBox:
             signal_data = {
                 'pair_group': self.pair_group,
                 'direction': 'bearish',
-                'confluence_type': 'MULTIPLE_SMTS_BEARISH',
+                'confluence_type': 'MULTIPLE_SMTS_BEARISH_DIFFERENT_CYCLES',
                 'multiple_smts': smt_details,
                 'smt_count': len(bearish_smts),
+                'cycle_count': len(cycles_used),
                 'timestamp': current_time,
-                'signal_key': f"MULTI_SMT_BEARISH_{current_time.strftime('%H%M%S')}",
-                'description': f"MULTIPLE BEARISH SMTs: {len(bearish_smts)} cycles confirming"
+                'signal_key': f"MULTI_SMT_BEARISH_DIFF_CYCLES_{current_time.strftime('%H%M%S')}",
+                'description': f"MULTIPLE BEARISH SMTs: {len(bearish_smts)} SMTs from {len(cycles_used)} different cycles"
             }
             
-            logger.info(f"🔍 Multiple Bearish SMTs details: {[s['cycle'] for s in smt_details]}")
+            logger.info(f"🔍 Multiple Bearish SMTs from different cycles: {[s['cycle'] for s in smt_details]}")
             
             if self._send_immediate_signal(signal_data):
                 signals_sent += 1
