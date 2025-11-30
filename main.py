@@ -3367,7 +3367,7 @@ class FVGAnalyzer:
         return fvgs
     
     def _detect_bullish_fvg(self, df, idx):
-        """Detect bullish FVG pattern"""
+        """Detect bullish FVG pattern - CORRECTED"""
         if idx < 2 or idx >= len(df) - 1:
             return None
         
@@ -3375,21 +3375,22 @@ class FVGAnalyzer:
         candle_b = df.iloc[idx - 1]  # Gap candle  
         candle_c = df.iloc[idx]      # Current/confirmation candle
         
-        # Bullish FVG: Candle B low > Candle A high
-        if (candle_b['low'] > candle_a['high'] and 
-            candle_c['low'] > candle_a['high']):  # Confirmation
+        # ✅ CORRECTED: Bullish FVG: Candle B low < Candle A high AND Candle C low > Candle A high
+        if (candle_b['low'] < candle_a['high'] and 
+            candle_c['low'] > candle_a['high']):  
             
-            fvg_low = candle_a['high']  # Bottom of gap
-            fvg_high = candle_b['low']  # Top of gap
+            fvg_low = candle_a['high']  # Bottom of gap (A's high)
+            fvg_high = candle_c['low']  # Top of gap (C's low)
             
             return {
                 'type': 'bullish_fvg',
                 'direction': 'bullish',
                 'fvg_low': fvg_low,
                 'fvg_high': fvg_high,
-                'formation_time': candle_b['time'],
+                'formation_time': candle_c['time'],  # FVG forms when C confirms
                 'candle_a_time': candle_a['time'],
                 'candle_b_time': candle_b['time'],
+                'candle_c_time': candle_c['time'],
                 'current_price': df.iloc[-1]['close'],
                 'bars_since_formation': len(df) - idx - 1,
                 'touched': False,
@@ -3399,7 +3400,7 @@ class FVGAnalyzer:
         return None
     
     def _detect_bearish_fvg(self, df, idx):
-        """Detect bearish FVG pattern"""
+        """Detect bearish FVG pattern - CORRECTED"""
         if idx < 2 or idx >= len(df) - 1:
             return None
         
@@ -3407,21 +3408,22 @@ class FVGAnalyzer:
         candle_b = df.iloc[idx - 1]  # Gap candle
         candle_c = df.iloc[idx]      # Current/confirmation candle
         
-        # Bearish FVG: Candle B high < Candle A low
-        if (candle_b['high'] < candle_a['low'] and 
-            candle_c['high'] < candle_a['low']):  # Confirmation
+        # ✅ CORRECTED: Bearish FVG: Candle B high > Candle A low AND Candle C high < Candle A low
+        if (candle_b['high'] > candle_a['low'] and 
+            candle_c['high'] < candle_a['low']):  
             
-            fvg_low = candle_b['high']  # Bottom of gap
-            fvg_high = candle_a['low']  # Top of gap
+            fvg_low = candle_c['high']  # Bottom of gap (C's high)
+            fvg_high = candle_a['low']  # Top of gap (A's low)
             
             return {
                 'type': 'bearish_fvg', 
                 'direction': 'bearish',
                 'fvg_low': fvg_low,
                 'fvg_high': fvg_high,
-                'formation_time': candle_b['time'],
+                'formation_time': candle_c['time'],  # FVG forms when C confirms
                 'candle_a_time': candle_a['time'],
                 'candle_b_time': candle_b['time'],
+                'candle_c_time': candle_c['time'],
                 'current_price': df.iloc[-1]['close'],
                 'bars_since_formation': len(df) - idx - 1,
                 'touched': False,
@@ -3429,7 +3431,6 @@ class FVGAnalyzer:
             }
         
         return None
-    
     def _classify_fvg(self, fvg, df, fib_levels, paired_asset_fvgs=None):
         """Classify FVG type and determine trading context"""
         current_price = df.iloc[-1]['close']
