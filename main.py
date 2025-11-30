@@ -4740,8 +4740,8 @@ class UltimateTradingSystem:
         
         if self._send_telegram_message(message):
             self.fvg_ideas_sent[idea_key] = datetime.now(NY_TZ)
-            logger.info(f"🎯 FVG TRADE IDEA SENT: {trade_idea['fvg_name']} "
-                       f"(Confidence: {trade_idea['confidence']:.1%})")
+            # logger.info(f"🎯 FVG TRADE IDEA SENT: {trade_idea['fvg_name']} "
+            #            f"(Confidence: {trade_idea['confidence']:.1%})")
             return True
         
         return False
