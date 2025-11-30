@@ -3559,29 +3559,32 @@ class EnhancedFVGAnalyzer:
             self.last_scan_time[tf] = None
             self.detected_fvgs[tf] = []
     
+        # In EnhancedFVGAnalyzer.scan_smt_fvg_confluence method, add:
     def scan_smt_fvg_confluence(self, market_data, pair_group, instruments):
-        """
-        Scan for FVG-SMT confluence: FVG tapped during SMT formation
-        """
+        """Scan for FVG-SMT confluence - WITH DEBUGGING"""
         current_time = datetime.now(NY_TZ)
         all_trade_ideas = []
         
         # Get active SMTs with PSP from FeatureBox
         active_smts_with_psp = self._get_active_smts_with_psp()
+        logger.info(f"🔍 FVG-SMT: Found {len(active_smts_with_psp)} active SMTs with PSP")
         
         for timeframe in self.timeframes:
             if self.should_scan_timeframe(timeframe, current_time):
-                logger.info(f"🔄 Scanning {timeframe} for FVG-SMT confluence...")
+                logger.info(f"🔍 FVG-SMT: Scanning {timeframe}...")
                 
                 # Get data for both instruments
                 asset1_data = market_data[instruments[0]].get(timeframe)
                 asset2_data = market_data[instruments[1]].get(timeframe)
                 
-                if self._is_valid_data(asset1_data) and self._is_valid_data(asset2_data):
+                # Enhanced data validation
+                if self._is_valid_data_enhanced(asset1_data, timeframe) and self._is_valid_data_enhanced(asset2_data, timeframe):
                     # Get SMTs for relevant cycles
                     relevant_cycles = self.timeframe_cycle_map[timeframe]
                     relevant_smts = [smt for smt in active_smts_with_psp 
                                    if smt['cycle'] in relevant_cycles]
+                    
+                    logger.info(f"🔍 FVG-SMT: {timeframe} - {len(relevant_smts)} relevant SMTs")
                     
                     # Scan for FVG-SMT confluence on both assets
                     asset1_ideas = self._scan_asset_fvg_smt(
@@ -3597,8 +3600,35 @@ class EnhancedFVGAnalyzer:
                     all_trade_ideas.extend(asset2_ideas)
                     
                     self.last_scan_time[timeframe] = current_time
+                else:
+                    logger.warning(f"⚠️ FVG-SMT: Invalid data for {timeframe}")
         
+        logger.info(f"🔍 FVG-SMT: Total ideas found: {len(all_trade_ideas)}")
         return self._filter_and_prioritize_ideas(all_trade_ideas)
+    
+    def _is_valid_data_enhanced(self, df, timeframe):
+        """Enhanced data validation with debugging"""
+        if df is None:
+            logger.debug(f"⚠️ FVG Data Check: {timeframe} - None")
+            return False
+        if not isinstance(df, pd.DataFrame):
+            logger.debug(f"⚠️ FVG Data Check: {timeframe} - Not DataFrame: {type(df)}")
+            return False
+        if df.empty:
+            logger.debug(f"⚠️ FVG Data Check: {timeframe} - Empty DataFrame")
+            return False
+        if len(df) < 10:
+            logger.debug(f"⚠️ FVG Data Check: {timeframe} - Too few rows: {len(df)}")
+            return False
+        
+        required_cols = ['high', 'low', 'close', 'time']
+        missing_cols = [col for col in required_cols if col not in df.columns]
+        if missing_cols:
+            logger.debug(f"⚠️ FVG Data Check: {timeframe} - Missing columns: {missing_cols}")
+            return False
+        
+        logger.debug(f"✅ FVG Data Check: {timeframe} - Valid ({len(df)} rows)")
+        return True
     
     def _get_active_smts_with_psp(self):
         """Get active SMTs that have PSP confirmation"""
