@@ -4141,6 +4141,12 @@ class UltimateTradingSystem:
                             strong_idea = self._create_strong_fvg_smt_idea(fvg_idea, smt_confluence)
                             logger.info(f"🎯 STRONG CONFLUENCE: FVG + SMT with PSP - {fvg_idea['fvg_name']}")
                             return self._send_fvg_trade_idea(strong_idea)
+                        
+                        # GOOD: FVG + SMT without PSP (but tapped)
+                        elif smt_confluence['tapped_fvg']:
+                            good_idea = self._create_good_fvg_smt_idea(fvg_idea, smt_confluence)
+                            logger.info(f"✅ GOOD CONFLUENCE: FVG + SMT (no PSP) - {fvg_idea['fvg_name']}")
+                            return self._send_fvg_trade_idea(good_idea)
                 
                 # If we have FVGs but no SMT confluence, check alternative patterns
                 logger.info(f"🔶 FVGs found but no SMT confluence - checking alternatives")
@@ -4153,6 +4159,51 @@ class UltimateTradingSystem:
         except Exception as e:
             logger.error(f"❌ Error in complete FVG strategy: {str(e)}", exc_info=True)
             return False
+    
+    def _create_good_fvg_smt_idea(self, fvg_idea, smt_confluence):
+        """Create GOOD FVG + SMT without PSP idea"""
+        best_smt = smt_confluence['smts'][0]  # Take the first matching SMT
+        
+        idea = {
+            'type': 'GOOD_FVG_SMT',
+            'pair_group': self.pair_group,
+            'direction': fvg_idea['direction'],
+            'asset': fvg_idea['asset'],
+            'timeframe': fvg_idea['timeframe'],
+            'fvg_name': fvg_idea['fvg_name'],
+            'fvg_type': fvg_idea['fvg_type'],
+            'fvg_levels': fvg_idea['fvg_levels'],
+            'formation_time': fvg_idea['formation_time'],
+            'fib_zone': fvg_idea['fib_zone'],
+            'smt_cycle': best_smt['smt_data']['cycle'],
+            'smt_has_psp': best_smt['has_psp'],
+            'confluence_strength': 'GOOD',
+            'reasoning': self._generate_good_reasoning(fvg_idea, smt_confluence),
+            'timestamp': datetime.now(NY_TZ),
+            'idea_key': f"GOOD_{self.pair_group}_{fvg_idea['asset']}_{fvg_idea['timeframe']}_{datetime.now(NY_TZ).strftime('%H%M')}"
+        }
+        
+        return idea
+    
+    def _generate_good_reasoning(self, fvg_idea, smt_confluence):
+        """Generate reasoning for good confluence"""
+        reasons = []
+        
+        # FVG context
+        zone = "premium" if fvg_idea['fib_zone'] == 'premium_zone' else "discount"
+        reasons.append(f"{zone.upper()} zone {fvg_idea['direction']} FVG for reversal")
+        
+        # SMT details
+        best_smt = smt_confluence['smts'][0]
+        reasons.append(f"{best_smt['smt_data']['cycle']} cycle SMT confirming direction")
+        
+        # Tap confirmation
+        reasons.append("SMT tapped the FVG zone")
+        
+        # Missing PSP
+        reasons.append("Note: PSP confirmation missing")
+        
+        return ". ".join(reasons)
     
     def _find_zone_fvgs(self, fib_zone, direction):
         """Find FVGs in specific Fibonacci zone with direction"""
