@@ -4335,15 +4335,21 @@ class UltimateTradingSystem:
                 len(df) >= 10)
 
     def _find_smt_confluence_for_fvg(self, fvg_idea):
-        """Find SMTs that match the FVG's direction and timeframe"""
+        """Find SMTs that match the FVG's direction and timeframe - WITH TAP DEBUG"""
         confluence = {
             'has_confluence': False,
             'smts': [],
-            'with_psp': False
+            'with_psp': False,
+            'tapped_fvg': False
         }
         
         fvg_direction = fvg_idea['direction']
         fvg_timeframe = fvg_idea['timeframe']
+        fvg_levels = fvg_idea['fvg_levels']  # "low - high" string
+        fvg_low = float(fvg_levels.split(' - ')[0])
+        fvg_high = float(fvg_levels.split(' - ')[1])
+        
+        logger.info(f"🔍 SMT-FVG TAP DEBUG: FVG {fvg_idea['fvg_name']} - Levels: {fvg_low:.4f} to {fvg_high:.4f}")
         
         # Map timeframe to relevant SMT cycles
         timeframe_cycle_map = {
@@ -4364,16 +4370,77 @@ class UltimateTradingSystem:
             if (smt_data['direction'] == fvg_direction and 
                 smt_data['cycle'] in relevant_cycles):
                 
+                # DEBUG: Check if SMT actually tapped the FVG
+                tapped = self._check_smt_tapped_fvg(smt_data, fvg_idea, fvg_low, fvg_high)
+                
                 confluence['smts'].append({
                     'smt_data': smt_data,
-                    'has_psp': smt_feature['psp_data'] is not None
+                    'has_psp': smt_feature['psp_data'] is not None,
+                    'tapped_fvg': tapped
                 })
+                
+                logger.info(f"🔍 SMT-FVG TAP: {smt_data['cycle']} {smt_data['direction']} - Tapped FVG: {tapped}")
         
         confluence['has_confluence'] = len(confluence['smts']) > 0
         confluence['with_psp'] = any(smt['has_psp'] for smt in confluence['smts'])
+        confluence['tapped_fvg'] = any(smt['tapped_fvg'] for smt in confluence['smts'])
         
-        logger.info(f"🔍 SMT Confluence for {fvg_idea['fvg_name']}: {len(confluence['smts'])} SMTs, PSP: {confluence['with_psp']}")
+        logger.info(f"🔍 SMT Confluence for {fvg_idea['fvg_name']}: {len(confluence['smts'])} SMTs, PSP: {confluence['with_psp']}, Tapped: {confluence['tapped_fvg']}")
         return confluence
+    
+    def _check_smt_tapped_fvg(self, smt_data, fvg_idea, fvg_low, fvg_high):
+        """Check if SMT actually tapped the FVG zone"""
+        try:
+            # Get the instrument and timeframe for this SMT
+            instrument = fvg_idea['asset']  # Same instrument as FVG
+            timeframe = smt_data.get('timeframe')
+            
+            if not timeframe:
+                logger.warning(f"⚠️ SMT missing timeframe: {smt_data}")
+                return False
+            
+            # Get market data for this instrument and timeframe
+            data = self.market_data[instrument].get(timeframe)
+            if not self._is_valid_data(data):
+                return False
+            
+            # Get SMT formation time (approximate)
+            smt_time = smt_data.get('timestamp')
+            if not smt_time:
+                return False
+            
+            # Look for candles around SMT formation time that entered FVG zone
+            lookback_candles = 10  # Check 10 candles around SMT formation
+            
+            # Find the candle index closest to SMT formation time
+            time_diffs = abs(data['time'] - smt_time)
+            closest_idx = time_diffs.idxmin()
+            
+            # Check candles around this time for FVG tap
+            start_idx = max(0, closest_idx - lookback_candles)
+            end_idx = min(len(data) - 1, closest_idx + lookback_candles)
+            
+            for idx in range(start_idx, end_idx + 1):
+                candle = data.iloc[idx]
+                
+                # Check if price entered FVG zone
+                if fvg_idea['direction'] == 'bullish':
+                    # For bullish FVG, tap occurs when price (low) <= fvg_high
+                    if candle['low'] <= fvg_high:
+                        logger.info(f"✅ SMT TAP CONFIRMED: {instrument} {timeframe} - Low {candle['low']:.4f} entered FVG up to {fvg_high:.4f}")
+                        return True
+                else:  # bearish
+                    # For bearish FVG, tap occurs when price (high) >= fvg_low
+                    if candle['high'] >= fvg_low:
+                        logger.info(f"✅ SMT TAP CONFIRMED: {instrument} {timeframe} - High {candle['high']:.4f} entered FVG from {fvg_low:.4f}")
+                        return True
+            
+            logger.info(f"❌ SMT DID NOT TAP: {instrument} {timeframe} - No candle entered FVG zone")
+            return False
+            
+        except Exception as e:
+            logger.error(f"❌ Error checking SMT-FVG tap: {e}")
+            return False
     
     def _debug_market_data(self):
         """Debug market data for FVG analysis"""
