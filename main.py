@@ -4445,6 +4445,48 @@ class UltimateTradingSystem:
             return True
         
         return False
+
+    def _check_alternative_confluences_with_fvgs(self, fvgs):
+        """Check alternative patterns when we have FVGs but no SMT confluence"""
+        logger.info(f"🔍 Checking alternative patterns with {len(fvgs)} FVGs")
+        
+        # Get feature summary
+        summary = self.feature_box.get_active_features_summary()
+        
+        # PATTERN 1: Multiple SMTs with PSP (without FVG)
+        smts_with_psp = [smt for smt in summary['active_smts'] if smt['has_psp']]
+        if len(smts_with_psp) >= 2:
+            logger.info(f"🎯 ALTERNATIVE: Multiple SMTs with PSP ({len(smts_with_psp)})")
+            # This should trigger automatically in FeatureBox
+        
+        # PATTERN 2: SMT with PSP + CRT
+        if smts_with_psp and summary['crt_count'] > 0:
+            logger.info(f"🎯 ALTERNATIVE: SMT with PSP + CRT")
+            # This should trigger automatically in FeatureBox
+        
+        # PATTERN 3: Any SMT with PSP
+        if smts_with_psp:
+            logger.info(f"🎯 ALTERNATIVE: Single SMT with PSP")
+            # This should trigger automatically in FeatureBox
+        
+        # PATTERN 4: Send best FVG alone (as fallback)
+        if fvgs:
+            best_fvg = fvgs[0]  # Already sorted by timeframe importance
+            logger.info(f"🔶 FALLBACK: Sending FVG alone - {best_fvg['fvg_name']}")
+            basic_idea = self._create_basic_fvg_idea_for_fallback(best_fvg)
+            return self._send_fvg_trade_idea(basic_idea)
+        
+        logger.info(f"🔍 No alternative patterns found")
+        return False
+    
+    def _create_basic_fvg_idea_for_fallback(self, fvg_idea):
+        """Create a basic FVG idea for fallback (when no SMT confluence)"""
+        idea = fvg_idea.copy()
+        idea['type'] = 'BASIC_FVG'
+        idea['confluence_strength'] = 'BASIC'
+        idea['reasoning'] = f"{fvg_idea['fib_zone'].replace('_', ' ').title()} {fvg_idea['direction']} FVG - No SMT confluence"
+        idea['idea_key'] = f"BASIC_{self.pair_group}_{fvg_idea['asset']}_{fvg_idea['timeframe']}_{datetime.now(NY_TZ).strftime('%H%M')}"
+        return idea
     
     def _format_fvg_smt_idea_message(self, idea):
         """Format FVG-SMT confluence trade idea"""
