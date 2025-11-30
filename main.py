@@ -4752,35 +4752,46 @@ class UltimateTradingSystem:
         return False
     
     def _format_fvg_idea_message(self, idea):
-        """Format FVG trade idea for Telegram"""
+        """Format FVG trade idea for Telegram - REMOVED CONFIDENCE"""
         direction_emoji = "🔴" if idea['direction'] == 'bearish' else "🟢"
-        confidence_stars = "★" * int(idea['confidence'] * 5)
         formation_time = idea['formation_time'].strftime('%m/%d %H:%M')
         
+        # Determine FVG type emoji and description
+        if idea.get('is_inversion', False):
+            fvg_emoji = "🔄"
+            fvg_type_desc = "INVERSION FVG"
+        elif idea.get('is_hp_fvg', False):
+            fvg_emoji = "🎯" 
+            fvg_type_desc = "HIGH PROBABILITY FVG"
+        else:
+            fvg_emoji = "⚡"
+            fvg_type_desc = "REGULAR FVG"
+        
         message = f"""
-        ⚡ *FVG TRADE IDEA* ⚡
+        {fvg_emoji} *{fvg_type_desc}* {fvg_emoji}
         
         *Pair Group:* {idea['pair_group'].replace('_', ' ').title()}
         *Direction:* {idea['direction'].upper()} {direction_emoji}
         *Timeframe:* {idea['timeframe']}
         *Asset:* {idea['asset']}
-        *Confidence:* {confidence_stars} ({idea['confidence']:.1%})
+        *Confluence:* {idea['confluence_strength']}
         
         *FVG Details:*
         • Name: {idea['fvg_name']}
         • Type: {idea['fvg_type'].replace('_', ' ').title()}
+        • Class: {idea.get('fvg_class', 'regular').upper()}
         • Levels: {idea['fvg_levels']}
         • Formation: {formation_time}
         • Fibonacci Zone: {idea['fib_zone'].replace('_', ' ').title()}
+        • HP FVG: {'✅ YES' if idea.get('is_hp_fvg', False) else '❌ NO'}
+        • Inversion: {'✅ YES' if idea.get('is_inversion', False) else '❌ NO'}
         
-        *Confluence Reasoning:*
+        *Reasoning:*
         {idea['reasoning']}
-        
-        *SMT Cycles Matched:* {', '.join(idea['smt_confluence']['cycles_matched'])}
         
         *Detection Time:* {idea['timestamp'].strftime('%Y-%m-%d %H:%M:%S')}
         
-        #FVGTradeIdea #{idea['pair_group']} #{idea['direction']} #{idea['timeframe']}
+        #FVG #{idea['pair_group']} #{idea['direction']} #{idea['timeframe']}
         """
         return message
     
