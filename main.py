@@ -4622,6 +4622,32 @@ class UltimateTradingSystem:
         }
         return proven_counts.get(timeframe, 100)
 
+    def _check_alternative_confluences(self):
+        """Check alternative confluence patterns when no FVGs found"""
+        logger.info(f"🔍 Checking alternative confluence patterns for {self.pair_group}")
+        
+        # Get feature summary
+        summary = self.feature_box.get_active_features_summary()
+        
+        # PATTERN 1: Multiple SMTs with PSP
+        smts_with_psp = [smt for smt in summary['active_smts'] if smt['has_psp']]
+        if len(smts_with_psp) >= 2:
+            logger.info(f"🎯 ALTERNATIVE: Multiple SMTs with PSP ({len(smts_with_psp)})")
+            # This should trigger automatically in FeatureBox
+        
+        # PATTERN 2: SMT with PSP + CRT
+        if smts_with_psp and summary['crt_count'] > 0:
+            logger.info(f"🎯 ALTERNATIVE: SMT with PSP + CRT")
+            # This should trigger automatically in FeatureBox
+        
+        # PATTERN 3: Any SMT with PSP
+        if smts_with_psp:
+            logger.info(f"🎯 ALTERNATIVE: Single SMT with PSP")
+            # This should trigger automatically in FeatureBox
+        
+        logger.info(f"🔍 No alternative confluences found")
+        return False
+
     # KEEPING ONLY ONE VERSION OF TRIAD METHODS (the better one)
     async def _analyze_triad(self, api_key):
         """Analyze triad of 3 instruments - check all pair combinations with better error handling"""
