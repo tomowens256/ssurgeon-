@@ -4333,6 +4333,47 @@ class UltimateTradingSystem:
                 isinstance(df, pd.DataFrame) and 
                 not df.empty and 
                 len(df) >= 10)
+
+    def _find_smt_confluence_for_fvg(self, fvg_idea):
+        """Find SMTs that match the FVG's direction and timeframe"""
+        confluence = {
+            'has_confluence': False,
+            'smts': [],
+            'with_psp': False
+        }
+        
+        fvg_direction = fvg_idea['direction']
+        fvg_timeframe = fvg_idea['timeframe']
+        
+        # Map timeframe to relevant SMT cycles
+        timeframe_cycle_map = {
+            'H4': ['monthly', 'weekly'],
+            'H1': ['weekly', 'daily'],  
+            'M15': ['daily', '90min']
+        }
+        relevant_cycles = timeframe_cycle_map.get(fvg_timeframe, [])
+        
+        # Check all active SMTs
+        for smt_key, smt_feature in self.feature_box.active_features['smt'].items():
+            if self.feature_box._is_feature_expired(smt_feature):
+                continue
+                
+            smt_data = smt_feature['smt_data']
+            
+            # Check if SMT matches direction and cycle
+            if (smt_data['direction'] == fvg_direction and 
+                smt_data['cycle'] in relevant_cycles):
+                
+                confluence['smts'].append({
+                    'smt_data': smt_data,
+                    'has_psp': smt_feature['psp_data'] is not None
+                })
+        
+        confluence['has_confluence'] = len(confluence['smts']) > 0
+        confluence['with_psp'] = any(smt['has_psp'] for smt in confluence['smts'])
+        
+        logger.info(f"🔍 SMT Confluence for {fvg_idea['fvg_name']}: {len(confluence['smts'])} SMTs, PSP: {confluence['with_psp']}")
+        return confluence
     
     def _debug_market_data(self):
         """Debug market data for FVG analysis"""
