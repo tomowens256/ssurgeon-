@@ -4112,43 +4112,163 @@ class UltimateTradingSystem:
             return None
     
     def _scan_fvg_smt_confluence(self):
-        """Scan for FVG-SMT confluence trade ideas - WITH DEBUGGING"""
+        """NEW STRATEGY: Find FVGs in premium zone first, then look for matching SMTs"""
         try:
-            logger.info(f"🔍 STARTING FVG-SMT SCAN for {self.pair_group}")
+            logger.info(f"🔍 NEW FVG STRATEGY for {self.pair_group}")
             
-            # Debug: Check market data first
-            self._debug_market_data()
+            # STRATEGY 1: Find FVGs in premium zone first
+            premium_fvgs = self._find_premium_zone_fvgs()
             
-            # Scan for FVG-SMT confluence
-            trade_ideas = self.fvg_analyzer.scan_smt_fvg_confluence(
-                self.market_data, self.pair_group, self.instruments
-            )
-            
-            logger.info(f"🔍 FVG-SMT SCAN COMPLETE: Found {len(trade_ideas)} ideas")
-            
-            # Send only high-confidence ideas
-            if trade_ideas:
-                for i, idea in enumerate(trade_ideas):
-                    logger.info(f"🔍 FVG Idea {i+1}: {idea['fvg_name']} - Confidence: {idea['confidence']:.2f}")
+            if premium_fvgs:
+                logger.info(f"🎯 Found {len(premium_fvgs)} FVGs in premium zone")
                 
-                best_idea = trade_ideas[0]  # Already sorted by confidence
+                # Check each premium FVG for SMT confluence
+                for fvg_idea in premium_fvgs:
+                    # Check if we have SMTs that match this FVG's direction and timeframe
+                    smt_confluence = self._find_smt_confluence_for_fvg(fvg_idea)
+                    
+                    if smt_confluence['has_confluence']:
+                        # We found the ULTIMATE setup: FVG in premium + SMT
+                        ultimate_idea = self._create_ultimate_fvg_smt_idea(fvg_idea, smt_confluence)
+                        logger.info(f"🚀 ULTIMATE CONFLUENCE: FVG premium + SMT - {fvg_idea['fvg_name']}")
+                        return self._send_fvg_trade_idea(ultimate_idea)
                 
-                # Only send if confidence is high enough
-                if best_idea['confidence'] >= 0.8:  # Higher threshold for quality
-                    logger.info(f"🎯 SENDING FVG-SMT IDEA: {best_idea['fvg_name']}")
-                    return self._send_fvg_trade_idea(best_idea)
-                else:
-                    logger.info(f"⏸️  FVG Idea below threshold: {best_idea['confidence']:.2f} < 0.8")
-            else:
-                logger.info(f"❌ No FVG-SMT ideas found for {self.pair_group}")
-                
-            # FALLBACK: Try regular FVG scanning if no SMT confluence
-            logger.info(f"🔍 FALLBACK: Trying regular FVG scanning...")
-            return self._scan_fvg_trade_ideas()
+                # If we have premium FVGs but no SMT confluence, send the best FVG alone
+                logger.info(f"🔶 Sending premium FVG without SMT confluence")
+                return self._send_fvg_trade_idea(premium_fvgs[0])
+            
+            # STRATEGY 2: No premium FVGs? Check for other confluences
+            logger.info(f"🔍 No premium FVGs - checking other confluence patterns")
+            return self._check_alternative_confluences()
             
         except Exception as e:
-            logger.error(f"❌ Error scanning FVG-SMT confluence: {str(e)}", exc_info=True)
+            logger.error(f"❌ Error in new FVG strategy: {str(e)}", exc_info=True)
             return False
+    
+    def _find_premium_zone_fvgs(self):
+        """Find FVGs in Fibonacci premium zone (above 50%)"""
+        premium_fvgs = []
+        
+        for timeframe in ['H4', 'H1', 'M15']:
+            for instrument in self.instruments:
+                data = self.market_data[instrument].get(timeframe)
+                if not self._is_valid_data(data):
+                    continue
+                
+                # Use the FVG analyzer to find FVGs
+                scanner = self.fvg_analyzer.fvg_scanners[timeframe]
+                fvgs = scanner._detect_all_fvgs(data, instrument, timeframe)
+                
+                for fvg in fvgs:
+                    # Classify the FVG
+                    fib_levels = scanner._calculate_fib_levels(data)
+                    classified_fvg = scanner._classify_fvg(fvg, data, fib_levels)
+                    
+                    # Check if it's in premium zone and bearish (for reversals)
+                    if (classified_fvg['fib_context'] == 'premium_zone' and 
+                        classified_fvg['direction'] == 'bearish'):
+                        
+                        # Check if FVG was recently tapped (last 5 candles)
+                        if scanner._was_fvg_tapped_recently(classified_fvg, data, lookback_candles=5):
+                            trade_idea = self._create_basic_fvg_idea(classified_fvg, instrument, timeframe)
+                            premium_fvgs.append(trade_idea)
+                            logger.info(f"✅ Premium FVG found: {trade_idea['fvg_name']}")
+        
+        # Sort by timeframe importance (H4 > H1 > M15)
+        premium_fvgs.sort(key=lambda x: ['H4', 'H1', 'M15'].index(x['timeframe']))
+        return premium_fvgs
+    
+    def _find_smt_confluence_for_fvg(self, fvg_idea):
+        """Find SMTs that match the FVG's direction and timeframe"""
+        confluence = {
+            'has_confluence': False,
+            'smts': [],
+            'with_psp': False
+        }
+        
+        fvg_direction = fvg_idea['direction']
+        fvg_timeframe = fvg_idea['timeframe']
+        
+        # Map timeframe to relevant SMT cycles
+        timeframe_cycle_map = {
+            'H4': ['monthly', 'weekly'],
+            'H1': ['weekly', 'daily'],  
+            'M15': ['daily', '90min']
+        }
+        relevant_cycles = timeframe_cycle_map.get(fvg_timeframe, [])
+        
+        # Check all active SMTs
+        for smt_key, smt_feature in self.feature_box.active_features['smt'].items():
+            if self.feature_box._is_feature_expired(smt_feature):
+                continue
+                
+            smt_data = smt_feature['smt_data']
+            
+            # Check if SMT matches direction and cycle
+            if (smt_data['direction'] == fvg_direction and 
+                smt_data['cycle'] in relevant_cycles):
+                
+                confluence['smts'].append({
+                    'smt_data': smt_data,
+                    'has_psp': smt_feature['psp_data'] is not None
+                })
+        
+        confluence['has_confluence'] = len(confluence['smts']) > 0
+        confluence['with_psp'] = any(smt['has_psp'] for smt in confluence['smts'])
+        
+        logger.info(f"🔍 SMT Confluence for {fvg_idea['fvg_name']}: {len(confluence['smts'])} SMTs, PSP: {confluence['with_psp']}")
+        return confluence
+    
+    def _create_ultimate_fvg_smt_idea(self, fvg_idea, smt_confluence):
+        """Create the ultimate FVG+SMT confluence idea"""
+        best_smt = smt_confluence['smts'][0]  # Take the first matching SMT
+        
+        idea = {
+            'type': 'ULTIMATE_FVG_SMT_CONFLUENCE',
+            'pair_group': self.pair_group,
+            'direction': fvg_idea['direction'],
+            'asset': fvg_idea['asset'],
+            'timeframe': fvg_idea['timeframe'],
+            'fvg_name': fvg_idea['fvg_name'],
+            'fvg_type': fvg_idea['fvg_type'],
+            'fvg_levels': fvg_idea['fvg_levels'],
+            'formation_time': fvg_idea['formation_time'],
+            'fib_zone': fvg_idea['fib_zone'],
+            'smt_cycle': best_smt['smt_data']['cycle'],
+            'smt_has_psp': best_smt['has_psp'],
+            'confluence_strength': 'ULTIMATE' if best_smt['has_psp'] else 'STRONG',
+            'reasoning': self._generate_ultimate_reasoning(fvg_idea, smt_confluence),
+            'timestamp': datetime.now(NY_TZ),
+            'idea_key': f"ULTIMATE_{self.pair_group}_{fvg_idea['asset']}_{fvg_idea['timeframe']}_{datetime.now(NY_TZ).strftime('%H%M')}"
+        }
+        
+        return idea
+    
+    def _check_alternative_confluences(self):
+        """Fallback to other confluence patterns when no FVGs found"""
+        logger.info(f"🔍 Checking alternative confluence patterns for {self.pair_group}")
+        
+        # Get feature summary
+        summary = self.feature_box.get_active_features_summary()
+        
+        # PATTERN 1: Multiple SMTs with PSP
+        smts_with_psp = [smt for smt in summary['active_smts'] if smt['has_psp']]
+        if len(smts_with_psp) >= 2:
+            logger.info(f"🎯 ALTERNATIVE: Multiple SMTs with PSP ({len(smts_with_psp)})")
+            # This should trigger automatically in FeatureBox
+        
+        # PATTERN 2: SMT with PSP + CRT
+        if smts_with_psp and summary['crt_count'] > 0:
+            logger.info(f"🎯 ALTERNATIVE: SMT with PSP + CRT")
+            # This should trigger automatically in FeatureBox
+        
+        # PATTERN 3: Any SMT with PSP
+        if smts_with_psp:
+            logger.info(f"🎯 ALTERNATIVE: Single SMT with PSP")
+            # This should trigger automatically in FeatureBox
+        
+        logger.info(f"🔍 No alternative confluences found")
+        return False
     
     def _debug_market_data(self):
         """Debug market data for FVG analysis"""
