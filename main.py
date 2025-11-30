@@ -4082,28 +4082,58 @@ class UltimateTradingSystem:
             return None
     
     def _scan_fvg_smt_confluence(self):
-        """
-        Scan for FVG-SMT confluence trade ideas
-        """
+        """Scan for FVG-SMT confluence trade ideas - WITH DEBUGGING"""
         try:
+            logger.info(f"🔍 STARTING FVG-SMT SCAN for {self.pair_group}")
+            
+            # Debug: Check market data first
+            self._debug_market_data()
+            
             # Scan for FVG-SMT confluence
             trade_ideas = self.fvg_analyzer.scan_smt_fvg_confluence(
                 self.market_data, self.pair_group, self.instruments
             )
             
+            logger.info(f"🔍 FVG-SMT SCAN COMPLETE: Found {len(trade_ideas)} ideas")
+            
             # Send only high-confidence ideas
             if trade_ideas:
+                for i, idea in enumerate(trade_ideas):
+                    logger.info(f"🔍 FVG Idea {i+1}: {idea['fvg_name']} - Confidence: {idea['confidence']:.2f}")
+                
                 best_idea = trade_ideas[0]  # Already sorted by confidence
                 
                 # Only send if confidence is high enough
                 if best_idea['confidence'] >= 0.8:  # Higher threshold for quality
+                    logger.info(f"🎯 SENDING FVG-SMT IDEA: {best_idea['fvg_name']}")
                     return self._send_fvg_trade_idea(best_idea)
-            
-            return False
+                else:
+                    logger.info(f"⏸️  FVG Idea below threshold: {best_idea['confidence']:.2f} < 0.8")
+            else:
+                logger.info(f"❌ No FVG-SMT ideas found for {self.pair_group}")
+                
+            # FALLBACK: Try regular FVG scanning if no SMT confluence
+            logger.info(f"🔍 FALLBACK: Trying regular FVG scanning...")
+            return self._scan_fvg_trade_ideas()
             
         except Exception as e:
-            logger.error(f"❌ Error scanning FVG-SMT confluence: {str(e)}")
+            logger.error(f"❌ Error scanning FVG-SMT confluence: {str(e)}", exc_info=True)
             return False
+    
+    def _debug_market_data(self):
+        """Debug market data for FVG analysis"""
+        logger.info(f"🔧 FVG MARKET DATA DEBUG for {self.pair_group}")
+        
+        for instrument in self.instruments:
+            instrument_data = self.market_data.get(instrument, {})
+            logger.info(f"🔧 {instrument}: {len(instrument_data)} timeframes")
+            
+            for tf, data in instrument_data.items():
+                if data is not None and isinstance(data, pd.DataFrame):
+                    status = f"DataFrame({len(data)} rows, {len(data.columns)} cols)"
+                    logger.info(f"🔧   {tf}: {status}")
+                else:
+                    logger.warning(f"🔧   {tf}: INVALID DATA - {type(data)}")
     
     def _send_fvg_trade_idea(self, trade_idea):
         """Send formatted FVG-SMT confluence trade idea"""
