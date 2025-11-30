@@ -4653,42 +4653,37 @@ class UltimateTradingSystem:
         return True  # Only this asset has FVG
     
     def _format_fvg_smt_idea_message(self, idea):
-        """Format FVG-SMT confluence trade idea"""
+        """Format FVG-SMT confluence trade idea - REMOVED CONFIDENCE"""
         direction_emoji = "🔴" if idea['direction'] == 'bearish' else "🟢"
-        confidence_stars = "★" * int(idea['confidence'] * 5)
         formation_time = idea['formation_time'].strftime('%m/%d %H:%M')
-        tap_time = idea.get('tap_time', idea['formation_time']).strftime('%m/%d %H:%M')
         
         message = f"""
-            ⚡ *FVG-SMT CONFLUENCE* ⚡
-            
-            *Pair Group:* {idea['pair_group'].replace('_', ' ').title()}
-            *Direction:* {idea['direction'].upper()} {direction_emoji}
-            *Timeframe:* {idea['timeframe']}
-            *Asset:* {idea['asset']}
-            *Confluence Score:* {idea['confluence_score']}/10
-            *Confidence:* {confidence_stars} ({idea['confidence']:.1%})
-            
-            *FVG Details:*
-            • Name: {idea['fvg_name']}
-            • Type: {idea['fvg_type'].replace('_', ' ').title()}
-            • Levels: {idea['fvg_levels']}
-            • Formation: {formation_time}
-            • Tap Time: {tap_time}
-            • Fibonacci: {idea['fib_zone'].replace('_', ' ').title()}
-            • HP FVG: {'✅ YES' if idea['is_hp_fvg'] else '❌ NO'}
-            
-            *SMT Confluence:*
-            • Cycle: {idea['smt_cycle']}
-            • PSP: ✅ Confirmed
-            
-            *Reasoning:*
-            {idea['reasoning']}
-            
-            *Detection Time:* {idea['timestamp'].strftime('%Y-%m-%d %H:%M:%S')}
-            
-            #FVGSMTConfluence #{idea['pair_group']} #{idea['direction']} #{idea['timeframe']}
-            """
+        ⚡ *{idea['type']}* ⚡
+        
+        *Pair Group:* {idea['pair_group'].replace('_', ' ').title()}
+        *Direction:* {idea['direction'].upper()} {direction_emoji}
+        *Timeframe:* {idea['timeframe']}
+        *Asset:* {idea['asset']}
+        *Confluence Strength:* {idea['confluence_strength']}
+        
+        *FVG Details:*
+        • Name: {idea['fvg_name']}
+        • Type: {idea['fvg_type'].replace('_', ' ').title()}
+        • Levels: {idea['fvg_levels']}
+        • Formation: {formation_time}
+        • Fibonacci: {idea['fib_zone'].replace('_', ' ').title()}
+        
+        *SMT Confluence:*
+        • Cycle: {idea['smt_cycle']}
+        • PSP: {'✅ Confirmed' if idea['smt_has_psp'] else '❌ Not Confirmed'}
+        
+        *Reasoning:*
+        {idea['reasoning']}
+        
+        *Detection Time:* {idea['timestamp'].strftime('%Y-%m-%d %H:%M:%S')}
+        
+        #FVGSMTConfluence #{idea['pair_group']} #{idea['direction']} #{idea['timeframe']}
+        """
         return message
     
     def _send_telegram_message(self, message):
