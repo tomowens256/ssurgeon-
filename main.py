@@ -4532,12 +4532,125 @@ class UltimateTradingSystem:
     
     def _create_basic_fvg_idea_for_fallback(self, fvg_idea):
         """Create a basic FVG idea for fallback (when no SMT confluence)"""
+        # Get the FVG classification
+        fvg_classification = self._classify_fvg_type(fvg_idea)
+        
         idea = fvg_idea.copy()
-        idea['type'] = 'BASIC_FVG'
+        idea['type'] = fvg_classification['type']
         idea['confluence_strength'] = 'BASIC'
-        idea['reasoning'] = f"{fvg_idea['fib_zone'].replace('_', ' ').title()} {fvg_idea['direction']} FVG - No SMT confluence"
+        idea['fvg_class'] = fvg_classification['class']
+        idea['is_hp_fvg'] = fvg_classification['is_hp']
+        idea['is_inversion'] = fvg_classification['is_inversion']
+        idea['reasoning'] = f"{fvg_classification['description']} - No SMT confluence"
         idea['idea_key'] = f"BASIC_{self.pair_group}_{fvg_idea['asset']}_{fvg_idea['timeframe']}_{datetime.now(NY_TZ).strftime('%H%M')}"
+        
         return idea
+    
+    def _classify_fvg_type(self, fvg_idea):
+        """Classify FVG type: regular, inversion, or HP FVG"""
+        # Get the scanner for this timeframe
+        scanner = self.fvg_analyzer.fvg_scanners[fvg_idea['timeframe']]
+        
+        # Get market data for this instrument
+        data = self.market_data[fvg_idea['asset']].get(fvg_idea['timeframe'])
+        if not self._is_valid_data(data):
+            return {
+                'type': 'REGULAR_FVG',
+                'class': 'regular',
+                'is_hp': False,
+                'is_inversion': False,
+                'description': f"Regular {fvg_idea['direction']} FVG in {fvg_idea['fib_zone']} zone"
+            }
+        
+        # Extract FVG levels from the string "low - high"
+        fvg_levels = fvg_idea['fvg_levels']
+        fvg_low = float(fvg_levels.split(' - ')[0])
+        fvg_high = float(fvg_levels.split(' - ')[1])
+        
+        # Check for inversion (price went through the FVG)
+        is_inverted = self._check_fvg_inversion(fvg_idea, data, fvg_low, fvg_high)
+        
+        # Check for HP FVG (only one asset has FVG)
+        is_hp_fvg = self._check_hp_fvg(fvg_idea)
+        
+        # Determine classification
+        if is_inverted:
+            return {
+                'type': 'INVERSION_FVG',
+                'class': 'inversion',
+                'is_hp': is_hp_fvg,
+                'is_inversion': True,
+                'description': f"Inversion {fvg_idea['direction']} FVG in {fvg_idea['fib_zone']} zone"
+            }
+        elif is_hp_fvg:
+            return {
+                'type': 'HP_FVG',
+                'class': 'hp',
+                'is_hp': True,
+                'is_inversion': False,
+                'description': f"High Probability {fvg_idea['direction']} FVG in {fvg_idea['fib_zone']} zone"
+            }
+        else:
+            return {
+                'type': 'REGULAR_FVG',
+                'class': 'regular',
+                'is_hp': False,
+                'is_inversion': False,
+                'description': f"Regular {fvg_idea['direction']} FVG in {fvg_idea['fib_zone']} zone"
+            }
+    
+    def _check_fvg_inversion(self, fvg_idea, data, fvg_low, fvg_high):
+        """Check if FVG has been inverted (price went through it)"""
+        formation_time = fvg_idea['formation_time']
+        
+        # Find the formation candle index
+        formation_idx = data[data['time'] == formation_time].index
+        if len(formation_idx) == 0:
+            return False
+            
+        formation_idx = formation_idx[0]
+        
+        # Check candles after formation for inversion
+        for idx in range(formation_idx + 1, len(data)):
+            candle = data.iloc[idx]
+            
+            if fvg_idea['direction'] == 'bullish':
+                # Bullish FVG inverted if price went below fvg_low
+                if candle['low'] < fvg_low:
+                    return True
+            else:  # bearish
+                # Bearish FVG inverted if price went above fvg_high
+                if candle['high'] > fvg_high:
+                    return True
+        
+        return False
+    
+    def _check_hp_fvg(self, fvg_idea):
+        """Check if this is a High Probability FVG (only one asset has FVG)"""
+        # Get the other instrument in this pair group
+        instruments = self.instruments
+        current_asset = fvg_idea['asset']
+        other_asset = [inst for inst in instruments if inst != current_asset][0]
+        
+        # Check if the other asset has any FVG around the same time
+        fvg_formation_time = fvg_idea['formation_time']
+        
+        # Scan the other asset for FVGs in the same timeframe
+        scanner = self.fvg_analyzer.fvg_scanners[fvg_idea['timeframe']]
+        other_data = self.market_data[other_asset].get(fvg_idea['timeframe'])
+        
+        if not self._is_valid_data(other_data):
+            return False
+        
+        other_fvgs = scanner._detect_all_fvgs(other_data, other_asset, fvg_idea['timeframe'])
+        
+        # Check if other asset has FVG around same time (±2 hours)
+        for other_fvg in other_fvgs:
+            time_diff = abs((other_fvg['formation_time'] - fvg_formation_time).total_seconds())
+            if time_diff < 7200:  # 2 hours
+                return False  # Both have FVGs, not HP
+        
+        return True  # Only this asset has FVG
     
     def _format_fvg_smt_idea_message(self, idea):
         """Format FVG-SMT confluence trade idea"""
