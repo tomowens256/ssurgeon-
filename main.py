@@ -4520,31 +4520,10 @@ class UltimateTradingSystem:
             logger.info(f"🎯 ALTERNATIVE: Single SMT with PSP")
             # This should trigger automatically in FeatureBox
         
-        # PATTERN 4: Send best FVG alone (as fallback)
-        if fvgs:
-            best_fvg = fvgs[0]  # Already sorted by timeframe importance
-            logger.info(f"🔶 FALLBACK: Sending FVG alone - {best_fvg['fvg_name']}")
-            basic_idea = self._create_basic_fvg_idea_for_fallback(best_fvg)
-            return self._send_fvg_trade_idea(basic_idea)
-        
-        logger.info(f"🔍 No alternative patterns found")
+        # ❌ REMOVED: No more plain FVG signals
+        logger.info(f"🔇 NOT sending plain FVG signals - waiting for SMT confluence")
         return False
-    
-    def _create_basic_fvg_idea_for_fallback(self, fvg_idea):
-        """Create a basic FVG idea for fallback (when no SMT confluence)"""
-        # Get the FVG classification
-        fvg_classification = self._classify_fvg_type(fvg_idea)
-        
-        idea = fvg_idea.copy()
-        idea['type'] = fvg_classification['type']
-        idea['confluence_strength'] = 'BASIC'
-        idea['fvg_class'] = fvg_classification['class']
-        idea['is_hp_fvg'] = fvg_classification['is_hp']
-        idea['is_inversion'] = fvg_classification['is_inversion']
-        idea['reasoning'] = f"{fvg_classification['description']} - No SMT confluence"
-        idea['idea_key'] = f"BASIC_{self.pair_group}_{fvg_idea['asset']}_{fvg_idea['timeframe']}_{datetime.now(NY_TZ).strftime('%H%M')}"
-        
-        return idea
+
     
     def _classify_fvg_type(self, fvg_idea):
         """Classify FVG type: regular, inversion, or HP FVG"""
