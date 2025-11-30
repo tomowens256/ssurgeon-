@@ -4038,6 +4038,71 @@ class EnhancedFVGAnalyzer:
         # Return top ideas only (avoid spam)
         return filtered_ideas[:2]  # Max 2 ideas per scan
 
+
+class SmartTimingSystem:
+    def __init__(self):
+        self.candle_watch_times = {
+            'M5': None,   # 5-minute candles
+            'M15': None,  # 15-minute candles  
+            'H1': None,   # 1-hour candles
+            'H4': None    # 4-hour candles
+        }
+        
+    def get_smart_sleep_time(self):
+        """Calculate sleep time until next relevant candle with buffer"""
+        now = datetime.now(NY_TZ)
+        
+        # Calculate next candle times with 5-second buffer for API latency
+        next_m5 = self._get_next_candle_time('M5') + timedelta(seconds=5)
+        next_m15 = self._get_next_candle_time('M15') + timedelta(seconds=5)
+        next_h1 = self._get_next_candle_time('H1') + timedelta(seconds=5)
+        next_h4 = self._get_next_candle_time('H4') + timedelta(seconds=5)
+        
+        # Find the earliest upcoming candle
+        next_candle_time = min(next_m5, next_m15, next_h1, next_h4)
+        sleep_seconds = (next_candle_time - now).total_seconds()
+        
+        logger.info(f"⏰ Next scan in {sleep_seconds:.0f}s (at {next_candle_time.strftime('%H:%M:%S')})")
+        return max(sleep_seconds, 5)  # Minimum 5 seconds
+    
+    def _get_next_candle_time(self, timeframe):
+        """Calculate exact time when next candle will be available"""
+        now = datetime.now(NY_TZ)
+        
+        if timeframe == 'M5':
+            # Next 5-minute boundary
+            next_minute = (now.minute // 5 + 1) * 5
+            if next_minute >= 60:
+                next_minute = 0
+                next_time = now.replace(hour=now.hour + 1, minute=0, second=0, microsecond=0)
+            else:
+                next_time = now.replace(minute=next_minute, second=0, microsecond=0)
+                
+        elif timeframe == 'M15':
+            # Next 15-minute boundary
+            next_minute = (now.minute // 15 + 1) * 15
+            if next_minute >= 60:
+                next_minute = 0
+                next_time = now.replace(hour=now.hour + 1, minute=0, second=0, microsecond=0)
+            else:
+                next_time = now.replace(minute=next_minute, second=0, microsecond=0)
+                
+        elif timeframe == 'H1':
+            # Next hour boundary
+            next_time = now.replace(hour=now.hour + 1, minute=0, second=0, microsecond=0)
+            
+        elif timeframe == 'H4':
+            # Next 4-hour boundary
+            next_hour = (now.hour // 4 + 1) * 4
+            if next_hour >= 24:
+                next_hour = 0
+                next_time = now.replace(day=now.day + 1, hour=0, minute=0, second=0, microsecond=0)
+            else:
+                next_time = now.replace(hour=next_hour, minute=0, second=0, microsecond=0)
+        
+        return next_time
+
+
 # ================================
 # ULTIMATE TRADING SYSTEM WITH TRIPLE CONFLUENCE
 # ================================
@@ -4086,31 +4151,71 @@ class UltimateTradingSystem:
         logger.info(f"🎯 FVG Analyzer initialized for {pair_group}")
         self.fvg_analyzer = EnhancedFVGAnalyzer(self.timing_manager, self.feature_box)
         self.fvg_ideas_sent = {}
+        self.timing_system = SmartTimingSystem()
+        self.last_candle_scan = {}
+        
+    def get_sleep_time(self):
+        """Use smart timing instead of fixed intervals"""
+        return self.timing_system.get_smart_sleep_time()
     
     async def run_ultimate_analysis(self, api_key):
-        """Run analysis with FVG-SMT confluence"""
+        """Run analysis triggered by new candle formation"""
         try:
             # Cleanup expired features first
             self.feature_box.cleanup_expired_features()
             
-            # Fetch data
+            # Fetch data (this will get the new candle)
             await self._fetch_all_data(api_key)
             
-            # Scan for new features and add to Feature Box
-            await self._scan_and_add_features()
+            # Check if we have new candles that warrant immediate scanning
+            new_candles_detected = self._check_new_candles()
             
-            # UPDATED: Scan for FVG-SMT confluence
-            fvg_idea_sent = self._scan_fvg_smt_confluence()
-            
-            # Get current feature summary
-            summary = self.feature_box.get_active_features_summary()
-            logger.info(f"📊 {self.pair_group} Feature Summary: {summary['smt_count']} SMTs, {summary['crt_count']} CRTs, {summary['psp_count']} PSPs")
+            if new_candles_detected:
+                logger.info(f"🎯 NEW CANDLES DETECTED - Running immediate analysis")
+                
+                # Scan for new features and add to Feature Box
+                await self._scan_and_add_features()
+                
+                # Scan for FVG-SMT confluence
+                fvg_idea_sent = self._scan_fvg_smt_confluence()
+                
+                # Get current feature summary
+                summary = self.feature_box.get_active_features_summary()
+                logger.info(f"📊 {self.pair_group} Feature Summary: {summary['smt_count']} SMTs, {summary['crt_count']} CRTs, {summary['psp_count']} PSPs")
+            else:
+                logger.info(f"⏸️ No new candles - skipping analysis")
             
             return None
             
         except Exception as e:
-            logger.error(f"❌ Error in real-time analysis for {self.pair_group}: {str(e)}", exc_info=True)
+            logger.error(f"❌ Error in candle-triggered analysis for {self.pair_group}: {str(e)}", exc_info=True)
             return None
+    
+    def _check_new_candles(self):
+        """Check if we have new candles that warrant immediate scanning"""
+        new_candles = False
+        
+        for instrument in self.instruments:
+            for timeframe in ['M5', 'M15', 'H1', 'H4']:
+                data = self.market_data[instrument].get(timeframe)
+                if data is None or data.empty:
+                    continue
+                
+                # Get the latest candle time
+                latest_candle_time = data.iloc[-1]['time']
+                
+                # Check if this is a new candle we haven't processed
+                key = f"{instrument}_{timeframe}"
+                if key not in self.last_candle_scan:
+                    self.last_candle_scan[key] = latest_candle_time
+                    new_candles = True
+                    logger.info(f"🕯️ First scan for {instrument} {timeframe}")
+                elif latest_candle_time > self.last_candle_scan[key]:
+                    self.last_candle_scan[key] = latest_candle_time
+                    new_candles = True
+                    logger.info(f"🕯️ NEW CANDLE: {instrument} {timeframe} at {latest_candle_time.strftime('%H:%M')}")
+        
+        return new_candles
     
     def _scan_fvg_smt_confluence(self):
         """COMPLETE FVG STRATEGY: Find FVGs in premium/discount zones with SMT confluence"""
