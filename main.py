@@ -198,8 +198,8 @@ def fetch_candles(instrument, timeframe, count=100, api_key=None, since=None):
         "alignmentTimezone": "America/New_York",  # UTC-4
         "includeCurrent": True
     }
-    if since:  # Incremental: From since
-        params["from"] = since.strftime('%Y-%m-%dT%H:%M:%S')  # Oanda ISO
+    if since:
+        params["from"] = since.strftime('%Y-%m-%dT%H:%M:%S')  # Oanda ISO for delta
 
     for attempt in range(MAX_RETRIES):
         try:
@@ -220,8 +220,8 @@ def fetch_candles(instrument, timeframe, count=100, api_key=None, since=None):
                     continue
                
                 try:
-                    parsed_time = parse_oanda_time(candle['time'])  # Already UTC-4/NY
-                    # TZ guard: Convert if aware, localize if naive
+                    parsed_time = parse_oanda_time(candle['time'])  # Your func, likely naive
+                    # TZ guard: Localize if naive, convert if aware
                     if parsed_time.tzinfo is None:
                         parsed_time = parsed_time.tz_localize(NY_TZ)
                     else:
@@ -240,7 +240,7 @@ def fetch_candles(instrument, timeframe, count=100, api_key=None, since=None):
                     })
                 except Exception as e:
                     logger.error(f"Error parsing candle for {instrument}: {str(e)}")
-                    continue
+                    continue  # Skip bad candle, don't crash whole fetch
            
             if not data:
                 logger.warning(f"Empty data after parsing for {instrument} on attempt {attempt+1}")
@@ -255,14 +255,15 @@ def fetch_candles(instrument, timeframe, count=100, api_key=None, since=None):
             logger.info(f"Successfully fetched {len(df)} candles for {instrument} {timeframe}")
             return df
            
-        except Exception as e:  # V20Error or general
-            if "rate" in str(e).lower() or hasattr(e, 'code') and e.code in [429, 502]:
+        except Exception as e:  # Catch V20Error too
+            import traceback
+            if "rate" in str(e).lower() or (hasattr(e, 'code') and e.code in [429, 502]):
                 wait_time = 10 * (2 ** attempt)
                 logger.warning(f"Rate limit hit for {instrument}, waiting {wait_time}s: {str(e)}")
                 import time
                 time.sleep(wait_time)
             else:
-                error_details = f"Status: {getattr(e, 'code', 'N/A')} | Message: {str(e)}"
+                error_details = f"Status: {getattr(e, 'code', 'N/A')} | Message: {str(e)} | Trace: {traceback.format_exc()}"
                 logger.error(f"Oanda API error for {instrument}: {error_details}")
                 break
    
