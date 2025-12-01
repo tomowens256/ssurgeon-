@@ -4303,7 +4303,8 @@ class UltimateTradingSystem:
                 await self._scan_and_add_features_immediate()
                 
                 # Scan for FVG-SMT confluence
-                fvg_idea_sent = self._scan_fvg_smt_confluence()
+                #fvg_idea_sent = self._scan_fvg_smt_confluence()
+                self._scan_fvg_smt_confluence()
                 
                 # Get current feature summary
                 summary = self.feature_box.get_active_features_summary()
@@ -4346,7 +4347,7 @@ class UltimateTradingSystem:
     async def _fetch_all_data_parallel(self, api_key):
         """Fetch data in parallel for maximum speed when new candles form"""
         tasks = []
-        required_timeframes = list(self.pair_config['timeframe_mapping'].values())
+        required_timeframes = list(self.pair_config['timeframe_mapping'].values()) + ['D']
         
         # Add CRT timeframes
         for tf in CRT_TIMEFRAMES:
@@ -4426,64 +4427,64 @@ class UltimateTradingSystem:
                         # Add to Feature Box (triggers immediate confluence check)
                         self.feature_box.add_smt(smt_signal, psp_signal)
     
-    def _has_new_candle_data(self, timeframe):
-        """Check if any instrument has new candle data for this timeframe"""
-        for instrument in self.instruments:
-            key = f"{instrument}_{timeframe}"
-            if key in self.last_candle_scan:
-                # Check if this was recently updated (last 2 minutes)
-                last_scan = self.last_candle_scan[key]
-                time_since_scan = (datetime.now(NY_TZ) - last_scan).total_seconds()
-                if time_since_scan < 120:  # 2 minutes
-                    return True
-        return False
-    
     def _scan_fvg_smt_confluence(self):
-        """COMPLETE FVG STRATEGY: Find FVGs in premium/discount zones with SMT confluence"""
+        """Scan FVG + SMT taps (M15/H1/H4/D only, PSP req, HP cross-check)."""
         try:
-            logger.info(f"🔍 COMPLETE FVG STRATEGY for {self.pair_group}")
-            
-            # STRATEGY 1: Find FVGs in premium zone (bearish) AND discount zone (bullish)
-            premium_fvgs = self._find_zone_fvgs('premium_zone', 'bearish')
-            discount_fvgs = self._find_zone_fvgs('discount_zone', 'bullish')
-            
-            all_fvgs = premium_fvgs + discount_fvgs
-            logger.info(f"🎯 Found {len(all_fvgs)} total FVGs ({len(premium_fvgs)} premium, {len(discount_fvgs)} discount)")
-            
-            if all_fvgs:
-                # Check each FVG for SMT confluence
-                for fvg_idea in all_fvgs:
-                    smt_confluence = self._find_smt_confluence_for_fvg(fvg_idea)
-                    
-                    if smt_confluence['has_confluence']:
-                        # ULTIMATE: FVG + Multiple SMTs with PSP
-                        if len(smt_confluence['smts']) >= 2 and smt_confluence['with_psp']:
-                            ultimate_idea = self._create_ultimate_fvg_smt_idea(fvg_idea, smt_confluence)
-                            logger.info(f"🚀 ULTIMATE CONFLUENCE: FVG + Multiple SMTs with PSP - {fvg_idea['fvg_name']}")
-                            return self._send_fvg_trade_idea(ultimate_idea)
-                        
-                        # STRONG: FVG + SMT with PSP
-                        elif smt_confluence['with_psp']:
-                            strong_idea = self._create_strong_fvg_smt_idea(fvg_idea, smt_confluence)
-                            logger.info(f"🎯 STRONG CONFLUENCE: FVG + SMT with PSP - {fvg_idea['fvg_name']}")
-                            return self._send_fvg_trade_idea(strong_idea)
-                        
-                        # GOOD: FVG + SMT without PSP (but tapped)
-                        elif smt_confluence['tapped_fvg']:
-                            good_idea = self._create_good_fvg_smt_idea(fvg_idea, smt_confluence)
-                            logger.info(f"✅ GOOD CONFLUENCE: FVG + SMT (no PSP) - {fvg_idea['fvg_name']}")
-                            return self._send_fvg_trade_idea(good_idea)
-                
-                # If we have FVGs but no SMT confluence, check alternative patterns
-                logger.info(f"🔶 FVGs found but no SMT confluence - checking alternatives")
-                return self._check_alternative_confluences_with_fvgs(all_fvgs)
-            
-            # STRATEGY 2: No FVGs? Check for other confluence patterns
-            logger.info(f"🔍 No FVGs found - checking other confluence patterns")
-            return self._check_alternative_confluences()
-            
+            logger.info(f"🔍 FVG + SMT TAP SCAN for {self.pair_group}")
+            fvg_detector = FVGDetector()  # Your new class
+            fvgs_per_asset = {inst: [] for inst in self.instruments}
+            smts = []  # Collect all SMTs per TF/cycle
+    
+            # FVG scan per TF (your TFs only)
+            for tf in ['M15', 'H1', 'H4', 'D']:
+                for inst in self.instruments:
+                    data = self.market_data[inst].get(tf)
+                    if data is not None and not data.empty:
+                        new_fvgs = fvg_detector.scan_tf(data, tf, inst)
+                        fvgs_per_asset[inst].extend(new_fvgs)
+                        logger.info(f"🔍 {inst} {tf}: Found {len(new_fvgs)} FVGs")
+    
+                # Cross HP check per TF
+                if len(self.instruments) >= 2:
+                    fvg_detector.check_cross_asset_hp(fvgs_per_asset[self.instruments[0]], fvgs_per_asset[self.instruments[1]], tf)
+    
+            # SMT scan per cycle/TF (your mapping)
+            for cycle, cycle_tf in self.pair_config['timeframe_mapping'].items():
+                if cycle_tf not in ['M15', 'H1', 'H4', 'D']:  # Skip if not FVG TF
+                    continue
+                asset1_data = self.market_data[self.instruments[0]].get(cycle_tf)
+                asset2_data = self.market_data[self.instruments[1]].get(cycle_tf)
+                if asset1_data is None or asset2_data is None or asset1_data.empty or asset2_data.empty:
+                    logger.warning(f"⚠️ Skip {cycle} {cycle_tf}: No data")
+                    continue
+    
+                smt_signal = self.smt_detector.detect_smt_all_cycles(asset1_data, asset2_data, cycle)
+                if smt_signal:
+                    psp = self.smt_detector.check_psp_for_smt(smt_signal, asset1_data, asset2_data)
+                    smt_signal['psp_confirmed'] = psp is not None
+                    smt_signal['tf'] = cycle_tf
+                    logger.info(f"🎯 SMT {cycle} {smt_signal['direction']} + PSP: {smt_signal['psp_confirmed']}")
+    
+                    # Tap check/match to FVG (your method, loop assets)
+                    for inst in self.instruments:
+                        for fvg in [f for f in fvgs_per_asset[inst] if f['tf'] == cycle_tf and f['direction'] == smt_signal['direction']]:
+                            fvg_low = fvg['fvg_low']
+                            fvg_high = fvg['fvg_high']
+                            direction = fvg['direction']
+                            tapped = self._check_smt_second_swing_in_fvg(smt_signal, inst, fvg_low, fvg_high, direction)
+                            if tapped and smt_signal['psp_confirmed']:
+                                is_hp_fvg = fvg['is_hp']
+                                logger.info(f"✅ TAP + PSP: {smt_signal['cycle']} {smt_signal['direction']} on {inst} FVG")
+                                return self._send_fvg_smt_tap_signal(fvg, smt_signal, smt_signal['psp_confirmed'], is_hp_fvg)
+    
+                    smts.append(smt_signal)  # Collect if no match yet
+    
+            # No match? Fallback (your old, or double SMT if kept)
+            logger.info(f"🔍 No FVG+SMT+PSP - checking doubles")
+            return self._scan_double_smts_temporal()  # Or whatever alternative
+    
         except Exception as e:
-            logger.error(f"❌ Error in complete FVG strategy: {str(e)}", exc_info=True)
+            logger.error(f"❌ FVG+SMT scan: {str(e)}", exc_info=True)
             return False
     
 
