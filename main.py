@@ -5488,6 +5488,31 @@ class UltimateTradingSystem:
         }
         return self._send_double_smt_idea(idea)  # Your old sender
 
+    def _format_double_smt_message(self, idea):
+        """Format double SMT w/criteria deets for Telegram."""
+        dir_emoji = "🟢" if idea['direction'] == 'bullish' else "🔴"
+        primary_time = idea['primary_time'].strftime('%H:%M')
+        secondary_time = idea['secondary_time'].strftime('%H:%M')
+        return f"""
+            {dir_emoji} *DOUBLE SMT CONFIRM* {dir_emoji}
+            
+            *Group:* {idea['pair_group'].replace('_', ' ').title()}
+            *Direction:* {idea['direction'].upper()}
+            *Strength:* {idea['strength']}
+            
+            *Criteria:*
+            • Primary Cycle: {idea['primary_cycle']} SMT at {primary_time}
+            • Secondary Cycle: {idea['secondary_cycle']} SMT at {secondary_time}
+            • Span: {idea['span_minutes']}min from 2nd swings
+            • PSP: ✅ Both confirmed
+            
+            *Reasoning:* {idea['reasoning']}
+            
+            *Detect:* {idea['timestamp'].strftime('%H:%M:%S')}
+            
+            #{idea['pair_group']} #DoubleSMT #{idea['direction']}
+            """
+
 
     def _check_alternative_confluences_with_fvgs(self, fvgs):
         """Only double SMTs as alternative"""
