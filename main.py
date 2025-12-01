@@ -4104,6 +4104,108 @@ class SmartTimingSystem:
         return next_time
 
 
+class FVGDetector:
+    def __init__(self, min_gap_pct: float = 0.20):
+        self.min_gap_pct = min_gap_pct  # 20% of C body
+        self.active_fvgs = {}  # tf -> [fvgs]
+        self.invalidate_std_mult = 4.0  # For over-extend
+
+    def scan_tf(self, df, tf, asset):
+        if tf not in ['M15', 'H1', 'H4', 'D'] or len(df) < 20:
+            return []
+        recent = df.tail(20).reset_index(drop=True)
+        fvgs = []
+        for i in range(2, len(recent)):
+            a, b, c = recent.iloc[i-2], recent.iloc[i-1], recent.iloc[i]
+            body_size = c['high'] - c['low']
+
+            # Bullish
+            if b['low'] < a['high'] and c['low'] > a['high']:
+                gap_low, gap_high = a['high'], c['low']
+                gap_size = gap_high - gap_low
+                if gap_size >= body_size * self.min_gap_pct:
+                    fvg = self._create_fvg('bullish', gap_low, gap_high, c['time'], asset, tf, b)
+                    post_df = recent.iloc[i+1:] if i+1 < len(recent) else pd.DataFrame()
+                    if not self._is_invalidated(fvg, post_df):
+                        fvgs.append(fvg)
+
+            # Bearish
+            if b['high'] > a['low'] and c['high'] < a['low']:
+                gap_low, gap_high = c['high'], a['low']
+                gap_size = gap_high - gap_low
+                if gap_size >= body_size * self.min_gap_pct:
+                    fvg = self._create_fvg('bearish', gap_low, gap_high, c['time'], asset, tf, b)
+                    post_df = recent.iloc[i+1:] if i+1 < len(recent) else pd.DataFrame()
+                    if not self._is_invalidated(fvg, post_df):
+                        fvgs.append(fvg)
+
+        # Merge
+        if tf not in self.active_fvgs:
+            self.active_fvgs[tf] = fvgs
+        else:
+            self.active_fvgs[tf] = self._merge_fvgs(self.active_fvgs[tf], fvgs)
+        return [f for f in self.active_fvgs[tf] if not self._is_over_mitigated(f, df.tail(10))]
+
+    def _create_fvg(self, direction, low, high, time, asset, tf, candle_b):
+        b_ohlc = np.array([candle_b['open'], candle_b['high'], candle_b['low'], candle_b['close']])
+        std_b = np.std(b_ohlc)
+        return {
+            'direction': direction, 'fvg_low': low, 'fvg_high': high, 'formation_time': time,
+            'asset': asset, 'tf': tf, 
+            'candle_b_low': candle_b['low'], 'candle_b_high': candle_b['high'], 'candle_b_std': std_b,
+            'taps': 0, 'in_zone_candles': 0, 'is_hp': False
+        }
+
+    def _is_invalidated(self, fvg, post_df):
+        """Your rule: Bull: close < B low OR close > B high + 4*std. Flip bear."""
+        threshold = self.invalidate_std_mult * fvg['candle_b_std']
+        for _, candle in post_df.iterrows():
+            close = candle['close']
+            if fvg['direction'] == 'bullish':
+                if close < fvg['candle_b_low']:  # Breach
+                    logger.info(f"❌ Bull FVG invalidated: Close {close:.4f} < B low {fvg['candle_b_low']:.4f}")
+                    return True
+                if close > (fvg['candle_b_high'] + threshold):  # Over-extend up
+                    logger.info(f"❌ Bull FVG invalidated: Over-extend {close:.4f} > B high +4std {fvg['candle_b_high'] + threshold:.4f}")
+                    return True
+            else:  # Bearish
+                if close > fvg['candle_b_high']:  # Breach
+                    logger.info(f"❌ Bear FVG invalidated: Close {close:.4f} > B high {fvg['candle_b_high']:.4f}")
+                    return True
+                if close < (fvg['candle_b_low'] - threshold):  # Over-extend down
+                    logger.info(f"❌ Bear FVG invalidated: Over-extend {close:.4f} < B low -4std {fvg['candle_b_low'] - threshold:.4f}")
+                    return True
+        return False
+
+    def _is_over_mitigated(self, fvg, recent_df):
+        in_count = 0
+        for _, candle in recent_df.iterrows():
+            if fvg['direction'] == 'bullish' and candle['low'] <= fvg['fvg_high']:
+                in_count += 1
+            if fvg['direction'] == 'bearish' and candle['high'] >= fvg['fvg_low']:
+                in_count += 1
+        fvg['in_zone_candles'] = in_count
+        return in_count >= 6
+
+    def _merge_fvgs(self, old, new):
+        all_f = old + new
+        seen = set((f['formation_time'], round(f['fvg_low'], 4), round(f['fvg_high'], 4)) for f in all_f)
+        return [f for f in all_f if (f['formation_time'], round(f['fvg_low'], 4), round(f['fvg_high'], 4)) in seen]
+
+    def check_cross_asset_hp(self, fvgs1, fvgs2, tf):
+        for f1 in fvgs1:
+            f1['is_hp'] = True
+            for f2 in fvgs2:
+                if abs((f1['formation_time'] - f2['formation_time']).total_seconds()) < 300:
+                    f1['is_hp'] = False
+                    break
+        for f2 in fvgs2:
+            f2['is_hp'] = True
+            for f1 in fvgs1:
+                if abs((f2['formation_time'] - f1['formation_time']).total_seconds()) < 300:
+                    f2['is_hp'] = False
+                    break
+
 # ================================
 # ULTIMATE TRADING SYSTEM WITH TRIPLE CONFLUENCE
 # ================================
