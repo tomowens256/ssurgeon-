@@ -4641,32 +4641,6 @@ class UltimateTradingSystem:
         
         return False
 
-    def _check_alternative_confluences_with_fvgs(self, fvgs):
-        """Check alternative patterns when we have FVGs but no SMT confluence"""
-        logger.info(f"🔍 Checking alternative patterns with {len(fvgs)} FVGs")
-        
-        # Get feature summary
-        summary = self.feature_box.get_active_features_summary()
-        
-        # PATTERN 1: Multiple SMTs with PSP (without FVG)
-        smts_with_psp = [smt for smt in summary['active_smts'] if smt['has_psp']]
-        if len(smts_with_psp) >= 2:
-            logger.info(f"🎯 ALTERNATIVE: Multiple SMTs with PSP ({len(smts_with_psp)})")
-            # This should trigger automatically in FeatureBox
-        
-        # PATTERN 2: SMT with PSP + CRT
-        if smts_with_psp and summary['crt_count'] > 0:
-            logger.info(f"🎯 ALTERNATIVE: SMT with PSP + CRT")
-            # This should trigger automatically in FeatureBox
-        
-        # PATTERN 3: Any SMT with PSP
-        if smts_with_psp:
-            logger.info(f"🎯 ALTERNATIVE: Single SMT with PSP")
-            # This should trigger automatically in FeatureBox
-        
-        # ❌ REMOVED: No more plain FVG signals
-        logger.info(f"🔇 NOT sending plain FVG signals - waiting for SMT confluence")
-        return False
 
     
     def _classify_fvg_type(self, fvg_idea):
