@@ -175,107 +175,99 @@ def send_telegram(message, token=None, chat_id=None):
     logger.error(f"Failed to send Telegram message after {MAX_RETRIES} attempts")
     return False
 
-# def fetch_candles(instrument, timeframe, count=100, api_key=None):
-#     """Fetch candles from OANDA API - ENFORCE UTC-4"""
-#     logger.debug(f"Fetching {count} candles for {instrument} {timeframe}")
-    
-#     if not api_key:
-#         logger.error("Oanda API key missing")
-#         return pd.DataFrame()
-        
-#     try:
-#         api = API(access_token=api_key, environment="practice")
-#     except Exception as e:
-#         logger.error(f"Oanda API initialization failed: {str(e)}")
-#         return pd.DataFrame()
-        
-#     params = {
-#         "granularity": timeframe,
-#         "count": count,
-#         "price": "M",
-#         "alignmentTimezone": "America/New_York",  # UTC-4
-#         "includeCurrent": True
-#     }
-    
-#     for attempt in range(MAX_RETRIES):
-#         try:
-#             request = instruments.InstrumentsCandles(instrument=instrument, params=params)
-#             response = api.request(request)
-#             candles = response.get('candles', [])
-            
-#             logger.debug(f"Received {len(candles)} candles for {instrument}")
-            
-#             if not candles:
-#                 logger.warning(f"No candles received for {instrument} on attempt {attempt+1}")
-#                 continue
-            
-#             data = []
-#             for candle in candles:
-#                 price_data = candle.get('mid', {})
-#                 if not price_data:
-#                     continue
-                
-#                 try:
-#                     parsed_time = parse_oanda_time(candle['time'])  # Already UTC-4
-#                     is_complete = candle.get('complete', False)
-                    
-#                     data.append({
-#                         'time': parsed_time,
-#                         'open': float(price_data['o']),
-#                         'high': float(price_data['h']),
-#                         'low': float(price_data['l']),
-#                         'close': float(price_data['c']),
-#                         'volume': int(candle.get('volume', 0)),
-#                         'complete': is_complete,
-#                         'is_current': not is_complete
-#                     })
-#                 except Exception as e:
-#                     logger.error(f"Error parsing candle for {instrument}: {str(e)}")
-#                     continue
-            
-#             if not data:
-#                 logger.warning(f"Empty data after parsing for {instrument} on attempt {attempt+1}")
-#                 continue
-                
-#             df = pd.DataFrame(data).drop_duplicates(subset=['time'], keep='last')
-#             df = df.sort_values('time').reset_index(drop=True)
-            
-#             logger.info(f"Successfully fetched {len(df)} candles for {instrument} {timeframe}")
-#             return df
-            
-#         except V20Error as e:
-#             if "rate" in str(e).lower() or getattr(e, 'code', 0) in [429, 502]:
-#                 wait_time = 10 * (2 ** attempt)
-#                 logger.warning(f"Rate limit hit for {instrument}, waiting {wait_time}s: {str(e)}")
-#                 time.sleep(wait_time)
-#             else:
-#                 error_details = f"Status: {getattr(e, 'code', 'N/A')} | Message: {getattr(e, 'msg', str(e))}"
-#                 logger.error(f"Oanda API error for {instrument}: {error_details}")
-#                 break
-#         except Exception as e:
-#             logger.error(f"General error fetching candles for {instrument}: {str(e)}")
-#             time.sleep(10)
-    
-#     logger.error(f"Failed to fetch candles for {instrument} after {MAX_RETRIES} attempts")
-#     return pd.DataFrame()
+def fetch_candles(instrument, timeframe, count=100, api_key=None, since=None):
+    """Fetch candles from OANDA API - ENFORCE UTC-4, incremental since."""
+    logger.debug(f"Fetching {count} candles for {instrument} {timeframe} (since {since if since else 'now'})")
+   
+    if not api_key:
+        logger.error("Oanda API key missing")
+        return pd.DataFrame()
+       
+    try:
+        from oandapyV20 import API
+        from oandapyV20.endpoints import instruments as instruments
+        api = API(access_token=api_key, environment="practice")
+    except Exception as e:
+        logger.error(f"Oanda API initialization failed: {str(e)}")
+        return pd.DataFrame()
+       
+    params = {
+        "granularity": timeframe,
+        "count": count,
+        "price": "M",
+        "alignmentTimezone": "America/New_York",  # UTC-4
+        "includeCurrent": True
+    }
+    if since:  # Incremental: From since
+        params["from"] = since.strftime('%Y-%m-%dT%H:%M:%S')  # Oanda ISO
 
-def fetch_candles(instrument, timeframe, count, api_key, since=None):
-    """Stub for test—real: Oanda with since for delta."""
-    freq_map = {'M15': '15min', 'H1': '1H', 'H4': '4H', 'D': '1D', 'M5': '5min'}
-    freq = freq_map.get(timeframe, '5min')
-    start = since if since else datetime.now(NY_TZ) - timedelta(days=2)  # More history for test
-    times = pd.date_range(start=start, periods=count, freq=freq)
-    df = pd.DataFrame({
-        'time': times.tz_localize(NY_TZ),
-        'open': np.random.uniform(4200, 4210, count).cumsum() * 0.0001,  # Gold-like
-        'high': np.random.uniform(4200, 4210, count).cumsum() * 0.0001 + 0.001,
-        'low': np.random.uniform(4200, 4210, count).cumsum() * 0.0001 - 0.001,
-        'close': np.random.uniform(4200, 4210, count).cumsum() * 0.0001,
-        'complete': [True] * count
-    })
-    if since:
-        df = df[df['time'] > since]
-    return df.sort_values('time').reset_index(drop=True)
+    for attempt in range(MAX_RETRIES):
+        try:
+            request = instruments.InstrumentsCandles(instrument=instrument, params=params)
+            response = api.request(request)
+            candles = response.get('candles', [])
+           
+            logger.debug(f"Received {len(candles)} candles for {instrument}")
+           
+            if not candles:
+                logger.warning(f"No candles received for {instrument} on attempt {attempt+1}")
+                continue
+           
+            data = []
+            for candle in candles:
+                price_data = candle.get('mid', {})
+                if not price_data:
+                    continue
+               
+                try:
+                    parsed_time = parse_oanda_time(candle['time'])  # Already UTC-4/NY
+                    # TZ guard: Convert if aware, localize if naive
+                    if parsed_time.tzinfo is None:
+                        parsed_time = parsed_time.tz_localize(NY_TZ)
+                    else:
+                        parsed_time = parsed_time.tz_convert(NY_TZ)
+                    is_complete = candle.get('complete', False)
+                   
+                    data.append({
+                        'time': parsed_time,
+                        'open': float(price_data['o']),
+                        'high': float(price_data['h']),
+                        'low': float(price_data['l']),
+                        'close': float(price_data['c']),
+                        'volume': int(candle.get('volume', 0)),
+                        'complete': is_complete,
+                        'is_current': not is_complete
+                    })
+                except Exception as e:
+                    logger.error(f"Error parsing candle for {instrument}: {str(e)}")
+                    continue
+           
+            if not data:
+                logger.warning(f"Empty data after parsing for {instrument} on attempt {attempt+1}")
+                continue
+               
+            df = pd.DataFrame(data).drop_duplicates(subset=['time'], keep='last')
+            df = df.sort_values('time').reset_index(drop=True)
+           
+            if since:
+                df = df[df['time'] > since]  # Delta filter
+           
+            logger.info(f"Successfully fetched {len(df)} candles for {instrument} {timeframe}")
+            return df
+           
+        except Exception as e:  # V20Error or general
+            if "rate" in str(e).lower() or hasattr(e, 'code') and e.code in [429, 502]:
+                wait_time = 10 * (2 ** attempt)
+                logger.warning(f"Rate limit hit for {instrument}, waiting {wait_time}s: {str(e)}")
+                import time
+                time.sleep(wait_time)
+            else:
+                error_details = f"Status: {getattr(e, 'code', 'N/A')} | Message: {str(e)}"
+                logger.error(f"Oanda API error for {instrument}: {error_details}")
+                break
+   
+    logger.error(f"Failed to fetch candles for {instrument} after {MAX_RETRIES} attempts")
+    return pd.DataFrame()
 
 # ================================
 # ENHANCED TIMING MANAGER
