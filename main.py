@@ -199,7 +199,7 @@ def fetch_candles(instrument, timeframe, count=100, api_key=None, since=None):
         "includeCurrent": True
     }
     if since:
-        params["from"] = since.strftime('%Y-%m-%dT%H:%M:%S')  # Oanda ISO for delta
+        params["from"] = since.strftime('%Y-%m-%dT%H:%M:%S')  # Delta
 
     for attempt in range(MAX_RETRIES):
         try:
@@ -220,12 +220,11 @@ def fetch_candles(instrument, timeframe, count=100, api_key=None, since=None):
                     continue
                
                 try:
-                    parsed_time = parse_oanda_time(candle['time'])  # Your func, likely naive
-                    # TZ guard: Localize if naive, convert if aware
-                    if parsed_time.tzinfo is None:
-                        parsed_time = parsed_time.tz_localize(NY_TZ)
-                    else:
-                        parsed_time = parsed_time.tz_convert(NY_TZ)
+                    # Raw ISO to TZ-aware (fallback if parse_oanda_time flakes)
+                    raw_time = candle['time']  # E.g., '2025-12-01T18:00:00.000000000Z'
+                    parsed_time = pd.to_datetime(raw_time, utc=True).tz_convert(NY_TZ)  # UTC to NY
+                    # If your parse_oanda_time is needed, swap: parsed_time = parse_oanda_time(raw_time)
+                    # Then guard: if parsed_time.tzinfo is None: parsed_time = parsed_time.tz_localize(NY_TZ)
                     is_complete = candle.get('complete', False)
                    
                     data.append({
@@ -239,8 +238,8 @@ def fetch_candles(instrument, timeframe, count=100, api_key=None, since=None):
                         'is_current': not is_complete
                     })
                 except Exception as e:
-                    logger.error(f"Error parsing candle for {instrument}: {str(e)}")
-                    continue  # Skip bad candle, don't crash whole fetch
+                    logger.error(f"Error parsing candle for {instrument}: {str(e)} (raw time: {candle.get('time', 'N/A')})")
+                    continue  # Skip bad, keep going
            
             if not data:
                 logger.warning(f"Empty data after parsing for {instrument} on attempt {attempt+1}")
@@ -250,12 +249,12 @@ def fetch_candles(instrument, timeframe, count=100, api_key=None, since=None):
             df = df.sort_values('time').reset_index(drop=True)
            
             if since:
-                df = df[df['time'] > since]  # Delta filter
+                df = df[df['time'] > since]
            
             logger.info(f"Successfully fetched {len(df)} candles for {instrument} {timeframe}")
             return df
            
-        except Exception as e:  # Catch V20Error too
+        except Exception as e:
             import traceback
             if "rate" in str(e).lower() or (hasattr(e, 'code') and e.code in [429, 502]):
                 wait_time = 10 * (2 ** attempt)
