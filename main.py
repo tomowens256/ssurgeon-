@@ -4886,6 +4886,166 @@ class UltimateTradingSystem:
         #FVG #{idea['pair_group']} #{idea['direction']} #{idea['timeframe']}
         """
         return message
+
+    def _scan_fvg_smt_confluence(self):
+        """MAIN SCAN: Only FVG+SMT or Double SMTs"""
+        try:
+            logger.info(f"🔍 MAIN SCAN for {self.pair_group}")
+            
+            # FIRST: FVG + SMT where second swing tapped FVG
+            fvg_smt_signal = self._scan_fvg_with_smt_tap()
+            if fvg_smt_signal:
+                return True
+            
+            # SECOND: Double SMTs (Daily + 90min within 200min)
+            double_smt_signal = self._scan_double_smts_temporal()
+            if double_smt_signal:
+                return True
+            
+            logger.info(f"🔍 No qualifying setups found")
+            return False
+            
+        except Exception as e:
+            logger.error(f"❌ Error in main scan: {str(e)}", exc_info=True)
+            return False
+    
+    def _scan_fvg_with_smt_tap(self):
+        """Find FVGs where SMT's SECOND SWING traded in FVG zone"""
+        logger.info(f"🔍 SCANNING: FVG + SMT Second Swing Tap")
+        
+        # Find all FVGs
+        premium_fvgs = self._find_zone_fvgs('premium_zone', 'bearish')
+        discount_fvgs = self._find_zone_fvgs('discount_zone', 'bullish')
+        all_fvgs = premium_fvgs + discount_fvgs
+        
+        logger.info(f"🔍 Found {len(all_fvgs)} FVGs to check")
+        
+        for fvg_idea in all_fvgs:
+            # Get FVG levels
+            fvg_levels = fvg_idea['fvg_levels']
+            fvg_low = float(fvg_levels.split(' - ')[0])
+            fvg_high = float(fvg_levels.split(' - ')[1])
+            fvg_direction = fvg_idea['direction']
+            fvg_timeframe = fvg_idea['timeframe']
+            fvg_asset = fvg_idea['asset']
+            
+            # Get relevant cycles for this timeframe
+            relevant_cycles = self.timeframe_cycle_map.get(fvg_timeframe, [])
+            
+            logger.info(f"🔍 Checking FVG {fvg_idea['fvg_name']} - Cycles: {relevant_cycles}")
+            
+            # Check all active SMTs
+            for smt_key, smt_feature in self.feature_box.active_features['smt'].items():
+                if self.feature_box._is_feature_expired(smt_feature):
+                    continue
+                    
+                smt_data = smt_feature['smt_data']
+                
+                # Check direction and cycle match
+                if (smt_data['direction'] == fvg_direction and 
+                    smt_data['cycle'] in relevant_cycles):
+                    
+                    # Check if SMT's second swing traded in FVG zone
+                    tapped = self._check_smt_second_swing_in_fvg(
+                        smt_data, fvg_asset, fvg_low, fvg_high, fvg_direction
+                    )
+                    
+                    if tapped:
+                        # Check if only ONE asset tapped (HP FVG)
+                        is_hp_fvg = self._check_hp_fvg_fix(fvg_idea, fvg_asset)
+                        
+                        # Get PSP status
+                        has_psp = smt_feature['psp_data'] is not None
+                        
+                        logger.info(f"✅ FVG+SMT TAP CONFIRMED: {smt_data['cycle']} {smt_data['direction']} "
+                                   f"tapped FVG on {fvg_asset}, HP: {is_hp_fvg}, PSP: {has_psp}")
+                        
+                        # Send the signal
+                        return self._send_fvg_smt_tap_signal(
+                            fvg_idea, smt_data, has_psp, is_hp_fvg
+                        )
+        
+        return False
+    
+    def _check_smt_second_swing_in_fvg(self, smt_data, asset, fvg_low, fvg_high, direction):
+        """Check if SMT's second swing candles traded in FVG zone"""
+        try:
+            # Get the timeframe for this SMT cycle
+            cycle = smt_data['cycle']
+            timeframe = self.pair_config['timeframe_mapping'][cycle]
+            
+            # Get market data
+            data = self.market_data[asset].get(timeframe)
+            if not self._is_valid_data(data):
+                return False
+            
+            # Get SMT's second swing time (from your SMT data structure)
+            # This might be stored as 'second_swing_time' or we need to extract it
+            second_swing_time = self._extract_smt_second_swing_time(smt_data)
+            
+            if not second_swing_time:
+                logger.warning(f"⚠️ Could not extract second swing time for SMT: {smt_data}")
+                return False
+            
+            # Look for candles around the second swing time (±3 candles)
+            # Find the candle closest to the second swing time
+            time_diffs = abs(data['time'] - second_swing_time)
+            closest_idx = time_diffs.idxmin()
+            
+            # Check a window around this candle (3 candles before and after)
+            start_idx = max(0, closest_idx - 3)
+            end_idx = min(len(data) - 1, closest_idx + 3)
+            
+            logger.info(f"🔍 Checking candles {start_idx} to {end_idx} around {second_swing_time.strftime('%H:%M')}")
+            
+            for idx in range(start_idx, end_idx + 1):
+                candle = data.iloc[idx]
+                
+                # Check if this candle traded in the FVG zone
+                if direction == 'bullish':
+                    # Bullish FVG: Check if candle's LOW was ≤ fvg_high
+                    if candle['low'] <= fvg_high:
+                        logger.info(f"✅ Candle {candle['time'].strftime('%H:%M')} - Low {candle['low']:.4f} ≤ FVG high {fvg_high:.4f}")
+                        return True
+                else:  # bearish
+                    # Bearish FVG: Check if candle's HIGH was ≥ fvg_low
+                    if candle['high'] >= fvg_low:
+                        logger.info(f"✅ Candle {candle['time'].strftime('%H:%M')} - High {candle['high']:.4f} ≥ FVG low {fvg_low:.4f}")
+                        return True
+            
+            logger.info(f"❌ No candle traded in FVG zone during second swing")
+            return False
+            
+        except Exception as e:
+            logger.error(f"❌ Error checking SMT second swing in FVG: {e}")
+            return False
+    
+    def _extract_smt_second_swing_time(self, smt_data):
+        """Extract the second swing time from SMT data"""
+        # Try different possible field names
+        if 'second_swing_time' in smt_data:
+            return smt_data['second_swing_time']
+        elif 'recent_swing_time' in smt_data:
+            return smt_data['recent_swing_time']
+        elif 'timestamp' in smt_data:
+            # This is usually when the SMT was detected
+            return smt_data['timestamp']
+        
+        # If we can't find it, try to parse from signal_key
+        signal_key = smt_data.get('signal_key', '')
+        if 'q_' in signal_key and 'q_' in signal_key:
+            # Try to extract time from something like "1600_0300"
+            import re
+            times = re.findall(r'(\d{4})', signal_key)
+            if times and len(times) >= 2:
+                # The second time is the recent swing
+                hour = int(times[1][:2])
+                minute = int(times[1][2:])
+                # Create approximate time (today)
+                now = datetime.now(NY_TZ)
+                return now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        
+        return None
     
     def _send_telegram_message(self, message):
         """Send message via Telegram (using your existing method)"""
@@ -4936,6 +5096,78 @@ class UltimateTradingSystem:
                 
                 # Add to Feature Box (triggers immediate confluence check)
                 self.feature_box.add_smt(smt_signal, psp_signal)
+
+    def _check_hp_fvg_fix(self, fvg_idea, tapped_asset):
+        """Check if only ONE asset tapped the FVG"""
+        other_asset = [inst for inst in self.instruments if inst != tapped_asset][0]
+        fvg_time = fvg_idea['formation_time']
+        timeframe = fvg_idea['timeframe']
+        
+        # Get data for other asset
+        other_data = self.market_data[other_asset].get(timeframe)
+        if not self._is_valid_data(other_data):
+            return True  # If no data, assume HP
+        
+        # Check if other asset has FVG at same time (±1 candle)
+        scanner = self.fvg_analyzer.fvg_scanners[timeframe]
+        other_fvgs = scanner._detect_all_fvgs(other_data, other_asset, timeframe)
+        
+        for other_fvg in other_fvgs:
+            time_diff = abs((other_fvg['formation_time'] - fvg_time).total_seconds() / 60)
+            if time_diff < 120:  # Within 2 hours
+                return False  # Both have FVGs, not HP
+        
+        return True
+
+    def _scan_double_smts_temporal(self):
+        """Find Daily + 90min SMTs within 200 minutes, both with PSP"""
+        logger.info(f"🔍 SCANNING: Double SMTs (Daily + 90min within 200min)")
+        
+        daily_smts = []
+        ninetymin_smts = []
+        
+        # Collect SMTs with PSP
+        for smt_key, smt_feature in self.feature_box.active_features['smt'].items():
+            if self.feature_box._is_feature_expired(smt_feature):
+                continue
+                
+            if not smt_feature['psp_data']:  # Must have PSP
+                continue
+                
+            smt_data = smt_feature['smt_data']
+            
+            if smt_data['cycle'] == 'daily':
+                daily_smts.append(smt_data)
+            elif smt_data['cycle'] == '90min':
+                ninetymin_smts.append(smt_data)
+        
+        logger.info(f"🔍 Found {len(daily_smts)} daily SMTs with PSP, {len(ninetymin_smts)} 90min SMTs with PSP")
+        
+        # Check combinations
+        for daily_smt in daily_smts:
+            daily_time = daily_smt.get('timestamp')
+            daily_dir = daily_smt['direction']
+            
+            if not daily_time:
+                continue
+                
+            for ninetymin_smt in ninetymin_smts:
+                if ninetymin_smt['direction'] != daily_dir:
+                    continue
+                    
+                ninetymin_time = ninetymin_smt.get('timestamp')
+                if not ninetymin_time:
+                    continue
+                
+                time_diff = (ninetymin_time - daily_time).total_seconds() / 60
+                
+                if 0 < time_diff <= 200:
+                    logger.info(f"✅ DOUBLE SMTs: Daily at {daily_time.strftime('%H:%M')} → "
+                               f"90min at {ninetymin_time.strftime('%H:%M')} ({time_diff:.0f}min)")
+                    
+                    return self._send_double_smt_only_signal(daily_smt, ninetymin_smt, time_diff)
+        
+        return False
 
     async def _fetch_all_data(self, api_key):
         """Fetch data with PROVEN candle counts - FIXED DataFrame checks"""
@@ -5008,31 +5240,7 @@ class UltimateTradingSystem:
         }
         return proven_counts.get(timeframe, 100)
 
-    def _check_alternative_confluences(self):
-        """Check alternative confluence patterns when no FVGs found"""
-        logger.info(f"🔍 Checking alternative confluence patterns for {self.pair_group}")
-        
-        # Get feature summary
-        summary = self.feature_box.get_active_features_summary()
-        
-        # PATTERN 1: Multiple SMTs with PSP
-        smts_with_psp = [smt for smt in summary['active_smts'] if smt['has_psp']]
-        if len(smts_with_psp) >= 2:
-            logger.info(f"🎯 ALTERNATIVE: Multiple SMTs with PSP ({len(smts_with_psp)})")
-            # This should trigger automatically in FeatureBox
-        
-        # PATTERN 2: SMT with PSP + CRT
-        if smts_with_psp and summary['crt_count'] > 0:
-            logger.info(f"🎯 ALTERNATIVE: SMT with PSP + CRT")
-            # This should trigger automatically in FeatureBox
-        
-        # PATTERN 3: Any SMT with PSP
-        if smts_with_psp:
-            logger.info(f"🎯 ALTERNATIVE: Single SMT with PSP")
-            # This should trigger automatically in FeatureBox
-        
-        logger.info(f"🔍 No alternative confluences found")
-        return False
+
 
     # KEEPING ONLY ONE VERSION OF TRIAD METHODS (the better one)
     async def _analyze_triad(self, api_key):
@@ -5082,6 +5290,68 @@ class UltimateTradingSystem:
         # TODO: This method still uses signal_builder - need to update to use feature_box
         # For now, just return None since we're using feature_box approach
         return None
+
+
+    def _send_fvg_smt_tap_signal(self, fvg_idea, smt_data, has_psp, is_hp_fvg):
+        """Send FVG+SMT tap signal"""
+        # Determine strength
+        if is_hp_fvg and has_psp:
+            strength = "ULTRA STRONG"
+        elif is_hp_fvg:
+            strength = "VERY STRONG"
+        elif has_psp:
+            strength = "STRONG"
+        else:
+            strength = "GOOD"
+        
+        idea = {
+            'type': 'FVG_SMT_TAP',
+            'pair_group': self.pair_group,
+            'direction': fvg_idea['direction'],
+            'asset': fvg_idea['asset'],
+            'timeframe': fvg_idea['timeframe'],
+            'fvg_name': fvg_idea['fvg_name'],
+            'fvg_levels': fvg_idea['fvg_levels'],
+            'fvg_formation': fvg_idea['formation_time'],
+            'fib_zone': fvg_idea['fib_zone'],
+            'smt_cycle': smt_data['cycle'],
+            'smt_has_psp': has_psp,
+            'is_hp_fvg': is_hp_fvg,
+            'strength': strength,
+            'reasoning': f"{fvg_idea['fib_zone'].replace('_', ' ').title()} {fvg_idea['direction']} FVG tapped by {smt_data['cycle']} SMT",
+            'timestamp': datetime.now(NY_TZ),
+            'idea_key': f"FVG_SMT_{self.pair_group}_{datetime.now(NY_TZ).strftime('%H%M%S')}"
+        }
+        
+        return self._send_fvg_trade_idea(idea)
+    
+    def _send_double_smt_only_signal(self, daily_smt, ninetymin_smt, time_diff):
+        """Send Double SMT only signal"""
+        idea = {
+            'type': 'DOUBLE_SMT_ONLY',
+            'pair_group': self.pair_group,
+            'direction': daily_smt['direction'],
+            'daily_time': daily_smt.get('timestamp'),
+            'ninetymin_time': ninetymin_smt.get('timestamp'),
+            'time_diff_minutes': time_diff,
+            'strength': "STRONG",
+            'reasoning': f"Daily {daily_smt['direction']} SMT followed by 90min SMT within {time_diff:.0f} minutes",
+            'timestamp': datetime.now(NY_TZ),
+            'idea_key': f"DOUBLE_SMT_{self.pair_group}_{datetime.now(NY_TZ).strftime('%H%M%S')}"
+        }
+        
+        return self._send_double_smt_idea(idea)
+
+
+    def _check_alternative_confluences_with_fvgs(self, fvgs):
+        """Only double SMTs as alternative"""
+        logger.info(f"🔍 Checking double SMTs as alternative")
+        return self._scan_double_smts_temporal()
+    
+    def _check_alternative_confluences(self):
+        """Only double SMTs as alternative"""
+        logger.info(f"🔍 Checking double SMTs as alternative")
+        return self._scan_double_smts_temporal()
 
 
         
