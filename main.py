@@ -4153,6 +4153,11 @@ class UltimateTradingSystem:
         self.fvg_ideas_sent = {}
         self.smart_timing = SmartTimingSystem()
         self.last_candle_scan = {}
+        self.timeframe_cycle_map = {
+                'H4': ['weekly', 'daily'],   # Monthly removed
+                'H1': ['daily'], 
+                'M15': ['daily', '90min']
+            }
         
     def get_sleep_time(self):
         """Use smart timing instead of fixed intervals"""
