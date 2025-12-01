@@ -4263,6 +4263,21 @@ class UltimateTradingSystem:
         except Exception as e:
             logger.error(f"❌ Error fetching {instrument} {timeframe}: {str(e)}")
             return False
+
+    async def _fetch_single(self, inst: str, tf: str, count: int, since: datetime) -> None:
+        try:
+            df_new = fetch_candles(inst, tf, count, self.api_key, since)
+            if not df_new.empty:
+                group = next(g for g, c in TRADING_PAIRS.items() if inst in c['instruments'])
+                if tf not in self.market_data[group][inst]:
+                    self.market_data[group][inst][tf] = df_new
+                else:
+                    old = self.market_data[group][inst][tf]
+                    new_concat = pd.concat([old, df_new[df_new['time'] > old['time'].max() if not old.empty else pd.Series([since])]]).drop_duplicates('time').sort_values('time').reset_index(drop=True)
+                    self.market_data[group][inst][tf] = new_concat
+                self.last_timestamps[group][inst] = self.market_data[group][inst][tf]['time'].max()
+        except Exception as e:
+            logger.error(f"❌ {inst} {tf}: {e}")
     
     async def _scan_and_add_features_immediate(self):
         """Scan for features immediately when new candles are detected"""
