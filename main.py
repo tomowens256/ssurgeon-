@@ -5486,7 +5486,13 @@ class UltimateTradingSystem:
             'timestamp': datetime.now(NY_TZ),
             'idea_key': f"DOUBLE_SMT_{self.pair_group}_{primary_smt['cycle']}_{secondary_smt['cycle']}_{datetime.now(NY_TZ).strftime('%H%M%S')}"
         }
-        return self._send_double_smt_idea(idea)  # Your old sender
+        
+        # Format & send (your hook)
+        message = self._format_double_smt_message(idea)
+        if self._send_telegram_message(message):
+            logger.info(f"🚀 DOUBLE SMT SENT: {idea['primary_cycle']}-{idea['secondary_cycle']} {idea['direction']} ({span_min}min)")
+            return True
+        return False
 
     def _format_double_smt_message(self, idea):
         """Format double SMT w/criteria deets for Telegram."""
