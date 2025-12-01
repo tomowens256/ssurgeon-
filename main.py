@@ -4391,6 +4391,17 @@ class UltimateTradingSystem:
                 self.last_timestamps[group][inst] = self.market_data[group][inst][tf]['time'].max()
         except Exception as e:
             logger.error(f"❌ {inst} {tf}: {e}")
+
+    def _has_new_candle_data(self, timeframe):
+        """Check if any instrument has new candle data for this timeframe (last 2min)."""
+        for instrument in self.instruments:
+            key = f"{instrument}_{timeframe}"
+            if key in self.last_candle_scan:
+                last_scan = self.last_candle_scan[key]
+                time_since_scan = (datetime.now(NY_TZ) - last_scan).total_seconds()
+                if time_since_scan < 120:  # 2 minutes
+                    return True
+        return False
     
     async def _scan_and_add_features_immediate(self):
         """Scan for features immediately when new candles are detected"""
