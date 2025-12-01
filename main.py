@@ -5469,22 +5469,24 @@ class UltimateTradingSystem:
         
         return self._send_fvg_trade_idea(idea)
     
-    def _send_double_smt_only_signal(self, daily_smt, ninetymin_smt, time_diff):
-        """Send Double SMT only signal"""
+    def _send_double_smt_only_signal(self, primary_smt, secondary_smt, span_min):
+        """Send double SMT signal w/criteria deets."""
         idea = {
-            'type': 'DOUBLE_SMT_ONLY',
+            'type': 'DOUBLE_SMT',
             'pair_group': self.pair_group,
-            'direction': daily_smt['direction'],
-            'daily_time': daily_smt.get('timestamp'),
-            'ninetymin_time': ninetymin_smt.get('timestamp'),
-            'time_diff_minutes': time_diff,
+            'direction': primary_smt['direction'],
+            'primary_cycle': primary_smt['cycle'],
+            'secondary_cycle': secondary_smt['cycle'],
+            'primary_time': primary_smt.get('second_swing_time', primary_smt['formation_time']),
+            'secondary_time': secondary_smt.get('second_swing_time', secondary_smt['formation_time']),
+            'span_minutes': span_min,
+            'psp_confirmed': True,  # Both have
             'strength': "STRONG",
-            'reasoning': f"Daily {daily_smt['direction']} SMT followed by 90min SMT within {time_diff:.0f} minutes",
+            'reasoning': f"{primary_smt['cycle']} {primary_smt['direction']} SMT + {secondary_smt['cycle']} confirm (span: {span_min}min from 2nd swings)",
             'timestamp': datetime.now(NY_TZ),
-            'idea_key': f"DOUBLE_SMT_{self.pair_group}_{datetime.now(NY_TZ).strftime('%H%M%S')}"
+            'idea_key': f"DOUBLE_SMT_{self.pair_group}_{primary_smt['cycle']}_{secondary_smt['cycle']}_{datetime.now(NY_TZ).strftime('%H%M%S')}"
         }
-        
-        return self._send_double_smt_idea(idea)
+        return self._send_double_smt_idea(idea)  # Your old sender
 
 
     def _check_alternative_confluences_with_fvgs(self, fvgs):
