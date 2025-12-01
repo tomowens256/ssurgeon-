@@ -4431,29 +4431,29 @@ class UltimateTradingSystem:
                         self.feature_box.add_smt(smt_signal, psp_signal)
     
     def _scan_fvg_smt_confluence(self):
-        """Scan FVG + SMT taps (M15/H1/H4/D only, PSP req, HP cross-check)."""
+        """FVG + SMT tap (dir match, second swing in zone) + PSP req. Fallback: Double SMT w/PSP."""
         try:
             logger.info(f"🔍 FVG + SMT TAP SCAN for {self.pair_group}")
-            fvg_detector = FVGDetector()  # Your new class
+            fvg_detector = FVGDetector()  # Your class
             fvgs_per_asset = {inst: [] for inst in self.instruments}
-            smts = []  # Collect all SMTs per TF/cycle
+            smts = []  # All SMTs per TF/cycle
     
-            # FVG scan per TF (your TFs only)
+            # Pure FVG scan (no zones—bull/bear dir only, your TFs)
             for tf in ['M15', 'H1', 'H4', 'D']:
                 for inst in self.instruments:
                     data = self.market_data[inst].get(tf)
                     if data is not None and not data.empty:
                         new_fvgs = fvg_detector.scan_tf(data, tf, inst)
                         fvgs_per_asset[inst].extend(new_fvgs)
-                        logger.info(f"🔍 {inst} {tf}: Found {len(new_fvgs)} FVGs")
+                        logger.info(f"🔍 {inst} {tf}: Found {len(new_fvgs)} FVGs ({[f['direction'] for f in new_fvgs]})")
     
-                # Cross HP check per TF
+                # HP unicorn check per TF
                 if len(self.instruments) >= 2:
                     fvg_detector.check_cross_asset_hp(fvgs_per_asset[self.instruments[0]], fvgs_per_asset[self.instruments[1]], tf)
     
-            # SMT scan per cycle/TF (your mapping)
+            # SMT scan per cycle/TF
             for cycle, cycle_tf in self.pair_config['timeframe_mapping'].items():
-                if cycle_tf not in ['M15', 'H1', 'H4', 'D']:  # Skip if not FVG TF
+                if cycle_tf not in ['M15', 'H1', 'H4', 'D']:  # Your TFs only
                     continue
                 asset1_data = self.market_data[self.instruments[0]].get(cycle_tf)
                 asset2_data = self.market_data[self.instruments[1]].get(cycle_tf)
@@ -4468,7 +4468,7 @@ class UltimateTradingSystem:
                     smt_signal['tf'] = cycle_tf
                     logger.info(f"🎯 SMT {cycle} {smt_signal['direction']} + PSP: {smt_signal['psp_confirmed']}")
     
-                    # Tap check/match to FVG (your method, loop assets)
+                    # Tap/match to FVG (dir + second swing in zone)
                     for inst in self.instruments:
                         for fvg in [f for f in fvgs_per_asset[inst] if f['tf'] == cycle_tf and f['direction'] == smt_signal['direction']]:
                             fvg_low = fvg['fvg_low']
@@ -4477,14 +4477,14 @@ class UltimateTradingSystem:
                             tapped = self._check_smt_second_swing_in_fvg(smt_signal, inst, fvg_low, fvg_high, direction)
                             if tapped and smt_signal['psp_confirmed']:
                                 is_hp_fvg = fvg['is_hp']
-                                logger.info(f"✅ TAP + PSP: {smt_signal['cycle']} {smt_signal['direction']} on {inst} FVG")
-                                return self._send_fvg_smt_tap_signal(fvg, smt_signal, smt_signal['psp_confirmed'], is_hp_fvg)
+                                logger.info(f"✅ BREAD & BUTTER: FVG + SMT tap + PSP on {inst} {tf}")
+                                return self._send_fvg_smt_tap_signal(fvg, smt_signal, True, is_hp_fvg)
     
-                    smts.append(smt_signal)  # Collect if no match yet
+                    smts.append(smt_signal)  # Collect for doubles if no match
     
-            # No match? Fallback (your old, or double SMT if kept)
+            # Fallback: Double SMT (daily + 90min <200min, both PSP—no FVG)
             logger.info(f"🔍 No FVG+SMT+PSP - checking doubles")
-            return self._scan_double_smts_temporal()  # Or whatever alternative
+            return self._scan_double_smts_temporal()
     
         except Exception as e:
             logger.error(f"❌ FVG+SMT scan: {str(e)}", exc_info=True)
