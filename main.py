@@ -4471,30 +4471,7 @@ class UltimateTradingSystem:
         
         return idea
     
-    def _create_strong_fvg_smt_idea(self, fvg_idea, smt_confluence):
-        """Create STRONG FVG + SMT with PSP idea"""
-        best_smt = smt_confluence['smts'][0]  # Take the first matching SMT
-        
-        idea = {
-            'type': 'STRONG_FVG_SMT_PSP',
-            'pair_group': self.pair_group,
-            'direction': fvg_idea['direction'],
-            'asset': fvg_idea['asset'],
-            'timeframe': fvg_idea['timeframe'],
-            'fvg_name': fvg_idea['fvg_name'],
-            'fvg_type': fvg_idea['fvg_type'],
-            'fvg_levels': fvg_idea['fvg_levels'],
-            'formation_time': fvg_idea['formation_time'],
-            'fib_zone': fvg_idea['fib_zone'],
-            'smt_cycle': best_smt['smt_data']['cycle'],
-            'smt_has_psp': best_smt['has_psp'],
-            'confluence_strength': 'STRONG',
-            'reasoning': self._generate_strong_reasoning(fvg_idea, smt_confluence),
-            'timestamp': datetime.now(NY_TZ),
-            'idea_key': f"STRONG_{self.pair_group}_{fvg_idea['asset']}_{fvg_idea['timeframe']}_{datetime.now(NY_TZ).strftime('%H%M')}"
-        }
-        
-        return idea
+
 
     
     def _generate_ultimate_reasoning(self, fvg_idea, smt_confluence):
