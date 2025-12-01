@@ -5260,53 +5260,57 @@ class UltimateTradingSystem:
         return True
 
     def _scan_double_smts_temporal(self):
-        """Find Daily + 90min SMTs within 200 minutes, both with PSP"""
-        logger.info(f"🔍 SCANNING: Double SMTs (Daily + 90min within 200min)")
+        """Double SMT (pairs w/PSP, dir match, span from second swing): daily-daily 6hr, weekly-daily 1D, daily-90min 200min."""
+        logger.info(f"🔍 SCANNING: Double SMTs (hierarchy + span from 2nd swing)")
         
+        # Get active SMTs w/PSP
         daily_smts = []
+        weekly_smts = []
         ninetymin_smts = []
-        
-        # Collect SMTs with PSP
         for smt_key, smt_feature in self.feature_box.active_features['smt'].items():
             if self.feature_box._is_feature_expired(smt_feature):
                 continue
-                
-            if not smt_feature['psp_data']:  # Must have PSP
+            if not smt_feature['psp_data']:  # PSP req
                 continue
-                
             smt_data = smt_feature['smt_data']
-            
+            second_swing = smt_data.get('second_swing_time', smt_data.get('formation_time', datetime.now(NY_TZ)))  # Fallback
             if smt_data['cycle'] == 'daily':
-                daily_smts.append(smt_data)
+                daily_smts.append((smt_data, second_swing))
+            elif smt_data['cycle'] == 'weekly':
+                weekly_smts.append((smt_data, second_swing))
             elif smt_data['cycle'] == '90min':
-                ninetymin_smts.append(smt_data)
+                ninetymin_smts.append((smt_data, second_swing))
         
-        logger.info(f"🔍 Found {len(daily_smts)} daily SMTs with PSP, {len(ninetymin_smts)} 90min SMTs with PSP")
+        logger.info(f"🔍 Found {len(daily_smts)} daily, {len(weekly_smts)} weekly, {len(ninetymin_smts)} 90min SMTs w/PSP")
         
-        # Check combinations
-        for daily_smt in daily_smts:
-            daily_time = daily_smt.get('timestamp')
-            daily_dir = daily_smt['direction']
-            
-            if not daily_time:
-                continue
-                
-            for ninetymin_smt in ninetymin_smts:
-                if ninetymin_smt['direction'] != daily_dir:
+        # Check pairs
+        pairs_checked = 0
+        for primary, primary_swing in daily_smts + weekly_smts:  # Primary HTF
+            primary_dir = primary['direction']
+            for secondary, secondary_swing in daily_smts + weekly_smts + ninetymin_smts:
+                if secondary == primary:  # No self
                     continue
-                    
-                ninetymin_time = ninetymin_smt.get('timestamp')
-                if not ninetymin_time:
+                secondary_dir = secondary['direction']
+                if primary_dir != secondary_dir:  # Dir match
                     continue
                 
-                time_diff = (ninetymin_time - daily_time).total_seconds() / 60
+                span_min = abs((secondary_swing - primary_swing).total_seconds() / 60)
+                pair_span = None
+                if primary['cycle'] == 'daily' and secondary['cycle'] == 'daily':
+                    pair_span = 360  # 6hr
+                elif primary['cycle'] == 'weekly' and secondary['cycle'] == 'daily':
+                    pair_span = 1440  # 1D
+                elif primary['cycle'] == 'daily' and secondary['cycle'] == '90min':
+                    pair_span = 200  # Your OG
+                else:
+                    continue  # Skip other combos
                 
-                if 0 < time_diff <= 200:
-                    logger.info(f"✅ DOUBLE SMTs: Daily at {daily_time.strftime('%H:%M')} → "
-                               f"90min at {ninetymin_time.strftime('%H:%M')} ({time_diff:.0f}min)")
-                    
-                    return self._send_double_smt_only_signal(daily_smt, ninetymin_smt, time_diff)
+                if 0 < span_min <= pair_span:
+                    pairs_checked += 1
+                    logger.info(f"✅ DOUBLE SMT: {primary['cycle']} at {primary_swing.strftime('%H:%M')} → {secondary['cycle']} at {secondary_swing.strftime('%H:%M')} ({span_min:.0f}min span)")
+                    return self._send_double_smt_only_signal(primary, secondary, span_min)
         
+        logger.info(f"🔍 Checked {pairs_checked} pairs - no doubles")
         return False
 
     async def _fetch_all_data(self, api_key):
