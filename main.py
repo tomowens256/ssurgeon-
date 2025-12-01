@@ -4151,12 +4151,12 @@ class UltimateTradingSystem:
         logger.info(f"🎯 FVG Analyzer initialized for {pair_group}")
         self.fvg_analyzer = EnhancedFVGAnalyzer(self.timing_manager, self.feature_box)
         self.fvg_ideas_sent = {}
-        self.timing_system = SmartTimingSystem()
+        self.smart_timing = SmartTimingSystem()
         self.last_candle_scan = {}
         
     def get_sleep_time(self):
         """Use smart timing instead of fixed intervals"""
-        return self.timing_system.get_smart_sleep_time()
+        return self.smart_timing.get_smart_sleep_time()
     
     async def run_ultimate_analysis(self, api_key):
         """Run analysis triggered by new candle formation"""
@@ -4165,7 +4165,7 @@ class UltimateTradingSystem:
             self.feature_box.cleanup_expired_features()
             
             # Fetch data (this will get the new candle)
-            await self._fetch_all_data(api_key)
+            await self._fetch_all_data_parallel(api_key)
             
             # Check if we have new candles that warrant immediate scanning
             new_candles_detected = self._check_new_candles()
@@ -4174,7 +4174,7 @@ class UltimateTradingSystem:
                 logger.info(f"🎯 NEW CANDLES DETECTED - Running immediate analysis")
                 
                 # Scan for new features and add to Feature Box
-                await self._scan_and_add_features()
+                await self._scan_and_add_features_immediate()
                 
                 # Scan for FVG-SMT confluence
                 fvg_idea_sent = self._scan_fvg_smt_confluence()
@@ -4216,6 +4216,86 @@ class UltimateTradingSystem:
                     logger.info(f"🕯️ NEW CANDLE: {instrument} {timeframe} at {latest_candle_time.strftime('%H:%M')}")
         
         return new_candles
+    
+    async def _fetch_all_data_parallel(self, api_key):
+        """Fetch data in parallel for maximum speed when new candles form"""
+        tasks = []
+        required_timeframes = list(self.pair_config['timeframe_mapping'].values())
+        
+        # Add CRT timeframes
+        for tf in CRT_TIMEFRAMES:
+            if tf not in required_timeframes:
+                required_timeframes.append(tf)
+        
+        # Create all fetch tasks
+        for instrument in self.instruments:
+            for tf in required_timeframes:
+                count = self._get_proven_count(tf)
+                task = asyncio.create_task(
+                    self._fetch_single_instrument_data(instrument, tf, count, api_key)
+                )
+                tasks.append(task)
+        
+        # Wait for ALL data with timeout
+        try:
+            await asyncio.wait_for(asyncio.gather(*tasks), timeout=30.0)
+            logger.info(f"✅ Parallel data fetch completed for {self.pair_group}")
+        except asyncio.TimeoutError:
+            logger.warning(f"⚠️ Parallel data fetch timeout for {self.pair_group}")
+    
+    async def _fetch_single_instrument_data(self, instrument, timeframe, count, api_key):
+        """Fetch data for single instrument (used in parallel)"""
+        try:
+            df = await asyncio.get_event_loop().run_in_executor(
+                None, fetch_candles, instrument, timeframe, count, api_key
+            )
+            
+            if df is not None and isinstance(df, pd.DataFrame) and not df.empty:
+                self.market_data[instrument][timeframe] = df
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"❌ Error fetching {instrument} {timeframe}: {str(e)}")
+            return False
+    
+    async def _scan_and_add_features_immediate(self):
+        """Scan for features immediately when new candles are detected"""
+        cycles = ['monthly', 'weekly', 'daily', '90min']
+        
+        for cycle in cycles:
+            timeframe = self.pair_config['timeframe_mapping'][cycle]
+            
+            # Check if we have new data for this cycle's timeframe
+            if self._has_new_candle_data(timeframe):
+                logger.info(f"🔍 Immediate scan: {cycle} cycle ({timeframe})")
+                
+                asset1_data = self.market_data[self.instruments[0]].get(timeframe)
+                asset2_data = self.market_data[self.instruments[1]].get(timeframe)
+                
+                if (asset1_data is not None and isinstance(asset1_data, pd.DataFrame) and not asset1_data.empty and
+                    asset2_data is not None and isinstance(asset2_data, pd.DataFrame) and not asset2_data.empty):
+                    
+                    logger.info(f"🔍 Scanning {cycle} cycle ({timeframe}) for SMT...")
+                    smt_signal = self.smt_detector.detect_smt_all_cycles(asset1_data, asset2_data, cycle)
+                    
+                    if smt_signal:
+                        # Check for PSP immediately
+                        psp_signal = self.smt_detector.check_psp_for_smt(smt_signal, asset1_data, asset2_data)
+                        
+                        # Add to Feature Box (triggers immediate confluence check)
+                        self.feature_box.add_smt(smt_signal, psp_signal)
+    
+    def _has_new_candle_data(self, timeframe):
+        """Check if any instrument has new candle data for this timeframe"""
+        for instrument in self.instruments:
+            key = f"{instrument}_{timeframe}"
+            if key in self.last_candle_scan:
+                # Check if this was recently updated (last 2 minutes)
+                last_scan = self.last_candle_scan[key]
+                time_since_scan = (datetime.now(NY_TZ) - last_scan).total_seconds()
+                if time_since_scan < 120:  # 2 minutes
+                    return True
+        return False
     
     def _scan_fvg_smt_confluence(self):
         """COMPLETE FVG STRATEGY: Find FVGs in premium/discount zones with SMT confluence"""
