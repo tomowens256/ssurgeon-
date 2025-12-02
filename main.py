@@ -5144,51 +5144,57 @@ class UltimateTradingSystem:
         return False
     
     def _check_smt_second_swing_in_fvg(self, smt_data, asset, fvg_low, fvg_high, direction, fvg_formation=None):
-        """Check SMT 2nd swing taps FVG zone (post-formation candles only)."""
+        """Check SMT 2nd swing taps FVG zone (post-formation, extract swing low/high)."""
         try:
             cycle = smt_data['cycle']
             timeframe = self.pair_config['timeframe_mapping'][cycle]
             data = self.market_data[asset].get(timeframe)
             if not self._is_valid_data(data):
+                logger.info(f"TRACE TAP SKIP: Invalid data {asset} {timeframe}")
                 return False
             
-            second_swing_time = self._extract_smt_second_swing_time(smt_data)
+            # Extract 2nd swing from smt_data['swing_times'] (curr swing)
+            swing_times = smt_data.get('swing_times', {})
+            second_swing_time = swing_times.get('asset1_curr', {}).get('time', smt_data.get('formation_time'))
+            second_swing_price = swing_times.get('asset1_curr', {}).get('price', data['close'].iloc[-1])  # Fallback last close
             if not second_swing_time:
-                logger.warning(f"⚠️ No second swing time for SMT: {smt_data}")
+                logger.warning(f"TRACE TAP SKIP: No second swing time in {smt_data['signal_key']}")
                 return False
             
-            # Post-formation filter (default now if None)
+            logger.info(f"TRACE TAP {smt_data['cycle']} on {asset} FVG: 2nd swing {second_swing_time.strftime('%H:%M')} price {second_swing_price:.4f}")
+            
+            # Post-formation filter
             if fvg_formation:
-                data_post = data[data['time'] >= fvg_formation]  # >= for edge
-                logger.info(f"🔍 Post-FVG tap check: {len(data_post)} candles from {fvg_formation}")
+                data_post = data[data['time'] >= fvg_formation]
+                logger.info(f"TRACE TAP: {len(data_post)} post-FVG candles from {fvg_formation}")
                 if data_post.empty:
-                    logger.info(f"❌ No post-FVG data for tap")
+                    logger.info(f"TRACE TAP SKIP: No post-FVG data")
                     return False
             else:
-                data_post = data  # Fallback old
+                data_post = data
             
-            # Your old lookback on data_post
+            # Lookback window around second swing
             time_diffs = abs(data_post['time'] - second_swing_time)
             closest_idx = time_diffs.idxmin()
             start_idx = max(0, closest_idx - 3)
             end_idx = min(len(data_post) - 1, closest_idx + 3)
             
-            logger.info(f"🔍 Checking {start_idx}-{end_idx} around {second_swing_time.strftime('%H:%M')}")
+            logger.info(f"TRACE TAP window: {start_idx}-{end_idx} around {second_swing_time.strftime('%H:%M')}")
             for idx in range(start_idx, end_idx + 1):
                 candle = data_post.iloc[idx]
-                logger.info(f"🔍 TAP DEBUG: Candle {candle['time'].strftime('%H:%M')} low/high {candle['low']:.4f}/{candle['high']:.4f} vs zone {fvg_low}-{fvg_high} ({direction})")
+                logger.info(f"TRACE TAP candle {candle['time'].strftime('%H:%M')}: low/high {candle['low']:.4f}/{candle['high']:.4f} vs zone {fvg_low}-{fvg_high} ({direction})")
                 if direction == 'bullish' and candle['low'] <= fvg_high:
-                    logger.info(f"✅ TAP HIT: Low {candle['low']:.4f} <= high {fvg_high:.4f}")
+                    logger.info(f"✅ TRACE TAP HIT: Low {candle['low']:.4f} <= high {fvg_high:.4f}")
                     return True
                 if direction == 'bearish' and candle['high'] >= fvg_low:
-                    logger.info(f"✅ TAP HIT: High {candle['high']:.4f} >= low {fvg_low:.4f}")
+                    logger.info(f"✅ TRACE TAP HIT: High {candle['high']:.4f} >= low {fvg_low:.4f}")
                     return True
             
-            logger.info(f"❌ No tap in window")
+            logger.info(f"TRACE TAP MISS: No entry in window")
             return False
             
         except Exception as e:
-            logger.error(f"❌ Tap check error: {e}")
+            logger.error(f"TRACE TAP ERROR: {e}")
             return False
     def _extract_smt_second_swing_time(self, smt_data):
         """Extract the second swing time from SMT data"""
