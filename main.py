@@ -4176,15 +4176,15 @@ class FVGDetector:
             self.active_fvgs[tf] = fvgs
         else:
             self.active_fvgs[tf] = self._merge_fvgs(self.active_fvgs[tf], fvgs)
-        # Prune invalidated/over-mitigated (no expiry—live till breach)
+        
+        # Prune invalidated/over-mitigated (post-formation only, no expiry)
         active = []
         for f in self.active_fvgs.get(tf, []):
-            # Check invalidation on full post-formation DF
             post_df = df[df['time'] > f['formation_time']]
-            if not self._is_invalidated(f, post_df) and not self._is_over_mitigated(f, post_df.tail(10)):
+            if not self._is_invalidated(f, post_df) and not self._is_over_mitigated(f, post_df):
                 active.append(f)
         self.active_fvgs[tf] = active
-        logger.info(f"🔍 Active FVGs {tf}: {len(active)} (pruned {len(self.active_fvgs.get(tf, [])) - len(active)} invalidated)")
+        logger.info(f"🔍 Active FVGs {tf}: {len(active)} (scanned {len(df[df['time'] > min([f['formation_time'] for f in self.active_fvgs.get(tf, [])], default=datetime.min.replace(tzinfo=NY_TZ)))} post-formation candles)")
         return active
 
     def _create_fvg(self, direction, low, high, time, asset, tf, candle_b):
@@ -4219,14 +4219,21 @@ class FVGDetector:
         return False
 
     def _is_over_mitigated(self, fvg, recent_df):
-        """6+ candles in zone post-formation."""
+        """6+ candles in zone *post-formation* only."""
+        if recent_df is None or recent_df.empty:
+            logger.warning(f"⚠️ Over-mit check: Empty DF for {fvg['asset']} {fvg['tf']}")
+            return False
+        
+        # Filter post-formation if not already
+        post_df = recent_df[recent_df['time'] > fvg['formation_time']] if 'time' in recent_df.columns else recent_df
         in_count = 0
-        for _, candle in recent_df.iterrows():
+        for _, candle in post_df.iterrows():
             if fvg['direction'] == 'bullish' and candle['low'] <= fvg['fvg_high']:
                 in_count += 1
             if fvg['direction'] == 'bearish' and candle['high'] >= fvg['fvg_low']:
                 in_count += 1
         fvg['in_zone_candles'] = in_count
+        logger.info(f"🔍 Over-mit {fvg['asset']} {fvg['tf']}: {in_count} post-formation in-zone (threshold 6)")
         return in_count >= 6
 
     def _merge_fvgs(self, old, new):
