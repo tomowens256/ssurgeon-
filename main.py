@@ -5455,6 +5455,7 @@ class UltimateTradingSystem:
             'timeframe': fvg_idea.get('tf', fvg_idea.get('timeframe', 'Unknown')),  # Fix from before
             'fvg_name': fvg_idea.get('fvg_name', f"{fvg_idea['asset']}_{fvg_idea.get('tf', 'Unknown')}_{fvg_idea['formation_time'].strftime('%m%d%H%M')}"),
             'fvg_levels': f"{fvg_idea['fvg_low']:.4f} - {fvg_idea['fvg_high']:.4f}",
+            'fvg_type': fvg_idea.get('classification', 'regular_fvg').replace('_', ' ').title(), 
             'formation_time': fvg_idea['formation_time'],  # ADD THIS LINE - Fix KeyError
             'fib_zone': '',  # No zones
             'smt_cycle': smt_data['cycle'],
