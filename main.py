@@ -4219,6 +4219,7 @@ class FVGDetector:
         return False
 
     def _is_over_mitigated(self, fvg, recent_df):
+        """6+ candles in zone post-formation."""
         in_count = 0
         for _, candle in recent_df.iterrows():
             if fvg['direction'] == 'bullish' and candle['low'] <= fvg['fvg_high']:
