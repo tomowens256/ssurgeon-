@@ -5437,7 +5437,7 @@ class UltimateTradingSystem:
 
     def _send_fvg_smt_tap_signal(self, fvg_idea, smt_data, has_psp, is_hp_fvg):
         """Send FVG+SMT tap w/criteria deets."""
-        # Determine strength
+        # Determine strength (your old)
         if is_hp_fvg and has_psp:
             strength = "ULTRA STRONG"
         elif is_hp_fvg:
@@ -5452,21 +5452,22 @@ class UltimateTradingSystem:
             'pair_group': self.pair_group,
             'direction': fvg_idea['direction'],
             'asset': fvg_idea['asset'],
-            'timeframe': fvg_idea.get('tf', fvg_idea.get('timeframe', 'Unknown')),  # Fix key
-            'fvg_name': fvg_idea['fvg_name'] if 'fvg_name' in fvg_idea else f"{fvg_idea['asset']}_{fvg_idea['tf']}_{fvg_idea['formation_time'].strftime('%m%d%H%M')}",
+            'timeframe': fvg_idea.get('tf', fvg_idea.get('timeframe', 'Unknown')),  # Fix from before
+            'fvg_name': fvg_idea.get('fvg_name', f"{fvg_idea['asset']}_{fvg_idea.get('tf', 'Unknown')}_{fvg_idea['formation_time'].strftime('%m%d%H%M')}"),
             'fvg_levels': f"{fvg_idea['fvg_low']:.4f} - {fvg_idea['fvg_high']:.4f}",
-            'fvg_formation': fvg_idea['formation_time'],
+            'formation_time': fvg_idea['formation_time'],  # ADD THIS LINE - Fix KeyError
             'fib_zone': '',  # No zones
             'smt_cycle': smt_data['cycle'],
             'smt_has_psp': has_psp,
             'is_hp_fvg': is_hp_fvg,
             'strength': strength,
-            'reasoning': f"{fvg_idea['direction']} FVG (formed {fvg_idea['formation_time'].strftime('%H:%M')}) tapped by {smt_data['cycle']} SMT 2nd swing + PSP confirmed",
+            'reasoning': f"{fvg_idea['direction']} FVG (formed {fvg_idea['formation_time'].strftime('%H:%M')}, zone {fvg_idea['fvg_low']:.4f}-{fvg_idea['fvg_high']:.4f}) tapped by {smt_data['cycle']} SMT 2nd swing ({smt_data['formation_time'].strftime('%H:%M')}) + PSP confirmed",
             'timestamp': datetime.now(NY_TZ),
-            'idea_key': f"FVG_SMT_{self.pair_group}_{datetime.now(NY_TZ).strftime('%H%M%S')}"
+            'idea_key': f"FVG_SMT_{self.pair_group}_{smt_data['cycle']}_{datetime.now(NY_TZ).strftime('%H%M%S')}"
         }
        
-        return self._send_fvg_trade_idea(idea)  # Your sender
+        # Send (your old)
+        return self._send_fvg_trade_idea(idea)
     
     def _send_double_smt_only_signal(self, primary_smt, secondary_smt, span_min):
         """Send double SMT signal w/criteria deets."""
