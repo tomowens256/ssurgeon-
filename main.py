@@ -1167,8 +1167,10 @@ class UltimateSMTDetector:
             for smt_result in results:
     
                 # DUPLICATE PROTECTION
+                logger.info(f"TRACE DUPE PRE: {smt_result['signal_key']} candle {smt_result['candle_time']}, last {self.last_smt_candle}")
                 if self._is_duplicate_signal(smt_result):
                     continue
+                    
     
                 signal_key = smt_result['signal_key']
                 candle_time = smt_result['candle_time']
