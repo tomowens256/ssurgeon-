@@ -2578,8 +2578,17 @@ class RealTimeFeatureBox:
         return False
     
     def _check_smt_psp_confluence_global(self):
-        """Check SMT+PSP with ENHANCED CRITERIA"""
+        """SMT+PSP w/FVG tap priority (abort if no FVG match)."""
         signals_sent = 0
+        
+        fvg_detector = FVGDetector()  # Quick scan
+        fvgs_per_asset = {inst: [] for inst in self.instruments}
+        for tf in ['M15', 'H1', 'H4', 'D']:
+            for inst in self.instruments:
+                data = self.market_data[inst].get(tf)  # From system
+                if data is not None and not data.empty:
+                    new_fvgs = fvg_detector.scan_tf(data, tf, inst)
+                    fvgs_per_asset[inst].extend(new_fvgs)
         
         for smt_key, smt_feature in list(self.active_features['smt'].items()):
             if self._is_feature_expired(smt_feature):
@@ -2587,15 +2596,30 @@ class RealTimeFeatureBox:
                 
             smt_data = smt_feature['smt_data']
             
-            # Check if this SMT has PSP
             if smt_feature['psp_data']:
-                # ENHANCED: For 90min SMT+PSP, require daily SMT in same direction
+                # FVG priority: Check tap first
+                tapped = False
+                for inst in self.instruments:
+                    for fvg in [f for f in fvgs_per_asset[inst] if f['tf'] == smt_data['timeframe'] and f['direction'] == smt_data['direction']]:
+                        if self._check_smt_second_swing_in_fvg(smt_data, inst, fvg['fvg_low'], fvg['fvg_high'], smt_data['direction']):
+                            tapped = True
+                            break
+                    if tapped:
+                        break
+                
+                if tapped:
+                    # FVG+SMT+PSP = bread, send enhanced
+                    logger.info(f"🚀 BREAD & BUTTER: SMT+PSP tap in FVG {smt_data['cycle']} {smt_data['direction']}")
+                    # Your send with FVG deets (modify _send_immediate_signal to include fvg)
+                    return True  # Or call enhanced send
+                
+                # ENHANCED: 90min req daily
                 if smt_data['cycle'] == '90min':
                     if not self._has_daily_smt_confirmation(smt_data['direction']):
-                        logger.info(f"⚠️ 90min SMT+PSP requires daily confirmation - skipping")
+                        logger.info(f"⚠️ 90min SMT+PSP requires daily - skipping")
                         continue
                 
-                # Check duplicate prevention
+                # Dupe check
                 signal_key = f"SMT_PSP_PRE_{smt_key}"
                 if self.timing_manager.is_duplicate_signal(signal_key, self.pair_group, cooldown_minutes=240):
                     continue
@@ -2612,8 +2636,6 @@ class RealTimeFeatureBox:
                 }
                 
                 if self._send_immediate_signal(signal_data):
-                    # DON'T remove the SMT - keep it for other confluence checks
-                    logger.info(f"✅ SMT+PSP signal sent - SMT kept for further confluence")
                     signals_sent += 1
         
         return signals_sent > 0
