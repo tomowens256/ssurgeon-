@@ -4991,25 +4991,75 @@ class UltimateTradingSystem:
         return message
 
     def _scan_fvg_smt_confluence(self):
-        """MAIN SCAN: Only FVG+SMT or Double SMTs"""
+        """Pure FVG + SMT tap (dir match, second swing in zone) + PSP req. Fallback: Double SMT w/PSP."""
         try:
-            logger.info(f"🔍 MAIN SCAN for {self.pair_group}")
-            
-            # FIRST: FVG + SMT where second swing tapped FVG
-            fvg_smt_signal = self._scan_fvg_with_smt_tap()
-            if fvg_smt_signal:
-                return True
-            
-            # SECOND: Double SMTs (Daily + 90min within 200min)
-            double_smt_signal = self._scan_double_smts_temporal()
-            if double_smt_signal:
-                return True
-            
-            logger.info(f"🔍 No qualifying setups found")
-            return False
-            
+            logger.info(f"🔍 PURE FVG + SMT TAP SCAN for {self.pair_group}")
+            fvg_detector = FVGDetector()  # Your class
+            fvgs_per_asset = {inst: [] for inst in self.instruments}
+            smts = []  # All SMTs
+    
+            # Raw FVG scan (no zones—just dir)
+            for tf in ['M15', 'H1', 'H4', 'D']:
+                for inst in self.instruments:
+                    data = self.market_data[inst].get(tf)
+                    if data is not None and not data.empty:
+                        new_fvgs = fvg_detector.scan_tf(data, tf, inst)
+                        fvgs_per_asset[inst].extend(new_fvgs)
+                        logger.info(f"🔍 {inst} {tf}: Found {len(new_fvgs)} FVGs ({[f['direction'] for f in new_fvgs]})")
+    
+                # HP unicorn check
+                if len(self.instruments) >= 2:
+                    fvg_detector.check_cross_asset_hp(fvgs_per_asset[self.instruments[0]], fvgs_per_asset[self.instruments[1]], tf)
+    
+            logger.info(f"🔍 Total FVGs: {sum(len(v) for v in fvgs_per_asset.values())}")
+    
+            # SMT scan per cycle/TF
+            for cycle, cycle_tf in self.pair_config['timeframe_mapping'].items():
+                if cycle_tf not in ['M15', 'H1', 'H4', 'D']:
+                    continue
+                asset1_data = self.market_data[self.instruments[0]].get(cycle_tf)
+                asset2_data = self.market_data[self.instruments[1]].get(cycle_tf)
+                if asset1_data is None or asset2_data is None or asset1_data.empty or asset2_data.empty:
+                    logger.warning(f"⚠️ Skip {cycle} {cycle_tf}: No data")
+                    continue
+    
+                smt_signal = self.smt_detector.detect_smt_all_cycles(asset1_data, asset2_data, cycle)
+                if smt_signal:
+                    psp = self.smt_detector.check_psp_for_smt(smt_signal, asset1_data, asset2_data)
+                    smt_signal['psp_confirmed'] = psp is not None
+                    smt_signal['tf'] = cycle_tf
+                    logger.info(f"🎯 SMT {cycle} {smt_signal['direction']} + PSP: {smt_signal['psp_confirmed']}")
+    
+                    # Tap check per FVG (dir + zone entry)
+                    tapped = False
+                    matched_fvg = None
+                    for inst in self.instruments:
+                        for fvg in [f for f in fvgs_per_asset[inst] if f['tf'] == cycle_tf and f['direction'] == smt_signal['direction']]:
+                            fvg_low = fvg['fvg_low']
+                            fvg_high = fvg['fvg_high']
+                            direction = fvg['direction']
+                            is_tapped = self._check_smt_second_swing_in_fvg(smt_signal, inst, fvg_low, fvg_high, direction)
+                            logger.info(f"🔍 TAP CHECK {smt_signal['cycle']} on {inst} FVG: {is_tapped} (swing low/high {smt_signal.get('second_swing_low', 'N/A')}/{smt_signal.get('second_swing_high', 'N/A')} vs zone {fvg_low}-{fvg_high})")
+                            if is_tapped:
+                                tapped = True
+                                matched_fvg = fvg
+                                break
+                        if tapped:
+                            break
+    
+                    if tapped and smt_signal['psp_confirmed']:
+                        is_hp = matched_fvg['is_hp'] if matched_fvg else False
+                        logger.info(f"✅ BREAD & BUTTER: FVG + SMT tap + PSP on {matched_fvg['asset']} {cycle_tf}")
+                        return self._send_fvg_smt_tap_signal(matched_fvg, smt_signal, True, is_hp)
+    
+                    smts.append(smt_signal)
+    
+            # Fallback doubles
+            logger.info(f"🔍 No FVG+SMT+PSP - checking doubles")
+            return self._scan_double_smts_temporal()
+    
         except Exception as e:
-            logger.error(f"❌ Error in main scan: {str(e)}", exc_info=True)
+            logger.error(f"❌ FVG+SMT scan: {str(e)}", exc_info=True)
             return False
     
     def _scan_fvg_with_smt_tap(self):
