@@ -5126,7 +5126,8 @@ class UltimateTradingSystem:
         
         return False
     
-    def _check_smt_second_swing_in_fvg(self, smt_data, asset, fvg_low, fvg_high, direction):
+    def _check_smt_second_swing_in_fvg(self, smt_data, asset, fvg_low, fvg_high, direction, fvg_formation=None):
+        """Check SMT 2nd swing taps FVG zone (post-formation candles only)."""
         try:
             cycle = smt_data['cycle']
             timeframe = self.pair_config['timeframe_mapping'][cycle]
@@ -5139,20 +5140,23 @@ class UltimateTradingSystem:
                 logger.warning(f"⚠️ No second swing time for SMT: {smt_data}")
                 return False
             
-            # Post-formation filter: Only check candles after FVG formation (assume fvg_formation passed or from fvg)
-            fvg_formation = smt_data.get('fvg_formation_time', datetime.min.replace(tzinfo=NY_TZ))  # Pass from scan
-            data_post = data[data['time'] > fvg_formation]  # Only post-FVG price
-            if data_post.empty:
-                logger.info(f"🔍 No post-FVG data for tap check")
-                return False
+            # Post-formation filter (default now if None)
+            if fvg_formation:
+                data_post = data[data['time'] >= fvg_formation]  # >= for edge
+                logger.info(f"🔍 Post-FVG tap check: {len(data_post)} candles from {fvg_formation}")
+                if data_post.empty:
+                    logger.info(f"❌ No post-FVG data for tap")
+                    return False
+            else:
+                data_post = data  # Fallback old
             
-            # Rest your old logic on data_post
+            # Your old lookback on data_post
             time_diffs = abs(data_post['time'] - second_swing_time)
             closest_idx = time_diffs.idxmin()
             start_idx = max(0, closest_idx - 3)
             end_idx = min(len(data_post) - 1, closest_idx + 3)
             
-            logger.info(f"🔍 Post-FVG tap check: {len(data_post)} candles from {fvg_formation}")
+            logger.info(f"🔍 Checking {start_idx}-{end_idx} around {second_swing_time.strftime('%H:%M')}")
             for idx in range(start_idx, end_idx + 1):
                 candle = data_post.iloc[idx]
                 logger.info(f"🔍 TAP DEBUG: Candle {candle['time'].strftime('%H:%M')} low/high {candle['low']:.4f}/{candle['high']:.4f} vs zone {fvg_low}-{fvg_high} ({direction})")
@@ -5163,8 +5167,9 @@ class UltimateTradingSystem:
                     logger.info(f"✅ TAP HIT: High {candle['high']:.4f} >= low {fvg_low:.4f}")
                     return True
             
-            logger.info(f"❌ No tap in post-FVG window")
+            logger.info(f"❌ No tap in window")
             return False
+            
         except Exception as e:
             logger.error(f"❌ Tap check error: {e}")
             return False
