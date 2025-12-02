@@ -4176,13 +4176,15 @@ class FVGDetector:
             self.active_fvgs[tf] = fvgs
         else:
             self.active_fvgs[tf] = self._merge_fvgs(self.active_fvgs[tf], fvgs)
-        # Prune expired/invalidated
+        # Prune invalidated/over-mitigated (no expiry—live till breach)
         active = []
         for f in self.active_fvgs.get(tf, []):
-            age_hours = (datetime.now(NY_TZ) - f['formation_time']).total_seconds() / 3600
-            if age_hours < self.fvg_expiry_hours and not self._is_over_mitigated(f, df[df['time'] > f['formation_time']]):  # Post-formation only
+            # Check invalidation on full post-formation DF
+            post_df = df[df['time'] > f['formation_time']]
+            if not self._is_invalidated(f, post_df) and not self._is_over_mitigated(f, post_df.tail(10)):
                 active.append(f)
         self.active_fvgs[tf] = active
+        logger.info(f"🔍 Active FVGs {tf}: {len(active)} (pruned {len(self.active_fvgs.get(tf, [])) - len(active)} invalidated)")
         return active
 
     def _create_fvg(self, direction, low, high, time, asset, tf, candle_b):
