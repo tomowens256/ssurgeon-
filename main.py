@@ -5044,7 +5044,7 @@ class UltimateTradingSystem:
                             fvg_low = fvg['fvg_low']
                             fvg_high = fvg['fvg_high']
                             direction = fvg['direction']
-                            is_tapped = self._check_smt_second_swing_in_fvg(smt_signal, inst, fvg_low, fvg_high, direction)
+                            is_tapped = self._check_smt_second_swing_in_fvg(smt_signal, inst, fvg['fvg_low'], fvg['fvg_high'], direction, fvg['formation_time'])  # Pass formation
                             logger.info(f"🔍 TAP CHECK {smt_signal['cycle']} on {inst} FVG: {is_tapped} (swing low/high {smt_signal.get('second_swing_low', 'N/A')}/{smt_signal.get('second_swing_high', 'N/A')} vs zone {fvg_low}-{fvg_high})")
                             if is_tapped:
                                 tapped = True
