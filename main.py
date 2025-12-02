@@ -4184,7 +4184,13 @@ class FVGDetector:
             if not self._is_invalidated(f, post_df) and not self._is_over_mitigated(f, post_df):
                 active.append(f)
         self.active_fvgs[tf] = active
-        logger.info(f"🔍 Active FVGs {tf}: {len(active)} (scanned {len(df[df['time'] > min([f['formation_time'] for f in self.active_fvgs.get(tf, [])], default=datetime.min.replace(tzinfo=NY_TZ)))} post-formation candles)")
+        # Fixed log (no nested min glitch)
+        if self.active_fvgs[tf]:
+            min_form = min(f['formation_time'] for f in self.active_fvgs[tf])
+            post_count = len(df[df['time'] > min_form])
+        else:
+            post_count = 0
+        logger.info(f"🔍 Active FVGs {tf}: {len(active)} (scanned {post_count} post-formation candles)")
         return active
 
     def _create_fvg(self, direction, low, high, time, asset, tf, candle_b):
