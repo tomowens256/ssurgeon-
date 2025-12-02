@@ -2406,6 +2406,7 @@ class RealTimeFeatureBox:
         self.timing_manager = timing_manager
         self.telegram_token = telegram_token
         self.telegram_chat_id = telegram_chat_id
+        self.instruments = instruments or []
         
         # Active features storage with expiration tracking
         self.active_features = {
