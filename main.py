@@ -5127,60 +5127,47 @@ class UltimateTradingSystem:
         return False
     
     def _check_smt_second_swing_in_fvg(self, smt_data, asset, fvg_low, fvg_high, direction):
-        """Check if SMT's second swing candles traded in FVG zone"""
         try:
-            # Get the timeframe for this SMT cycle
             cycle = smt_data['cycle']
             timeframe = self.pair_config['timeframe_mapping'][cycle]
-            
-            # Get market data
             data = self.market_data[asset].get(timeframe)
             if not self._is_valid_data(data):
                 return False
             
-            # Get SMT's second swing time (from your SMT data structure)
-            # This might be stored as 'second_swing_time' or we need to extract it
             second_swing_time = self._extract_smt_second_swing_time(smt_data)
-            
             if not second_swing_time:
-                logger.warning(f"⚠️ Could not extract second swing time for SMT: {smt_data}")
+                logger.warning(f"⚠️ No second swing time for SMT: {smt_data}")
                 return False
             
-            # Look for candles around the second swing time (±3 candles)
-            # Find the candle closest to the second swing time
-            time_diffs = abs(data['time'] - second_swing_time)
+            # Post-formation filter: Only check candles after FVG formation (assume fvg_formation passed or from fvg)
+            fvg_formation = smt_data.get('fvg_formation_time', datetime.min.replace(tzinfo=NY_TZ))  # Pass from scan
+            data_post = data[data['time'] > fvg_formation]  # Only post-FVG price
+            if data_post.empty:
+                logger.info(f"🔍 No post-FVG data for tap check")
+                return False
+            
+            # Rest your old logic on data_post
+            time_diffs = abs(data_post['time'] - second_swing_time)
             closest_idx = time_diffs.idxmin()
-            
-            # Check a window around this candle (3 candles before and after)
             start_idx = max(0, closest_idx - 3)
-            end_idx = min(len(data) - 1, closest_idx + 3)
+            end_idx = min(len(data_post) - 1, closest_idx + 3)
             
-            logger.info(f"🔍 Checking candles {start_idx} to {end_idx} around {second_swing_time.strftime('%H:%M')}")
-            
+            logger.info(f"🔍 Post-FVG tap check: {len(data_post)} candles from {fvg_formation}")
             for idx in range(start_idx, end_idx + 1):
-                candle = data.iloc[idx]
-                
-                # Check if this candle traded in the FVG zone
-                if direction == 'bullish':
-                    # Bullish FVG: Check if candle's LOW was ≤ fvg_high
-                    logger.info(f"🔍 TAP DEBUG {smt_data['cycle']} on {asset} FVG: Candle {candle['time'].strftime('%H:%M')} low/high {candle['low']:.4f}/{candle['high']:.4f} vs zone {fvg_low}-{fvg_high} ({direction})")
-                    if direction == 'bullish' and candle['low'] <= fvg_high:
-                        logger.info(f"✅ TAP HIT: Low {candle['low']:.4f} <= high {fvg_high:.4f}")
-                        return True
-                    # Flip for bearish
-                else:  # bearish
-                    # Bearish FVG: Check if candle's HIGH was ≥ fvg_low
-                    if candle['high'] >= fvg_low:
-                        logger.info(f"✅ Candle {candle['time'].strftime('%H:%M')} - High {candle['high']:.4f} ≥ FVG low {fvg_low:.4f}")
-                        return True
+                candle = data_post.iloc[idx]
+                logger.info(f"🔍 TAP DEBUG: Candle {candle['time'].strftime('%H:%M')} low/high {candle['low']:.4f}/{candle['high']:.4f} vs zone {fvg_low}-{fvg_high} ({direction})")
+                if direction == 'bullish' and candle['low'] <= fvg_high:
+                    logger.info(f"✅ TAP HIT: Low {candle['low']:.4f} <= high {fvg_high:.4f}")
+                    return True
+                if direction == 'bearish' and candle['high'] >= fvg_low:
+                    logger.info(f"✅ TAP HIT: High {candle['high']:.4f} >= low {fvg_low:.4f}")
+                    return True
             
-            logger.info(f"❌ No candle traded in FVG zone during second swing")
+            logger.info(f"❌ No tap in post-FVG window")
             return False
-            
         except Exception as e:
-            logger.error(f"❌ Error checking SMT second swing in FVG: {e}")
+            logger.error(f"❌ Tap check error: {e}")
             return False
-    
     def _extract_smt_second_swing_time(self, smt_data):
         """Extract the second swing time from SMT data"""
         # Try different possible field names
