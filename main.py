@@ -5151,7 +5151,7 @@ class UltimateTradingSystem:
         return False
     
     def _check_smt_second_swing_in_fvg(self, smt_data, asset, fvg_low, fvg_high, direction, fvg_formation=None):
-        """Check SMT 2nd swing taps FVG zone (post-formation, extract swing low/high)."""
+        """Check SMT 2nd swing taps FVG zone (post-formation, safe extract)."""
         try:
             cycle = smt_data['cycle']
             timeframe = self.pair_config['timeframe_mapping'][cycle]
@@ -5160,10 +5160,17 @@ class UltimateTradingSystem:
                 logger.info(f"TRACE TAP SKIP: Invalid data {asset} {timeframe}")
                 return False
             
-            # Extract 2nd swing from smt_data['swing_times'] (curr swing)
+            # Safe extract 2nd swing (curr swing, handle dict or Timestamp)
             swing_times = smt_data.get('swing_times', {})
-            second_swing_time = swing_times.get('asset1_curr', {}).get('time', smt_data.get('formation_time'))
-            second_swing_price = swing_times.get('asset1_curr', {}).get('price', data['close'].iloc[-1])  # Fallback last close
+            asset_curr = swing_times.get('asset1_curr' if asset == self.instruments[0] else 'asset2_curr', {})
+            if isinstance(asset_curr, dict):
+                second_swing_time = asset_curr.get('time', smt_data.get('formation_time'))
+                second_swing_price = asset_curr.get('price', data['close'].iloc[-1] if not data.empty else 0)
+            else:
+                # If Timestamp direct
+                second_swing_time = asset_curr if isinstance(asset_curr, (pd.Timestamp, datetime)) else smt_data.get('formation_time')
+                second_swing_price = data['close'].iloc[-1] if not data.empty else 0
+            
             if not second_swing_time:
                 logger.warning(f"TRACE TAP SKIP: No second swing time in {smt_data['signal_key']}")
                 return False
