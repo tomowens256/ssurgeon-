@@ -4136,9 +4136,10 @@ class SmartTimingSystem:
 
 class FVGDetector:
     def __init__(self, min_gap_pct: float = 0.20):
-        self.min_gap_pct = min_gap_pct  # 20% of C body
+        self.min_gap_pct = min_gap_pct
         self.active_fvgs = {}  # tf -> [fvgs]
-        self.invalidate_std_mult = 4.0  # For over-extend
+        self.invalidate_std_mult = 4.0
+        self.fvg_expiry_hours = 48  # Expire after 48hr (tweak if needed)
 
     def scan_tf(self, df, tf, asset):
         if tf not in ['M15', 'H1', 'H4', 'D'] or len(df) < 20:
