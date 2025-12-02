@@ -5155,9 +5155,11 @@ class UltimateTradingSystem:
                 # Check if this candle traded in the FVG zone
                 if direction == 'bullish':
                     # Bullish FVG: Check if candle's LOW was ≤ fvg_high
-                    if candle['low'] <= fvg_high:
-                        logger.info(f"✅ Candle {candle['time'].strftime('%H:%M')} - Low {candle['low']:.4f} ≤ FVG high {fvg_high:.4f}")
+                    logger.info(f"🔍 TAP DEBUG {smt_data['cycle']} on {asset} FVG: Candle {candle['time'].strftime('%H:%M')} low/high {candle['low']:.4f}/{candle['high']:.4f} vs zone {fvg_low}-{fvg_high} ({direction})")
+                    if direction == 'bullish' and candle['low'] <= fvg_high:
+                        logger.info(f"✅ TAP HIT: Low {candle['low']:.4f} <= high {fvg_high:.4f}")
                         return True
+                    # Flip for bearish
                 else:  # bearish
                     # Bearish FVG: Check if candle's HIGH was ≥ fvg_low
                     if candle['high'] >= fvg_low:
