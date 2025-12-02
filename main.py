@@ -1917,17 +1917,22 @@ class UltimateSMTDetector:
         signal_key = smt_data.get('signal_key')
         if not signal_key:
             return False
-            
+           
         if signal_key in self.invalidated_smts:
+            logger.info(f"TRACE DUPE SKIP: Invalidated {signal_key}")
             return True
-            
+           
         count = self.signal_counts.get(signal_key, 0)
-    
-        # Only block if SAME candle + already sent
-        if count >= 1 and smt_data['candle_time'] == self.last_smt_candle:
-            logger.info(f"⚠️ Skipping duplicate SMT signal: {signal_key} (count: {count})")
+        candle_time = smt_data['candle_time']
+        is_same_candle = candle_time == self.last_smt_candle
+       
+        logger.info(f"TRACE DUPE CHECK {signal_key}: count {count}, same candle {is_same_candle}, last {self.last_smt_candle}")
+       
+        if count >= 1 and is_same_candle:
+            logger.info(f"⚠️ DUPE SKIP: {signal_key} (count {count}, same candle)")
             return True
-            
+           
+        logger.info(f"TRACE DUPE OK: {signal_key} fresh")
         return False
 
     
