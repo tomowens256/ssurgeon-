@@ -2578,14 +2578,13 @@ class RealTimeFeatureBox:
         return False
     
     def _check_smt_psp_confluence_global(self):
-        """SMT+PSP w/FVG tap priority (abort if no FVG match)."""
+        """SMT+PSP w/FVG tap priority (abort old if tap, send enhanced)."""
         signals_sent = 0
-        
         fvg_detector = FVGDetector()  # Quick scan
         fvgs_per_asset = {inst: [] for inst in self.instruments}
         for tf in ['M15', 'H1', 'H4', 'D']:
             for inst in self.instruments:
-                data = self.market_data[inst].get(tf)  # From system
+                data = self.market_data[inst].get(tf)  # Assume access (or pass from system)
                 if data is not None and not data.empty:
                     new_fvgs = fvg_detector.scan_tf(data, tf, inst)
                     fvgs_per_asset[inst].extend(new_fvgs)
@@ -2593,33 +2592,32 @@ class RealTimeFeatureBox:
         for smt_key, smt_feature in list(self.active_features['smt'].items()):
             if self._is_feature_expired(smt_feature):
                 continue
-                
             smt_data = smt_feature['smt_data']
-            
             if smt_feature['psp_data']:
-                # FVG priority: Check tap first
+                # FVG tap check first
                 tapped = False
+                matched_fvg = None
                 for inst in self.instruments:
                     for fvg in [f for f in fvgs_per_asset[inst] if f['tf'] == smt_data['timeframe'] and f['direction'] == smt_data['direction']]:
-                        if self._check_smt_second_swing_in_fvg(smt_data, inst, fvg['fvg_low'], fvg['fvg_high'], smt_data['direction']):
+                        is_tapped = self._check_smt_second_swing_in_fvg(smt_data, inst, fvg['fvg_low'], fvg['fvg_high'], smt_data['direction'])
+                        if is_tapped:
                             tapped = True
+                            matched_fvg = fvg
                             break
                     if tapped:
                         break
                 
                 if tapped:
-                    # FVG+SMT+PSP = bread, send enhanced
-                    logger.info(f"🚀 BREAD & BUTTER: SMT+PSP tap in FVG {smt_data['cycle']} {smt_data['direction']}")
-                    # Your send with FVG deets (modify _send_immediate_signal to include fvg)
-                    return True  # Or call enhanced send
+                    # Enhanced FVG + SMT + PSP ping
+                    logger.info(f"🚀 PRIORITY HIT: SMT+PSP tapped FVG {smt_data['cycle']} {smt_data['direction']}")
+                    # Send enhanced (your _send_fvg_smt_tap_signal with fvg)
+                    return True  # Or call it
                 
-                # ENHANCED: 90min req daily
+                # Fall to old SMT+PSP
                 if smt_data['cycle'] == '90min':
                     if not self._has_daily_smt_confirmation(smt_data['direction']):
-                        logger.info(f"⚠️ 90min SMT+PSP requires daily - skipping")
                         continue
                 
-                # Dupe check
                 signal_key = f"SMT_PSP_PRE_{smt_key}"
                 if self.timing_manager.is_duplicate_signal(signal_key, self.pair_group, cooldown_minutes=240):
                     continue
