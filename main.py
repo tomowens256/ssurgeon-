@@ -5436,7 +5436,7 @@ class UltimateTradingSystem:
 
 
     def _send_fvg_smt_tap_signal(self, fvg_idea, smt_data, has_psp, is_hp_fvg):
-        """Send FVG+SMT tap signal"""
+        """Send FVG+SMT tap w/criteria deets."""
         # Determine strength
         if is_hp_fvg and has_psp:
             strength = "ULTRA STRONG"
@@ -5446,27 +5446,27 @@ class UltimateTradingSystem:
             strength = "STRONG"
         else:
             strength = "GOOD"
-        
+       
         idea = {
             'type': 'FVG_SMT_TAP',
             'pair_group': self.pair_group,
             'direction': fvg_idea['direction'],
             'asset': fvg_idea['asset'],
-            'timeframe': fvg_idea['timeframe'],
-            'fvg_name': fvg_idea['fvg_name'],
-            'fvg_levels': fvg_idea['fvg_levels'],
+            'timeframe': fvg_idea.get('tf', fvg_idea.get('timeframe', 'Unknown')),  # Fix key
+            'fvg_name': fvg_idea['fvg_name'] if 'fvg_name' in fvg_idea else f"{fvg_idea['asset']}_{fvg_idea['tf']}_{fvg_idea['formation_time'].strftime('%m%d%H%M')}",
+            'fvg_levels': f"{fvg_idea['fvg_low']:.4f} - {fvg_idea['fvg_high']:.4f}",
             'fvg_formation': fvg_idea['formation_time'],
-            'fib_zone': fvg_idea['fib_zone'],
+            'fib_zone': '',  # No zones
             'smt_cycle': smt_data['cycle'],
             'smt_has_psp': has_psp,
             'is_hp_fvg': is_hp_fvg,
             'strength': strength,
-            'reasoning': f"{fvg_idea['fib_zone'].replace('_', ' ').title()} {fvg_idea['direction']} FVG tapped by {smt_data['cycle']} SMT",
+            'reasoning': f"{fvg_idea['direction']} FVG (formed {fvg_idea['formation_time'].strftime('%H:%M')}) tapped by {smt_data['cycle']} SMT 2nd swing + PSP confirmed",
             'timestamp': datetime.now(NY_TZ),
             'idea_key': f"FVG_SMT_{self.pair_group}_{datetime.now(NY_TZ).strftime('%H%M%S')}"
         }
-        
-        return self._send_fvg_trade_idea(idea)
+       
+        return self._send_fvg_trade_idea(idea)  # Your sender
     
     def _send_double_smt_only_signal(self, primary_smt, secondary_smt, span_min):
         """Send double SMT signal w/criteria deets."""
