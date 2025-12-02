@@ -5461,6 +5461,7 @@ class UltimateTradingSystem:
             'smt_has_psp': has_psp,
             'is_hp_fvg': is_hp_fvg,
             'strength': strength,
+            'confluence_strength': strength,
             'reasoning': f"{fvg_idea['direction']} FVG (formed {fvg_idea['formation_time'].strftime('%H:%M')}, zone {fvg_idea['fvg_low']:.4f}-{fvg_idea['fvg_high']:.4f}) tapped by {smt_data['cycle']} SMT 2nd swing ({smt_data['formation_time'].strftime('%H:%M')}) + PSP confirmed",
             'timestamp': datetime.now(NY_TZ),
             'idea_key': f"FVG_SMT_{self.pair_group}_{smt_data['cycle']}_{datetime.now(NY_TZ).strftime('%H%M%S')}"
