@@ -177,7 +177,6 @@ def send_telegram(message, token=None, chat_id=None):
 
 def fetch_candles(instrument, timeframe, count=100, api_key=None, since=None):
     """Fetch candles from OANDA API - ENFORCE UTC-4, incremental since."""
-    logger.debug(f"Fetching {count} candles for {instrument} {timeframe} (since {since if since else 'now'})")
    
     if not api_key:
         logger.error("Oanda API key missing")
@@ -207,8 +206,6 @@ def fetch_candles(instrument, timeframe, count=100, api_key=None, since=None):
             response = api.request(request)
             candles = response.get('candles', [])
            
-            logger.debug(f"Received {len(candles)} candles for {instrument}")
-           
             if not candles:
                 logger.warning(f"No candles received for {instrument} on attempt {attempt+1}")
                 continue
@@ -220,11 +217,8 @@ def fetch_candles(instrument, timeframe, count=100, api_key=None, since=None):
                     continue
                
                 try:
-                    # Raw ISO to TZ-aware (fallback if parse_oanda_time flakes)
-                    raw_time = candle['time']  # E.g., '2025-12-01T18:00:00.000000000Z'
-                    parsed_time = pd.to_datetime(raw_time, utc=True).tz_convert(NY_TZ)  # UTC to NY
-                    # If your parse_oanda_time is needed, swap: parsed_time = parse_oanda_time(raw_time)
-                    # Then guard: if parsed_time.tzinfo is None: parsed_time = parsed_time.tz_localize(NY_TZ)
+                    raw_time = candle['time']
+                    parsed_time = pd.to_datetime(raw_time, utc=True).tz_convert(NY_TZ)
                     is_complete = candle.get('complete', False)
                    
                     data.append({
@@ -239,7 +233,7 @@ def fetch_candles(instrument, timeframe, count=100, api_key=None, since=None):
                     })
                 except Exception as e:
                     logger.error(f"Error parsing candle for {instrument}: {str(e)} (raw time: {candle.get('time', 'N/A')})")
-                    continue  # Skip bad, keep going
+                    continue
            
             if not data:
                 logger.warning(f"Empty data after parsing for {instrument} on attempt {attempt+1}")
@@ -262,8 +256,7 @@ def fetch_candles(instrument, timeframe, count=100, api_key=None, since=None):
                 import time
                 time.sleep(wait_time)
             else:
-                error_details = f"Status: {getattr(e, 'code', 'N/A')} | Message: {str(e)} | Trace: {traceback.format_exc()}"
-                logger.error(f"Oanda API error for {instrument}: {error_details}")
+                logger.error(f"Oanda API error for {instrument}: Status: {getattr(e, 'code', 'N/A')} | Message: {str(e)}")
                 break
    
     logger.error(f"Failed to fetch candles for {instrument} after {MAX_RETRIES} attempts")
@@ -576,7 +569,6 @@ class RobustQuarterManager:
         for i in range(len(quarter_sequence) - 1):
             all_pairs.append((quarter_sequence[i], quarter_sequence[i+1]))
     
-        logger.debug(f"🔍 {cycle_type}: Valid quarter pairs: {all_pairs}")
         return all_pairs
     
     def group_candles_by_quarters(self, df, cycle_type, num_quarters=4):
@@ -603,7 +595,6 @@ class RobustQuarterManager:
             quarters_data[quarter] = pd.DataFrame(quarters_data[quarter])
             quarters_data[quarter] = quarters_data[quarter].sort_values('time')
         
-        logger.debug(f"📊 {cycle_type}: Found quarters {list(quarters_data.keys())}")
         return quarters_data
     
     def _get_candle_quarter_fixed(self, candle_time, cycle_type):
@@ -692,7 +683,6 @@ def test_proven_quarter_patch():
 class UltimateSwingDetector:
     """Ultimate swing detection with 5-CANDLE TOLERANCE and interim price validation"""
     
-    
     @staticmethod
     def find_swing_highs_lows(df):
         """Fixed swing detection with proper time handling"""
@@ -709,7 +699,7 @@ class UltimateSwingDetector:
             curr = df.iloc[i]
             nxt = df.iloc[i + 1]
     
-            # DEBUG: Check if we have proper time data
+            # Check if we have proper time data
             if pd.isna(curr['time']) or curr['time'] is None:
                 continue
     
@@ -717,7 +707,7 @@ class UltimateSwingDetector:
             if curr['high'] > prev['high'] and curr['high'] > nxt['high']:
                 if not swing_highs or (i - swing_highs[-1]['index']) >= MIN_SWING_DISTANCE:
                     swing_highs.append({
-                        'time': curr['time'],  # Use actual candle time
+                        'time': curr['time'],
                         'price': float(curr['high']),
                         'index': i
                     })
@@ -726,25 +716,20 @@ class UltimateSwingDetector:
             if curr['low'] < prev['low'] and curr['low'] < nxt['low']:
                 if not swing_lows or (i - swing_lows[-1]['index']) >= MIN_SWING_DISTANCE:
                     swing_lows.append({
-                        'time': curr['time'],  # Use actual candle time
+                        'time': curr['time'],
                         'price': float(curr['low']),
                         'index': i
                     })
     
         return swing_highs, swing_lows
-
-
     
     @staticmethod
     def find_aligned_swings(asset1_swings, asset2_swings, max_candle_diff=3, timeframe_minutes=5):
-        
         """Find swings that occur within 3 CANDLES of each other"""
-        # 🔥 FIX 1: enforce chronological order
         asset1_swings = sorted(asset1_swings, key=lambda x: x['time'])
         asset2_swings = sorted(asset2_swings, key=lambda x: x['time'])
         aligned_pairs = []
         
-        # Calculate time tolerance based on timeframe and max_candle_diff
         max_time_diff_minutes = max_candle_diff * timeframe_minutes
         
         for swing1 in asset1_swings:
@@ -753,9 +738,7 @@ class UltimateSwingDetector:
                 if time_diff <= max_time_diff_minutes:
                     aligned_pairs.append((swing1, swing2, time_diff))
         
-        # Sort by time difference (closest first)
         aligned_pairs.sort(key=lambda x: x[2])
-        #logger.debug(f"🕒 Found {len(aligned_pairs)} aligned swings within {max_time_diff_minutes} minutes")
         return aligned_pairs
     
     @staticmethod
@@ -767,7 +750,6 @@ class UltimateSwingDetector:
         prev_time = prev_swing['time']
         curr_time = curr_swing['time']
         
-        # Validate chronological order
         is_chronological = True
         if timing_manager:
             is_chronological = timing_manager.validate_chronological_order(prev_time, curr_time)
@@ -803,13 +785,6 @@ class UltimateSwingDetector:
         """
         Enhanced validation for BOTH swing highs and swing lows
         Checks from first swing time until most current candle to ensure no price violated the protected level
-        
-        Parameters:
-        - df: DataFrame with price data
-        - first_swing: First swing point (dict with 'time' and 'price')
-        - second_swing: Second swing point (dict with 'time' and 'price') 
-        - direction: "bearish" or "bullish"
-        - swing_type: "high" or "low" - specifies what type of swings we're validating
         """
         if df is None or first_swing is None or second_swing is None:
             return False
@@ -819,7 +794,6 @@ class UltimateSwingDetector:
     
         # Ensure correct chronological order
         if first_time >= second_time:
-            logger.warning(f"⚠️ Swing times out of order — swapping them. First: {first_time}, Second: {second_time}")
             first_swing, second_swing = second_swing, first_swing
             first_time, second_time = second_time, first_time
     
@@ -830,129 +804,61 @@ class UltimateSwingDetector:
         validation_candles = df[df['time'] >= first_time]
         
         if validation_candles.empty:
-            logger.debug("✅ No candles to validate after first swing")
             return True
     
         if direction == "bearish":
             if swing_type == "high":
-                # For bearish SMT with swing highs: protected level is the highest of the two swing highs
                 protected_level = max(
                     float(first_swing['price']),
                     float(second_swing['price'])
                 )
                 
-                # Check ALL highs from first swing until now
                 max_validation_level = float(validation_candles['high'].max())
     
                 if max_validation_level > protected_level:
-                    # Find which candle violated and when
-                    violating_candle = validation_candles[validation_candles['high'] > protected_level].iloc[0]
-                    violation_time = violating_candle['time'].strftime('%Y-%m-%d %H:%M')
-                    violation_price = violating_candle['high']
-                    
-                    logger.warning(
-                        f"❌ BEARISH SWING HIGH INVALIDATION: "
-                        f"High {violation_price:.4f} > protected high {protected_level:.4f} "
-                        f"at {violation_time}"
-                    )
                     return False
     
-                logger.info(
-                    f"✅ BEARISH SWING HIGH VALIDATION PASSED: "
-                    f"Max high {max_validation_level:.4f} <= protected high {protected_level:.4f} "
-                    f"(checked {len(validation_candles)} candles from {first_time.strftime('%H:%M')} to {most_recent_time.strftime('%H:%M')})"
-                )
                 return True
                 
             else:  # swing_type == "low" for bearish (though less common)
-                # For bearish with swing lows: protected level is the higher of the two swing lows
                 protected_level = max(
                     float(first_swing['price']),
                     float(second_swing['price'])
                 )
                 
-                # Check ALL lows from first swing until now
                 max_validation_level = float(validation_candles['low'].max())
     
                 if max_validation_level > protected_level:
-                    violating_candle = validation_candles[validation_candles['low'] > protected_level].iloc[0]
-                    violation_time = violating_candle['time'].strftime('%Y-%m-%d %H:%M')
-                    violation_price = violating_candle['low']
-                    
-                    logger.warning(
-                        f"❌ BEARISH SWING LOW INVALIDATION: "
-                        f"Low {violation_price:.4f} > protected low {protected_level:.4f} "
-                        f"at {violation_time}"
-                    )
                     return False
     
-                logger.info(
-                    f"✅ BEARISH SWING LOW VALIDATION PASSED: "
-                    f"Max low {max_validation_level:.4f} <= protected low {protected_level:.4f} "
-                    f"(checked {len(validation_candles)} candles)"
-                )
                 return True
     
         else:  # bullish
             if swing_type == "low":
-                # For bullish SMT with swing lows: protected level is the lowest of the two swing lows
                 protected_level = min(
                     float(first_swing['price']),
                     float(second_swing['price'])
                 )
     
-                # Check ALL lows from first swing until now
                 min_validation_level = float(validation_candles['low'].min())
     
                 if min_validation_level < protected_level:
-                    # Find which candle violated and when
-                    violating_candle = validation_candles[validation_candles['low'] < protected_level].iloc[0]
-                    violation_time = violating_candle['time'].strftime('%Y-%m-%d %H:%M')
-                    violation_price = violating_candle['low']
-                    
-                    logger.warning(
-                        f"❌ BULLISH SWING LOW INVALIDATION: "
-                        f"Low {violation_price:.4f} < protected low {protected_level:.4f} "
-                        f"at {violation_time}"
-                    )
                     return False
     
-                logger.info(
-                    f"✅ BULLISH SWING LOW VALIDATION PASSED: "
-                    f"Min low {min_validation_level:.4f} >= protected low {protected_level:.4f} "
-                    f"(checked {len(validation_candles)} candles from {first_time.strftime('%H:%M')} to {most_recent_time.strftime('%H:%M')})"
-                )
                 return True
                 
             else:  # swing_type == "high" for bullish (though less common)
-                # For bullish with swing highs: protected level is the lower of the two swing highs
                 protected_level = min(
                     float(first_swing['price']),
                     float(second_swing['price'])
                 )
     
-                # Check ALL highs from first swing until now
                 min_validation_level = float(validation_candles['high'].min())
     
                 if min_validation_level < protected_level:
-                    violating_candle = validation_candles[validation_candles['high'] < protected_level].iloc[0]
-                    violation_time = violating_candle['time'].strftime('%Y-%m-%d %H:%M')
-                    violation_price = violating_candle['high']
-                    
-                    logger.warning(
-                        f"❌ BULLISH SWING HIGH INVALIDATION: "
-                        f"High {violation_price:.4f} < protected high {protected_level:.4f} "
-                        f"at {violation_time}"
-                    )
                     return False
     
-                logger.info(
-                    f"✅ BULLISH SWING HIGH VALIDATION PASSED: "
-                    f"Min high {min_validation_level:.4f} >= protected high {protected_level:.4f} "
-                    f"(checked {len(validation_candles)} candles)"
-                )
                 return True
-
 # ================================
 # ENHANCED CRT DETECTOR WITH PSP TRACKING
 # ================================
@@ -1082,7 +988,7 @@ class RobustCRTDetector:
 class UltimateSMTDetector:
     def __init__(self, pair_config, timing_manager):
         self.smt_history = []
-        self.quarter_manager = RobustQuarterManager()  # ← USE FIXED VERSION
+        self.quarter_manager = RobustQuarterManager()
         self.swing_detector = UltimateSwingDetector()
         self.timing_manager = timing_manager
         self.signal_counts = {}
@@ -1090,63 +996,40 @@ class UltimateSMTDetector:
         self.pair_config = pair_config
         self.last_smt_candle = None
         
-
-
-        
-        # Timeframe to minutes mapping for tolerance calculation
         self.timeframe_minutes = {
             'M1': 1, 'M5': 5, 'M15': 15, 'M30': 30,
             'H1': 60, 'H2': 120, 'H3': 180, 'H4': 240,
             'H6': 360, 'H8': 480, 'H12': 720
         }
         
-        # PSP tracking for each SMT
         self.smt_psp_tracking = {}
         
     def detect_smt_all_cycles(self, asset1_data, asset2_data, cycle_type):
         """Detect SMT using ONLY valid chronological quarter pairs"""
         try:
-            logger.info(f"🔍 Scanning {cycle_type} for SMT signals...")
-    
             if not self.check_data_quality(asset1_data, asset2_data, cycle_type):
                 return None
     
             if (asset1_data is None or not isinstance(asset1_data, pd.DataFrame) or asset1_data.empty or
                 asset2_data is None or not isinstance(asset2_data, pd.DataFrame) or asset2_data.empty):
-                logger.warning(f"⚠️ No data for {cycle_type} SMT detection")
                 return None
     
-            # Get adjacent quarter pairs
             adjacent_pairs = self.quarter_manager.get_adjacent_quarter_pairs(cycle_type)
-    
-            # Get last 3 quarters 
             last_3_quarters = self.quarter_manager.get_last_three_quarters(cycle_type)
-    
-            logger.debug(f"🔍 {cycle_type}: Last 3 quarters: {last_3_quarters}")
-            logger.debug(f"🔍 {cycle_type}: Adjacent pairs: {adjacent_pairs}")
     
             asset1_quarters = self.quarter_manager.group_candles_by_quarters(asset1_data, cycle_type)
             asset2_quarters = self.quarter_manager.group_candles_by_quarters(asset2_data, cycle_type)
     
             if not asset1_quarters or not asset2_quarters:
-                logger.warning(f"⚠️ No quarter grouped data for {cycle_type}")
                 return None
     
-            # === FILTER OUT INVALID/OVERLAPPING PAIRS ===
             valid_pairs = self.filter_valid_quarter_pairs(cycle_type, asset1_quarters, asset2_quarters, adjacent_pairs)
             
             if not valid_pairs:
-                logger.warning(f"⚠️ No valid quarter pairs for {cycle_type}")
                 return None
     
             results = []
-            # debug the actual quarter DataFrames we just created
-            self.debug_quarter_contents_from_dfs(cycle_type, "Asset1", asset1_quarters)
-            self.debug_quarter_contents_from_dfs(cycle_type, "Asset2", asset2_quarters)
-
-
     
-            # Scan ONLY valid chronological pairs
             for prev_q, curr_q in valid_pairs:
                 smt_result = self._compare_quarters_with_3_candle_tolerance(
                     asset1_quarters[prev_q], asset1_quarters[curr_q],
@@ -1157,29 +1040,19 @@ class UltimateSMTDetector:
                 if smt_result:
                     results.append(smt_result)
     
-            # ... rest of your existing method ...
-    
             if not results:
-                logger.debug(f"🔍 No SMT found for {cycle_type}")
                 return None
     
-            # --- PROCESS RESULTS: Find first valid non-duplicate SMT ---
             for smt_result in results:
-    
-                # DUPLICATE PROTECTION
-                logger.info(f"TRACE DUPE PRE: {smt_result['signal_key']} candle {smt_result['candle_time']}, last {self.last_smt_candle}")
                 if self._is_duplicate_signal(smt_result):
                     continue
-                    
-    
+                
                 signal_key = smt_result['signal_key']
                 candle_time = smt_result['candle_time']
     
-                # --- UPDATE SMT STATE (VERY IMPORTANT) ---
                 self.last_smt_candle = candle_time
                 self.signal_counts[signal_key] = self.signal_counts.get(signal_key, 0) + 1
     
-                # --- INITIALIZE PSP TRACKING ---
                 if signal_key not in self.smt_psp_tracking:
                     self.smt_psp_tracking[signal_key] = {
                         'psp_found': False,
@@ -1188,130 +1061,64 @@ class UltimateSMTDetector:
                         'last_check': datetime.now(NY_TZ),
                         'formation_time': smt_result['formation_time']
                     }
-
-                
-    
-                logger.info(
-                    f"🎯 SMT DETECTED: {cycle_type} "
-                    f"{smt_result['prev_q']}→{smt_result['curr_q']} "
-                    f"{smt_result['direction']}"
-                )
     
                 return smt_result
     
-            # If all SMTs were duplicates
             return None
     
         except Exception as e:
-            logger.error(f"❌ Error in SMT detection for {cycle_type}: {str(e)}")
             return None
 
     def debug_quarter_contents_from_dfs(self, cycle_type, asset_name, quarter_dfs):
-        """
-        Debug helper for quarter dicts where each value is a pandas DataFrame.
-        quarter_dfs is expected to be a dict: { 'q1': df_q1, 'q2': df_q2, ... }
-        """
-        logger.info(f"📌 DEBUG — {cycle_type.upper()} / {asset_name}")
-    
+        """Debug helper for quarter dicts where each value is a pandas DataFrame."""
         for qname, qdf in quarter_dfs.items():
             if qdf is None or (hasattr(qdf, "empty") and qdf.empty):
-                logger.warning(f"   ⚠️ {qname}: EMPTY quarter")
                 continue
     
-            # Ensure time column is Timestamp type
             try:
                 times = pd.to_datetime(qdf['time'])
             except Exception:
-                # fallback if 'time' not a column
                 times = pd.to_datetime(qdf.index)
     
             start_t = times.min()
             end_t = times.max()
             count = len(qdf)
     
-            # run swing detector on this quarter to show the swings
             highs, lows = self.swing_detector.find_swing_highs_lows(qdf)
     
-            logger.info(f"\n   🟦 Quarter: {qname}")
-            logger.info(f"      🕒 Range: {start_t} → {end_t}")
-            logger.info(f"      🔢 Candles: {count}")
-    
-            if highs:
-                logger.info("      🔺 High Swings:")
-                for h in highs[:5]:
-                    logger.info(f"         • {h['time']} → {h['price']}")
-            else:
-                logger.info("      🔺 High Swings: NONE")
-    
-            if lows:
-                logger.info("      🔻 Low Swings:")
-                for l in lows[:5]:
-                    logger.info(f"         • {l['time']} → {l['price']}")
-            else:
-                logger.info("      🔻 Low Swings: NONE")
-
+            # Minimal debug info kept for troubleshooting
+            if count > 0:
+                pass
 
     def check_data_quality(self, pair1_data, pair2_data, cycle_type):
         """Check if we have good quality data for analysis"""
-        print(f"\n🔍 DATA QUALITY CHECK for {cycle_type}:")
-        
         if pair1_data is None or pair2_data is None:
-            print(f"   ❌ Missing data")
             return False
         
-        # Check data length
         if len(pair1_data) < 20 or len(pair2_data) < 20:
-            print(f"   ❌ Insufficient data: {len(pair1_data)} vs {len(pair2_data)} candles")
             return False
         
-        # Check time range coverage
         p1_start = pair1_data['time'].min()
         p1_end = pair1_data['time'].max()  
         p2_start = pair2_data['time'].min()
         p2_end = pair2_data['time'].max()
         
         time_coverage = (min(p1_end, p2_end) - max(p1_start, p2_start)).total_seconds() / 3600
-        print(f"   Time overlap: {time_coverage:.1f}h")
         
         if time_coverage < 1:
-            print(f"   ❌ Insufficient time overlap")
             return False
         
-        print(f"   ✅ Good data quality")
         return True
 
     def debug_quarter_validation(self, prev_q, curr_q, asset1_prev, asset1_curr, asset2_prev, asset2_curr):
         """Validate quarter chronology for 18:00-start system"""
-        print(f"\n🔍 VALIDATING {prev_q}→{curr_q} (18:00-start system):")
-        
-        if not asset1_prev.empty and not asset1_curr.empty:
-            prev_end = asset1_prev['time'].max()
-            curr_start = asset1_curr['time'].min()
-            time_gap = (curr_start - prev_end).total_seconds() / 3600
-            
-            # Special handling for q4→q1 transition (crosses day boundary)
-            if prev_q == 'q4' and curr_q == 'q1':
-                # q4 ends at 17:59, q1 starts at 18:00 (could be same day or next day)
-                expected_gap = 0.02  # ~1 minute gap is acceptable
-                if -1 <= time_gap <= 1:  # Allow small gaps around the boundary
-                    print(f"   ✅ Q4→Q1 TRANSITION: {prev_end.strftime('%m-%d %H:%M')} → {curr_start.strftime('%m-%d %H:%M')} ({time_gap:+.1f}h)")
-                else:
-                    print(f"   ⚠️ UNUSUAL Q4→Q1 GAP: {prev_end.strftime('%m-%d %H:%M')} → {curr_start.strftime('%m-%d %H:%M')} ({time_gap:+.1f}h)")
-            elif time_gap < -1:
-                print(f"   ❌ REVERSED TIME: Current quarter starts BEFORE previous quarter! ({time_gap:+.1f}h)")
-            elif time_gap > 6:
-                print(f"   ⚠️ LARGE GAP: {time_gap:.1f}h between quarters")
-            else:
-                print(f"   ✅ Reasonable gap: {time_gap:.1f}h")
+        pass
 
     def filter_valid_quarter_pairs(self, cycle_type, asset1_quarters, asset2_quarters, adjacent_pairs):
         """Filter out quarter pairs that have overlapping time ranges"""
-        print(f"\n🔍 FILTERING VALID QUARTER PAIRS for {cycle_type}:")
-        
         valid_pairs = []
         
         for prev_q, curr_q in adjacent_pairs:
-            # Check if both quarters exist and have data
             if (prev_q not in asset1_quarters or curr_q not in asset1_quarters or
                 prev_q not in asset2_quarters or curr_q not in asset2_quarters):
                 continue
@@ -1324,173 +1131,62 @@ class UltimateSMTDetector:
             if asset1_prev.empty or asset1_curr.empty or asset2_prev.empty or asset2_curr.empty:
                 continue
             
-            # STRICT: Check that current quarter starts AFTER previous quarter ends
             prev_end = max(asset1_prev['time'].max(), asset2_prev['time'].max())
             curr_start = min(asset1_curr['time'].min(), asset2_curr['time'].min())
             
             time_gap = (curr_start - prev_end).total_seconds() / 3600
             
             if time_gap > 0:
-                print(f"   ✅ {prev_q}→{curr_q}: Valid gap {time_gap:.1f}h")
                 valid_pairs.append((prev_q, curr_q))
-            else:
-                print(f"   ❌ {prev_q}→{curr_q}: INVALID (overlap {-time_gap:.1f}h)")
         
-        print(f"   Final valid pairs: {valid_pairs}")
         return valid_pairs
 
     def debug_swing_data_quality(self, swings, label):
         """Debug the quality of swing data"""
-        print(f"\n🔍 SWING DATA QUALITY - {label}:")
-        
-        if not swings:
-            print(f"   No swings found")
-            return
-        
-        for i, swing in enumerate(swings):
-            print(f"   Swing {i}: time={swing['time'].strftime('%m-%d %H:%M')}, price={swing['price']:.4f}")
-            
-            # Check for invalid timestamps
-            if swing['time'].year < 2020:
-                print(f"   ❌ INVALID TIMESTAMP: {swing['time']}")
+        pass
 
     def run_comprehensive_debug(self, cycle_type, market_data_pair1, market_data_pair2):
         """Run complete debug for a cycle - FIXED VERSION"""
-        print(f"\n🎯 COMPREHENSIVE DEBUG FOR {cycle_type.upper()}")
-        
-        timeframe = self.pair_config['timeframe_mapping'][cycle_type]
-        
-        # Get data from passed market_data dictionaries
-        pair1_data = market_data_pair1.get(timeframe)
-        pair2_data = market_data_pair2.get(timeframe)
-        
-        if not self.check_data_quality(pair1_data, pair2_data, cycle_type):
-            return
-        
-        # Test quarter grouping
-        asset1_quarters = self.quarter_manager.group_candles_by_quarters(pair1_data, cycle_type)
-        asset2_quarters = self.quarter_manager.group_candles_by_quarters(pair2_data, cycle_type)
-        
-        self.debug_quarter_time_ranges(cycle_type, asset1_quarters, asset2_quarters)
-        
-        # Test swing detection on sample quarter
-        test_quarter = 'q1'
-        if test_quarter in asset1_quarters:
-            test_data = asset1_quarters[test_quarter]
-            swings_high, swings_low = self.swing_detector.find_swing_highs_lows(test_data)
-            self.debug_swing_data_quality(swings_high, f"{cycle_type} {test_quarter} Highs")
-            self.debug_swing_data_quality(swings_low, f"{cycle_type} {test_quarter} Lows")
+        pass
 
     def debug_quarter_time_ranges(self, cycle_type, asset1_quarters, asset2_quarters):
         """Debug the actual time ranges of quarters with sequence validation"""
-        print(f"\n🔍 DEBUG QUARTER TIME RANGES for {cycle_type}:")
-        
-        for quarter in ['q1', 'q2', 'q3', 'q4', 'q_less']:
-            if quarter in asset1_quarters and not asset1_quarters[quarter].empty:
-                a1_times = asset1_quarters[quarter]['time']
-                print(f"   {quarter}: Asset1 → {a1_times.min().strftime('%m-%d %H:%M')} to {a1_times.max().strftime('%m-%d %H:%M')} ({len(a1_times)} candles)")
-            
-            if quarter in asset2_quarters and not asset2_quarters[quarter].empty:
-                a2_times = asset2_quarters[quarter]['time']
-                print(f"   {quarter}: Asset2 → {a2_times.min().strftime('%m-%d %H:%M')} to {a2_times.max().strftime('%m-%d %H:%M')} ({len(a2_times)} candles)")
-        
-        # Validate sequence - THIS MUST BE INSIDE THE METHOD
-        print(f"\n🔍 ASSET1 QUARTER SEQUENCE:")
-        asset1_sequence = self.validate_quarter_sequence(cycle_type, asset1_quarters)
-        
-        if asset2_quarters:
-            print(f"\n🔍 ASSET2 QUARTER SEQUENCE:")
-            asset2_sequence = self.validate_quarter_sequence(cycle_type, asset2_quarters)
+        pass
 
     def validate_quarter_sequence(self, cycle_type, asset_quarters):
         """Validate that quarters are in proper sequence"""
-        print(f"   VALIDATING {cycle_type} QUARTER SEQUENCE:")
-        
-        # Define expected sequence
-        if cycle_type == 'weekly':
-            expected_sequence = ['q1', 'q2', 'q3', 'q4', 'q_less']
-        else:
-            expected_sequence = ['q1', 'q2', 'q3', 'q4']
-        
-        # Get quarters that actually have data
-        available_quarters = [q for q in expected_sequence if q in asset_quarters and not asset_quarters[q].empty]
-        
-        print(f"      Expected: {expected_sequence}")
-        print(f"      Available: {available_quarters}")
-        
-        # Check if available quarters are in expected order
-        for i in range(len(available_quarters) - 1):
-            current_q = available_quarters[i]
-            next_q = available_quarters[i + 1]
-            
-            current_idx = expected_sequence.index(current_q)
-            next_idx = expected_sequence.index(next_q)
-            
-            if next_idx != current_idx + 1:
-                print(f"      ❌ SEQUENCE BREAK: {current_q}→{next_q} (expected {expected_sequence[current_idx]}→{expected_sequence[current_idx+1]})")
-            else:
-                print(f"      ✅ Sequence OK: {current_q}→{next_q}")
-        
-        return available_quarters
-
+        pass
     
     def _compare_quarters_with_3_candle_tolerance(self, asset1_prev, asset1_curr, asset2_prev, asset2_curr, cycle_type, prev_q, curr_q):
         """Compare quarters with debug info"""
         try:
-            print(f"\n🔍 COMPARING QUARTERS: {cycle_type} {prev_q}→{curr_q}")
-            
-            # Debug the input data
-            print(f"   Asset1 prev: {len(asset1_prev)} candles, time range: {asset1_prev['time'].min() if not asset1_prev.empty else 'empty'} to {asset1_prev['time'].max() if not asset1_prev.empty else 'empty'}")
-            print(f"   Asset1 curr: {len(asset1_curr)} candles, time range: {asset1_curr['time'].min() if not asset1_curr.empty else 'empty'} to {asset1_curr['time'].max() if not asset1_curr.empty else 'empty'}")
-
-            # === ADD STRICT CHRONOLOGY CHECK ===
+            # Strict chronology check
             if not asset1_prev.empty and not asset1_curr.empty:
                 prev_end = asset1_prev['time'].max()
                 curr_start = asset1_curr['time'].min()
                 
-                # STRICT: Current quarter MUST start AFTER previous quarter ends
                 if curr_start <= prev_end:
-                    print(f"   ❌ CHRONOLOGY ERROR: Skipping {prev_q}→{curr_q} - current starts at {curr_start.strftime('%m-%d %H:%M')} (BEFORE previous ends at {prev_end.strftime('%m-%d %H:%M')})")
                     return None
-                
-                time_gap = (curr_start - prev_end).total_seconds() / 3600
-                if time_gap > 24:
-                    print(f"   ⚠️ LARGE GAP: {time_gap:.1f}h between quarters")
-                else:
-                    print(f"   ✅ Chronology OK: {time_gap:.1f}h gap")
-    
-            if (asset1_prev.empty or asset1_curr.empty or 
-                asset2_prev.empty or asset2_curr.empty):
-                print(f"   ⚠️ SKIPPING: Missing quarter data")
-                return None
-            # === ADD THIS VALIDATION CALL ===
-            self.debug_quarter_validation(prev_q, curr_q, asset1_prev, asset1_curr, asset2_prev, asset2_curr)
             
             if (asset1_prev.empty or asset1_curr.empty or 
                 asset2_prev.empty or asset2_curr.empty):
                 return None
-        
-            # timeframe / tolerance
+            
             timeframe = self.pair_config['timeframe_mapping'][cycle_type]
             timeframe_minutes = self.timeframe_minutes.get(timeframe, 5)
         
-            # combined (sorted) frames for interim validations
             asset1_combined = pd.concat([asset1_prev, asset1_curr]).sort_values('time').reset_index(drop=True)
             asset2_combined = pd.concat([asset2_prev, asset2_curr]).sort_values('time').reset_index(drop=True)
         
-            # --- find swings (original functions) ---
             a1_prev_H, a1_prev_L = self.swing_detector.find_swing_highs_lows(asset1_prev)
             a1_curr_H, a1_curr_L = self.swing_detector.find_swing_highs_lows(asset1_curr)
             a2_prev_H, a2_prev_L = self.swing_detector.find_swing_highs_lows(asset2_prev)
             a2_curr_H, a2_curr_L = self.swing_detector.find_swing_highs_lows(asset2_curr)
         
-            # --- FIX: ensure all swing times are real pandas Timestamps ---
             def normalize_time(swings, tz=NY_TZ):
                 for s in swings:
-                    # ensure timestamp
                     if not isinstance(s['time'], pd.Timestamp):
                         s['time'] = pd.to_datetime(s['time'])
-                    # make timezone aware if naive
                     if s['time'].tzinfo is None:
                         s['time'] = s['time'].tz_localize(tz)
                     else:
@@ -1506,10 +1202,7 @@ class UltimateSMTDetector:
             a2_prev_L = normalize_time(a2_prev_L, NY_TZ)
             a2_curr_H = normalize_time(a2_curr_H, NY_TZ)
             a2_curr_L = normalize_time(a2_curr_L, NY_TZ)
-
-            # --------------------------------------------------------------
         
-            # helper: sort swings by time
             def sort_swings(swings):
                 return sorted(swings, key=lambda x: x['time'])
         
@@ -1522,9 +1215,7 @@ class UltimateSMTDetector:
             a2_prev_L = sort_swings(a2_prev_L)
             a2_curr_H = sort_swings(a2_curr_H)
             a2_curr_L = sort_swings(a2_curr_L)
-
     
-            # --- FILTER: keep only swings that fall INSIDE their quarter timeframe ---
             def filter_by_quarter(swings, quarter_df):
                 if not swings:
                     return []
@@ -1532,7 +1223,6 @@ class UltimateSMTDetector:
                 q_end = quarter_df['time'].max()
                 filtered = [s for s in swings if (s['time'] >= q_start and s['time'] <= q_end)]
                 if not filtered:
-                    # fallback: keep nearest by time if none fall inside (rare)
                     return sorted(swings, key=lambda s: min(abs((s['time'] - q_start).total_seconds()), abs((s['time'] - q_end).total_seconds())))
                 return filtered
     
@@ -1546,10 +1236,6 @@ class UltimateSMTDetector:
             a2_curr_H = filter_by_quarter(a2_curr_H, asset2_curr)
             a2_curr_L = filter_by_quarter(a2_curr_L, asset2_curr)
     
-            logger.debug(f"🔍 {cycle_type} {prev_q}→{curr_q}: After filtering -> A1 prev H:{len(a1_prev_H)} L:{len(a1_prev_L)} | A1 curr H:{len(a1_curr_H)} L:{len(a1_curr_L)}")
-            logger.debug(f"🔍 {cycle_type} {prev_q}→{curr_q}: After filtering -> A2 prev H:{len(a2_prev_H)} L:{len(a2_prev_L)} | A2 curr H:{len(a2_curr_H)} L:{len(a2_curr_L)}")
-    
-            # --- find bearish & bullish using your tolerance functions ---
             bearish_smt = self._find_bearish_smt_with_tolerance(
                 a1_prev_H, a1_curr_H,
                 a2_prev_H, a2_curr_H,
@@ -1562,45 +1248,35 @@ class UltimateSMTDetector:
                 asset1_combined, asset2_combined, timeframe_minutes
             )
     
-            # No candidate
             if not bearish_smt and not bullish_smt:
                 return None
     
-            # Choose found result and unpack safely
-            # In the section where you process bearish_smt:
             if bearish_smt:
                 direction = 'bearish'
                 smt_type = 'Higher Swing High'
-                asset1_prev_high, asset1_curr_high, asset2_prev_high, asset2_curr_high = bearish_smt  # ← These are SINGULAR from the return tuple
+                asset1_prev_high, asset1_curr_high, asset2_prev_high, asset2_curr_high = bearish_smt
             
-                # Ensure chronological order for both assets; if reversed, swap
-                if asset1_curr_high['time'] <= asset1_prev_high['time']:  # ← SINGULAR
-                    logger.warning(f"⚠️ Fixing chronology A1: {asset1_prev_high['time']} -> {asset1_curr_high['time']}")
+                if asset1_curr_high['time'] <= asset1_prev_high['time']:
                     asset1_prev_high, asset1_curr_high = asset1_curr_high, asset1_prev_high
-                if asset2_curr_high['time'] <= asset2_prev_high['time']:  # ← SINGULAR
-                    logger.warning(f"⚠️ Fixing chronology A2: {asset2_prev_high['time']} -> {asset2_curr_high['time']}")
+                if asset2_curr_high['time'] <= asset2_prev_high['time']:
                     asset2_prev_high, asset2_curr_high = asset2_curr_high, asset2_prev_high
             
-                formation_time = asset1_curr_high['time']  # ← SINGULAR
-                asset1_action = self.swing_detector.format_swing_time_description(asset1_prev_high, asset1_curr_high, "high", self.timing_manager)  # ← SINGULAR
-                asset2_action = self.swing_detector.format_swing_time_description(asset2_prev_high, asset2_curr_high, "high", self.timing_manager)  # ← SINGULAR
-                critical_level = asset1_curr_high['price']  # ← SINGULAR
+                formation_time = asset1_curr_high['time']
+                asset1_action = self.swing_detector.format_swing_time_description(asset1_prev_high, asset1_curr_high, "high", self.timing_manager)
+                asset2_action = self.swing_detector.format_swing_time_description(asset2_prev_high, asset2_curr_high, "high", self.timing_manager)
+                critical_level = asset1_curr_high['price']
             
-                # Extra sanity: ensure prev < curr across both assets
-                if not (asset1_prev_high['time'] < asset1_curr_high['time'] and asset2_prev_high['time'] < asset2_curr_high['time']):  # ← SINGULAR
-                    logger.warning("⚠️ Rejected bearish SMT because swings are not chronological across both assets")
+                if not (asset1_prev_high['time'] < asset1_curr_high['time'] and asset2_prev_high['time'] < asset2_curr_high['time']):
                     return None
     
-            else:  # bullish_smt
+            else:
                 direction = 'bullish'
                 smt_type = 'Lower Swing Low'
                 asset1_prev_low, asset1_curr_low, asset2_prev_low, asset2_curr_low = bullish_smt
     
                 if asset1_curr_low['time'] <= asset1_prev_low['time']:
-                    logger.warning(f"⚠️ Fixing chronology A1 low: {asset1_prev_low['time']} -> {asset1_curr_low['time']}")
                     asset1_prev_low, asset1_curr_low = asset1_curr_low, asset1_prev_low
                 if asset2_curr_low['time'] <= asset2_prev_low['time']:
-                    logger.warning(f"⚠️ Fixing chronology A2 low: {asset2_prev_low['time']} -> {asset2_curr_low['time']}")
                     asset2_prev_low, asset2_curr_low = asset2_curr_low, asset2_prev_low
     
                 formation_time = asset1_curr_low['time']
@@ -1609,10 +1285,8 @@ class UltimateSMTDetector:
                 critical_level = asset1_curr_low['price']
     
                 if not (asset1_prev_low['time'] < asset1_curr_low['time'] and asset2_prev_low['time'] < asset2_curr_low['time']):
-                    logger.warning("⚠️ Rejected bullish SMT because swings are not chronological across both assets")
                     return None
     
-            # Build signal_key time pieces from the actual chosen swings
             if direction == 'bearish':
                 swing_time_key = f"{asset1_prev_high['time'].strftime('%H%M')}_{asset1_curr_high['time'].strftime('%H%M')}"
                 swing_times = {
@@ -1630,11 +1304,9 @@ class UltimateSMTDetector:
                     'asset2_curr': asset2_curr_low['time']
                 }
     
-            # Final sanity: ensure formation_time is inside curr quarter bounds
             curr_start = asset1_curr['time'].min()
             curr_end = asset1_curr['time'].max()
             if not (curr_start <= formation_time <= curr_end):
-                logger.warning(f"⚠️ Formation time {formation_time} outside curr quarter bounds ({curr_start} → {curr_end}). Rejecting.")
                 return None
     
             current_time = datetime.now(NY_TZ)
@@ -1661,33 +1333,22 @@ class UltimateSMTDetector:
             self.smt_history.append(smt_data)
             self._update_signal_count(smt_data['signal_key'])
     
-            logger.info(f"🎯 SMT DETECTED with 3-candle tolerance: {direction} {cycle_type} {prev_q}→{curr_q}")
-            logger.info(f"   Signal ID: {smt_data['signal_key']}")
-            logger.info(f"   Asset1: {asset1_action}")
-            logger.info(f"   Asset2: {asset2_action}")
-    
             return smt_data
     
         except Exception as e:
-            logger.error(f"Error comparing quarters {prev_q}→{curr_q}: {str(e)}\n{traceback.format_exc()}")
             return None
-
     
     def _find_bearish_smt_with_tolerance(self, asset1_prev_highs, asset1_curr_highs, asset2_prev_highs, asset2_curr_highs, asset1_combined_data, asset2_combined_data, timeframe_minutes):
         """Find bearish SMT with 3-CANDLE TOLERANCE - VALIDATES BOTH ASSETS"""
-        # Find aligned previous swings with tolerance
         aligned_prev_highs = self.swing_detector.find_aligned_swings(
             asset1_prev_highs, asset2_prev_highs,
             max_candle_diff=3, timeframe_minutes=timeframe_minutes
         )
         
-        # Find aligned current swings with tolerance
         aligned_curr_highs = self.swing_detector.find_aligned_swings(
             asset1_curr_highs, asset2_curr_highs,
             max_candle_diff=3, timeframe_minutes=timeframe_minutes
         )
-        
-        logger.debug(f"🔍 Bearish SMT: {len(aligned_prev_highs)} aligned prev highs, {len(aligned_curr_highs)} aligned curr highs")
         
         for prev_pair in aligned_prev_highs:
             asset1_prev, asset2_prev, prev_time_diff = prev_pair
@@ -1695,11 +1356,9 @@ class UltimateSMTDetector:
             for curr_pair in aligned_curr_highs:
                 asset1_curr, asset2_curr, curr_time_diff = curr_pair
                 
-                # Check SMT conditions for bearish
-                asset1_hh = asset1_curr['price'] > asset1_prev['price']  # Higher high
-                asset2_lh = asset2_curr['price'] <= asset2_prev['price']  # Lower high
+                asset1_hh = asset1_curr['price'] > asset1_prev['price']
+                asset2_lh = asset2_curr['price'] <= asset2_prev['price']
                 
-                # CRITICAL: Check interim price validation for BOTH ASSETS
                 asset1_interim_valid = self.swing_detector.validate_interim_price_action(
                     asset1_combined_data, asset1_prev, asset1_curr, "bearish", "high"
                 )
@@ -1709,37 +1368,21 @@ class UltimateSMTDetector:
                 )
                 
                 if asset1_hh and asset2_lh and asset1_interim_valid and asset2_interim_valid:
-                    logger.info(f"✅ BEARISH SMT FOUND with 3-candle tolerance:")
-                    logger.info(f"   Prev swings: {asset1_prev['time'].strftime('%H:%M')} & {asset2_prev['time'].strftime('%H:%M')} (diff: {prev_time_diff:.1f}min)")
-                    logger.info(f"   Curr swings: {asset1_curr['time'].strftime('%H:%M')} & {asset2_curr['time'].strftime('%H:%M')} (diff: {curr_time_diff:.1f}min)")
-                    logger.info(f"   Asset1: Higher High ({asset1_prev['price']:.4f} → {asset1_curr['price']:.4f})")
-                    logger.info(f"   Asset2: Lower High ({asset2_prev['price']:.4f} → {asset2_curr['price']:.4f})")
-                    logger.info(f"   Asset1 interim validation: ✅ PASSED")
-                    logger.info(f"   Asset2 interim validation: ✅ PASSED")
                     return (asset1_prev, asset1_curr, asset2_prev, asset2_curr)
-                elif asset1_hh and asset2_lh and (not asset1_interim_valid or not asset2_interim_valid):
-                    if not asset1_interim_valid:
-                        logger.warning(f"❌ BEARISH SMT REJECTED - Asset1 interim price invalid")
-                    if not asset2_interim_valid:
-                        logger.warning(f"❌ BEARISH SMT REJECTED - Asset2 interim price invalid")
         
         return None
     
     def _find_bullish_smt_with_tolerance(self, asset1_prev_lows, asset1_curr_lows, asset2_prev_lows, asset2_curr_lows, asset1_combined_data, asset2_combined_data, timeframe_minutes):
         """Find bullish SMT with 3-CANDLE TOLERANCE - VALIDATES BOTH ASSETS - UPDATED SIGNATURE"""
-        # Find aligned previous swings with tolerance
         aligned_prev_lows = self.swing_detector.find_aligned_swings(
             asset1_prev_lows, asset2_prev_lows,
             max_candle_diff=3, timeframe_minutes=timeframe_minutes
         )
         
-        # Find aligned current swings with tolerance
         aligned_curr_lows = self.swing_detector.find_aligned_swings(
             asset1_curr_lows, asset2_curr_lows,
             max_candle_diff=3, timeframe_minutes=timeframe_minutes
         )
-        
-        logger.debug(f"🔍 Bullish SMT: {len(aligned_prev_lows)} aligned prev lows, {len(aligned_curr_lows)} aligned curr lows")
         
         for prev_pair in aligned_prev_lows:
             asset1_prev, asset2_prev, prev_time_diff = prev_pair
@@ -1747,11 +1390,9 @@ class UltimateSMTDetector:
             for curr_pair in aligned_curr_lows:
                 asset1_curr, asset2_curr, curr_time_diff = curr_pair
                 
-                # Check SMT conditions
-                asset1_ll = asset1_curr['price'] < asset1_prev['price']  # Lower low
-                asset2_hl = asset2_curr['price'] >= asset2_prev['price']  # Higher low
+                asset1_ll = asset1_curr['price'] < asset1_prev['price']
+                asset2_hl = asset2_curr['price'] >= asset2_prev['price']
                 
-                # CRITICAL: Check interim price validation for BOTH ASSETS
                 asset1_interim_valid = self.swing_detector.validate_interim_price_action(
                     asset1_combined_data, asset1_prev, asset1_curr, "bullish", "low"
                 )
@@ -1761,19 +1402,7 @@ class UltimateSMTDetector:
                 )
                 
                 if asset1_ll and asset2_hl and asset1_interim_valid and asset2_interim_valid:
-                    logger.info(f"✅ BULLISH SMT FOUND with 3-candle tolerance:")
-                    logger.info(f"   Prev swings: {asset1_prev['time'].strftime('%H:%M')} & {asset2_prev['time'].strftime('%H:%M')} (diff: {prev_time_diff:.1f}min)")
-                    logger.info(f"   Curr swings: {asset1_curr['time'].strftime('%H:%M')} & {asset2_curr['time'].strftime('%H:%M')} (diff: {curr_time_diff:.1f}min)")
-                    logger.info(f"   Asset1: Lower Low ({asset1_prev['price']:.4f} → {asset1_curr['price']:.4f})")
-                    logger.info(f"   Asset2: Higher Low ({asset2_prev['price']:.4f} → {asset2_curr['price']:.4f})")
-                    logger.info(f"   Asset1 interim validation: ✅ PASSED")
-                    logger.info(f"   Asset2 interim validation: ✅ PASSED")
                     return (asset1_prev, asset1_curr, asset2_prev, asset2_curr)
-                elif asset1_ll and asset2_hl and (not asset1_interim_valid or not asset2_interim_valid):
-                    if not asset1_interim_valid:
-                        logger.warning(f"❌ BULLISH SMT REJECTED - Asset1 interim price invalid")
-                    if not asset2_interim_valid:
-                        logger.warning(f"❌ BULLISH SMT REJECTED - Asset2 interim price invalid")
         
         return None
     
@@ -1783,30 +1412,15 @@ class UltimateSMTDetector:
             return None
             
         signal_key = smt_data['signal_key']
-        timeframe = smt_data['timeframe']
-        cycle_type = smt_data['cycle']
         
-        # Update tracking
         if signal_key in self.smt_psp_tracking:
             tracking = self.smt_psp_tracking[signal_key]
             tracking['check_count'] += 1
             tracking['last_check'] = datetime.now(NY_TZ)
         
-        # Look for PSP in last 5 candles
-        psp_signal = self._detect_psp_last_n_candles(asset1_data, asset2_data, timeframe, n=5)
+        psp_signal = self._detect_psp_last_n_candles(asset1_data, asset2_data, smt_data['timeframe'], n=5)
         
         if psp_signal:
-            # VALIDATE PSP TIMING - Must be within reasonable time of SMT formation
-            smt_formation_time = tracking.get('formation_time', smt_data['formation_time'])
-            psp_formation_time = psp_signal['formation_time']
-            
-            if not self.timing_manager.is_psp_within_bounds(smt_formation_time, psp_formation_time, cycle_type):
-                logger.warning(f"⚠️ PSP TOO FAR FROM SMT: {cycle_type} SMT at {smt_formation_time.strftime('%H:%M')}, PSP at {psp_formation_time.strftime('%H:%M')}")
-                return None
-            
-            logger.info(f"🎯 PSP FOUND for SMT {smt_data['cycle']} {smt_data['quarters']} - {psp_signal['candles_ago']} candles ago")
-            
-            # Mark PSP as found for this SMT
             if signal_key in self.smt_psp_tracking:
                 self.smt_psp_tracking[signal_key]['psp_found'] = True
             
@@ -1826,11 +1440,9 @@ class UltimateSMTDetector:
         if asset1_complete.empty or asset2_complete.empty:
             return None
         
-        # Get last N complete candles
         asset1_recent = asset1_complete.tail(n)
         asset2_recent = asset2_complete.tail(n)
         
-        # Look for PSP in recent candles (most recent first)
         for i in range(len(asset1_recent)-1, -1, -1):
             if i >= len(asset2_recent):
                 continue
@@ -1847,7 +1459,6 @@ class UltimateSMTDetector:
                 
                 if asset1_color != asset2_color:
                     formation_time = asset1_candle['time']
-                    logger.info(f"🎯 PSP DETECTED: {timeframe} candle at {formation_time.strftime('%H:%M')} - Asset1: {asset1_color}, Asset2: {asset2_color}")
                     return {
                         'timeframe': timeframe,
                         'asset1_color': asset1_color,
@@ -1858,8 +1469,7 @@ class UltimateSMTDetector:
                         'candles_ago': len(asset1_recent) - i - 1,
                         'signal_key': f"PSP_{timeframe}_{asset1_color}_{asset2_color}_{formation_time.strftime('%m%d_%H%M')}"
                     }
-            except (ValueError, TypeError) as e:
-                logger.error(f"Error in PSP calculation: {e}")
+            except (ValueError, TypeError):
                 continue
         
         return None
@@ -1876,11 +1486,9 @@ class UltimateSMTDetector:
         
         tracking = self.smt_psp_tracking[signal_key]
         
-        # Stop checking if we found PSP or reached max checks
         if tracking['psp_found'] or tracking['check_count'] >= tracking['max_checks']:
             return False
         
-        # Stop checking if SMT is invalidated
         if signal_key in self.invalidated_smts:
             return False
         
@@ -1899,7 +1507,6 @@ class UltimateSMTDetector:
             
             if (asset1_current_high and asset1_current_high > critical_level) or \
                (asset2_current_high and asset2_current_high > critical_level):
-                logger.info(f"❌ BEARISH SMT INVALIDATED: Price above critical level {critical_level:.4f}")
                 self.invalidated_smts.add(smt_data['signal_key'])
                 return True
                 
@@ -1909,7 +1516,6 @@ class UltimateSMTDetector:
             
             if (asset1_current_low and asset1_current_low < critical_level) or \
                (asset2_current_low and asset2_current_low < critical_level):
-                logger.info(f"❌ BULLISH SMT INVALIDATED: Price below critical level {critical_level:.4f}")
                 self.invalidated_smts.add(smt_data['signal_key'])
                 return True
         
@@ -1921,22 +1527,16 @@ class UltimateSMTDetector:
             return False
            
         if signal_key in self.invalidated_smts:
-            logger.info(f"TRACE DUPE SKIP: Invalidated {signal_key}")
             return True
            
         count = self.signal_counts.get(signal_key, 0)
         candle_time = smt_data['candle_time']
         is_same_candle = candle_time == self.last_smt_candle
        
-        logger.info(f"TRACE DUPE CHECK {signal_key}: count {count}, same candle {is_same_candle}, last {self.last_smt_candle}")
-       
         if count >= 1 and is_same_candle:
-            logger.info(f"⚠️ DUPE SKIP: {signal_key} (count {count}, same candle)")
             return True
            
-        logger.info(f"TRACE DUPE OK: {signal_key} fresh")
         return False
-
     
     def _update_signal_count(self, signal_key):
         self.signal_counts[signal_key] = self.signal_counts.get(signal_key, 0) + 1
@@ -1947,48 +1547,8 @@ class UltimateSMTDetector:
                 del self.signal_counts[key]
 
     def debug_quarter_contents(self, cycle_type, asset_name, quarter_data):
-        """
-        Print detailed debug for a single asset and cycle:
-        - quarter names
-        - time ranges
-        - candle count
-        - swing highs/lows (first few)
-        """
-    
-        logger.info(f"📌 DEBUG — {cycle_type.upper()} / {asset_name}")
-    
-        for qname, qcontent in quarter_data.items():
-    
-            if not qcontent or len(qcontent) == 0:
-                logger.warning(f"   ⚠️ {qname}: EMPTY quarter")
-                continue
-    
-            # Extract timestamps
-            times = [c['time'] for c in qcontent]
-            start_t = times[0]
-            end_t = times[-1]
-    
-            # Extract swings if available
-            highs = [c for c in qcontent if c.get("is_swing_high")]
-            lows  = [c for c in qcontent if c.get("is_swing_low")]
-    
-            logger.info(f"\n   🟦 Quarter: {qname}")
-            logger.info(f"      🕒 Range: {start_t} → {end_t}")
-            logger.info(f"      🔢 Candles: {len(qcontent)}")
-    
-            if highs:
-                logger.info("      🔺 High Swings:")
-                for h in highs[:3]:
-                    logger.info(f"         • {h['time']} → {h['high']}")
-            else:
-                logger.info("      🔺 High Swings: NONE")
-    
-            if lows:
-                logger.info("      🔻 Low Swings:")
-                for l in lows[:3]:
-                    logger.info(f"         • {l['time']} → {l['low']}")
-            else:
-                logger.info("      🔻 Low Swings: NONE")
+        """Print detailed debug for a single asset and cycle"""
+        pass
 
 
 # ================================
