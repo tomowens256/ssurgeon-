@@ -3354,6 +3354,17 @@ class FVGDetector:
             'taps': 0, 'in_zone_candles': 0, 'is_hp': False
         }
 
+    def test_fvg_detection(self):
+        """Test FVG detection"""
+        for instrument in self.instruments:
+            for tf in ['M15', 'H1', 'H4']:
+                data = self.market_data[instrument].get(tf)
+                if data is not None and not data.empty:
+                    fvgs = self.fvg_detector.scan_tf(data, tf, instrument)
+                    logger.info(f"Test {instrument} {tf}: Found {len(fvgs)} FVGs")
+                    for fvg in fvgs:
+                        logger.info(f"  - {fvg['direction']} FVG at {fvg['fvg_low']:.4f}-{fvg['fvg_high']:.4f}")
+
     def _is_invalidated(self, fvg, post_df):
         """Your rule: Bull: close < B low OR close > B high + 4*std. Flip bear."""
         threshold = self.invalidate_std_mult * fvg['candle_b_std']
