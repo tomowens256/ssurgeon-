@@ -3179,6 +3179,12 @@ class UltimateTradingSystem:
             if tf not in required_timeframes:
                 required_timeframes.append(tf)
         
+        # ADD FVG Timeframes:
+        fvg_timeframes = ['M15', 'H1', 'H2', 'H3', 'H4', 'D']
+        for tf in fvg_timeframes:
+            if tf not in required_timeframes:
+                required_timeframes.append(tf)
+        
         # Create all fetch tasks
         for instrument in self.instruments:
             for tf in required_timeframes:
@@ -3635,7 +3641,7 @@ class UltimateTradingSystem:
             smts = []  # All SMTs
     
             # Raw FVG scan (no zones—just dir)
-            for tf in ['M15', 'H1', 'H4', 'D']:
+            for tf in ['M15', 'H1', 'H2', 'H3', 'H4', 'D']:
                 for inst in self.instruments:
                     data = self.market_data[inst].get(tf)
                     if data is not None and not data.empty:
