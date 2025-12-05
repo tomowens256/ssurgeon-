@@ -3637,86 +3637,119 @@ class UltimateTradingSystem:
         try:
             logger.info(f"🔍 CROSS-TF FVG+SMT SCAN for {self.pair_group}")
             
-            # Map FVG timeframes to allowed SMT cycles
-            fvg_smt_mapping = {
-                
-                'H4': ['weekly', 'daily'],
-                'H2':['daily'],
-                'H1': ['daily'],
-                'M30':['daily'],
-                'M15': ['daily', '90min']
+            # DEFINE CROSS-TF MAPPING
+            smt_to_fvg_tfs = {
+                'weekly': ['H4'],      # Weekly SMT → H4 FVGs
+                'daily': ['H4', 'H1'], # Daily SMT → H4 & H1 FVGs
+                '90min': ['M15']       # 90min SMT → M15 FVGs
             }
             
-            # Scan FVGs on H4, H1, M15
-            for fvg_tf in ['H4', 'H1', 'M15']:
-                # Get FVGs for each instrument on this timeframe
-                fvgs_per_asset = {}
-                for inst in self.instruments:
+            # Get FVGs for ALL instruments and timeframes first
+            all_fvgs = {}
+            for inst in self.instruments:
+                all_fvgs[inst] = {}
+                for fvg_tf in ['H4', 'H1', 'M15']:
                     data = self.market_data[inst].get(fvg_tf)
                     if data is not None and not data.empty:
                         fvgs = self.fvg_detector.scan_tf(data, fvg_tf, inst)
-                        fvgs_per_asset[inst] = fvgs
+                        all_fvgs[inst][fvg_tf] = fvgs
                         logger.info(f"🔍 {inst} {fvg_tf}: Found {len(fvgs)} FVGs")
+            
+            # Check all active SMTs
+            for smt_key, smt_feature in list(self.feature_box.active_features['smt'].items()):
+                if self.feature_box._is_feature_expired(smt_feature):
+                    continue
+                    
+                smt_data = smt_feature['smt_data']
+                smt_cycle = smt_data['cycle']
+                smt_direction = smt_data['direction']
+                has_psp = smt_feature['psp_data'] is not None
                 
-                # Check each FVG for SMT confluence
-                allowed_smt_cycles = fvg_smt_mapping[fvg_tf]
+                # Get which FVG timeframes to check for this SMT cycle
+                fvg_timeframes_to_check = smt_to_fvg_tfs.get(smt_cycle, [])
                 
-                for inst in self.instruments:
-                    for fvg in fvgs_per_asset.get(inst, []):
-                        fvg_direction = fvg['direction']
-                        fvg_low = fvg['fvg_low']
-                        fvg_high = fvg['fvg_high']
+                logger.info(f"🔍 Checking {smt_cycle} SMT against FVGs: {fvg_timeframes_to_check}")
+                
+                # Check each instrument for matching FVGs
+                for instrument in self.instruments:
+                    for fvg_tf in fvg_timeframes_to_check:
+                        fvgs = all_fvgs.get(instrument, {}).get(fvg_tf, [])
                         
-                        # Check active SMTs that could tap this FVG
-                        for smt_cycle in allowed_smt_cycles:
-                            # Find SMTs in this cycle with matching direction
-                            smt_tf = self.pair_config['timeframe_mapping'][smt_cycle]
-                            
-                            # Check if any SMT tapped this FVG
-                            # (Need to implement this check)
+                        # Filter for same direction FVGs
+                        same_dir_fvgs = [f for f in fvgs if f['direction'] == smt_direction]
+                        
+                        for fvg in same_dir_fvgs:
+                            # Check if SMT tapped this FVG (cross-timeframe check)
                             tapped = self._check_cross_tf_smt_tap(
-                                fvg, inst, fvg_tf, smt_cycle, smt_tf
+                                fvg, smt_data, instrument, fvg_tf, smt_cycle
                             )
                             
-                            if tapped:
-                                # Get SMT data and check PSP
-                                smt_data = self._get_smt_for_cycle(smt_cycle, fvg_direction)
-                                if smt_data:
-                                    has_psp = smt_data.get('psp_confirmed', False)
-                                    return self._send_fvg_smt_tap_signal(
-                                        fvg, smt_data, has_psp, fvg['is_hp']
-                                    )
+                            if tapped and has_psp:
+                                # Check if HP FVG (only one asset has FVG)
+                                is_hp = fvg.get('is_hp', False)
+                                
+                                logger.info(f"✅ CROSS-TF CONFLUENCE: {smt_cycle} SMT tapped {fvg_tf} FVG on {instrument}")
+                                return self._send_fvg_smt_tap_signal(fvg, smt_data, has_psp, is_hp)
             
+            # Fallback to double SMTs
+            logger.info(f"🔍 No Cross-TF FVG+SMT - checking doubles")
             return self._scan_double_smts_temporal()
             
         except Exception as e:
             logger.error(f"❌ Cross-TF FVG+SMT scan: {str(e)}", exc_info=True)
             return False
+
+    
     
     def _scan_fvg_with_smt_tap(self):
-        """Find FVGs where SMT's SECOND SWING traded in FVG zone"""
-        logger.info(f"🔍 SCANNING: FVG + SMT Second Swing Tap")
+        """Find FVGs where SMT's SECOND SWING traded in FVG zone - CROSS-TIMEFRAME FIXED"""
+        logger.info(f"🔍 SCANNING: FVG + SMT Second Swing Tap (Cross-TF)")
         
-        # Find all FVGs
-        premium_fvgs = self._find_zone_fvgs('premium_zone', 'bearish')
-        discount_fvgs = self._find_zone_fvgs('discount_zone', 'bullish')
-        all_fvgs = premium_fvgs + discount_fvgs
+        # CORRECT CROSS-TIMEFRAME MAPPING
+        fvg_to_smt_cycles = {
+            'H4': ['weekly', 'daily'],    # H4 FVG → Weekly (H1) or Daily (M15) SMT
+            'H1': ['daily'],              # H1 FVG → Daily (M15) SMT
+            'M15': ['daily', '90min']     # M15 FVG → Daily (M15) or 90min (M5) SMT
+        }
         
-        logger.info(f"🔍 Found {len(all_fvgs)} FVGs to check")
+        # We need to get FVGs from FVGDetector, not from _find_zone_fvgs (which uses Fibonacci)
+        # Let's scan for FVGs using FVGDetector
+        all_fvgs = []
+        
+        for instrument in self.instruments:
+            for fvg_tf in ['H4', 'H1', 'M15']:  # Only these FVG timeframes
+                data = self.market_data[instrument].get(fvg_tf)
+                if data is not None and not data.empty:
+                    # Use FVGDetector to get FVGs
+                    fvgs = self.fvg_detector.scan_tf(data, fvg_tf, instrument)
+                    for fvg in fvgs:
+                        # Convert FVGDetector format to the format expected by this method
+                        fvg_idea = {
+                            'fvg_name': f"{instrument}_{fvg_tf}_{fvg['formation_time'].strftime('%m%d%H%M')}",
+                            'fvg_levels': f"{fvg['fvg_low']:.4f} - {fvg['fvg_high']:.4f}",
+                            'direction': fvg['direction'],
+                            'timeframe': fvg_tf,
+                            'asset': instrument,
+                            'formation_time': fvg['formation_time'],
+                            'fvg_low': fvg['fvg_low'],  # Keep for easy access
+                            'fvg_high': fvg['fvg_high'],
+                            'is_hp': fvg.get('is_hp', False)
+                        }
+                        all_fvgs.append(fvg_idea)
+        
+        logger.info(f"🔍 Found {len(all_fvgs)} FVGs to check (from FVGDetector)")
         
         for fvg_idea in all_fvgs:
-            # Get FVG levels
-            fvg_levels = fvg_idea['fvg_levels']
-            fvg_low = float(fvg_levels.split(' - ')[0])
-            fvg_high = float(fvg_levels.split(' - ')[1])
             fvg_direction = fvg_idea['direction']
             fvg_timeframe = fvg_idea['timeframe']
             fvg_asset = fvg_idea['asset']
+            fvg_low = fvg_idea['fvg_low']
+            fvg_high = fvg_idea['fvg_high']
             
-            # Get relevant cycles for this timeframe
-            relevant_cycles = self.timeframe_cycle_map.get(fvg_timeframe, [])
+            # Get which SMT cycles can tap this FVG timeframe
+            relevant_cycles = fvg_to_smt_cycles.get(fvg_timeframe, [])
             
-            logger.info(f"🔍 Checking FVG {fvg_idea['fvg_name']} - Cycles: {relevant_cycles}")
+            logger.info(f"🔍 Checking FVG {fvg_idea['fvg_name']} - Can be tapped by: {relevant_cycles}")
             
             # Check all active SMTs
             for smt_key, smt_feature in self.feature_box.active_features['smt'].items():
@@ -3724,32 +3757,101 @@ class UltimateTradingSystem:
                     continue
                     
                 smt_data = smt_feature['smt_data']
+                smt_cycle = smt_data['cycle']
                 
-                # Check direction and cycle match
-                if (smt_data['direction'] == fvg_direction and 
-                    smt_data['cycle'] in relevant_cycles):
+                # Check if this SMT cycle is allowed to tap this FVG timeframe
+                if smt_cycle not in relevant_cycles:
+                    continue
                     
-                    # Check if SMT's second swing traded in FVG zone
-                    tapped = self._check_smt_second_swing_in_fvg(
-                        smt_data, fvg_asset, fvg_low, fvg_high, fvg_direction
+                # Check direction match
+                if smt_data['direction'] != fvg_direction:
+                    continue
+                
+                # Check if SMT's second swing traded in FVG zone (CROSS-TIMEFRAME)
+                tapped = self._check_cross_tf_smt_second_swing_in_fvg(
+                    smt_data, fvg_asset, fvg_low, fvg_high, fvg_direction, fvg_timeframe, smt_cycle
+                )
+                
+                if tapped:
+                    # Check if only ONE asset tapped (HP FVG)
+                    is_hp_fvg = self._check_hp_fvg_fix(fvg_idea, fvg_asset)
+                    
+                    # Get PSP status
+                    has_psp = smt_feature['psp_data'] is not None
+                    
+                    logger.info(f"✅ FVG+SMT TAP CONFIRMED: {smt_cycle} {smt_data['direction']} "
+                               f"tapped {fvg_timeframe} FVG on {fvg_asset}, HP: {is_hp_fvg}, PSP: {has_psp}")
+                    
+                    # Send the signal
+                    return self._send_fvg_smt_tap_signal(
+                        fvg_idea, smt_data, has_psp, is_hp_fvg
                     )
-                    
-                    if tapped:
-                        # Check if only ONE asset tapped (HP FVG)
-                        is_hp_fvg = self._check_hp_fvg_fix(fvg_idea, fvg_asset)
-                        
-                        # Get PSP status
-                        has_psp = smt_feature['psp_data'] is not None
-                        
-                        logger.info(f"✅ FVG+SMT TAP CONFIRMED: {smt_data['cycle']} {smt_data['direction']} "
-                                   f"tapped FVG on {fvg_asset}, HP: {is_hp_fvg}, PSP: {has_psp}")
-                        
-                        # Send the signal
-                        return self._send_fvg_smt_tap_signal(
-                            fvg_idea, smt_data, has_psp, is_hp_fvg
-                        )
         
         return False
+
+    def _check_cross_tf_smt_second_swing_in_fvg(self, smt_data, asset, fvg_low, fvg_high, fvg_direction, fvg_tf, smt_cycle):
+        """Check if SMT's second swing (on lower TF) entered FVG zone (on higher TF)"""
+        try:
+            # Get SMT's timeframe from config
+            smt_tf = self.pair_config['timeframe_mapping'][smt_cycle]
+            
+            # Get price data for SMT timeframe (LOWER timeframe)
+            smt_price_data = self.market_data[asset].get(smt_tf)
+            if smt_price_data is None or smt_price_data.empty:
+                logger.info(f"❌ No {smt_tf} data for {asset}")
+                return False
+            
+            # Get SMT formation time
+            smt_formation_time = smt_data.get('formation_time')
+            if not smt_formation_time:
+                logger.info(f"❌ No formation time in SMT data")
+                return False
+            
+            # Get FVG formation time
+            fvg_formation_time = None  # We need to pass this from fvg_idea
+            # We'll get it from the fvg data in the calling method
+            
+            # Get the second swing time from SMT data
+            second_swing_time = smt_data.get('second_swing_time', smt_formation_time)
+            
+            # Look for candles around second swing time in SMT timeframe
+            time_diffs = abs(smt_price_data['time'] - second_swing_time)
+            closest_idx = time_diffs.idxmin()
+            
+            # Check 5 candles before and after (adjust as needed)
+            start_idx = max(0, closest_idx - 5)
+            end_idx = min(len(smt_price_data) - 1, closest_idx + 5)
+            
+            logger.info(f"🔍 Cross-TF Tap: {smt_cycle}({smt_tf}) → {fvg_tf} FVG at {fvg_low:.4f}-{fvg_high:.4f}")
+            logger.info(f"   Checking {smt_tf} candles around {second_swing_time.strftime('%H:%M')}")
+            
+            for idx in range(start_idx, end_idx + 1):
+                candle = smt_price_data.iloc[idx]
+                
+                # Check if this candle entered the FVG zone
+                if fvg_direction == 'bullish':
+                    # Bullish FVG: zone is above, price enters from below
+                    # Zone tapped if candle's low <= fvg_high AND candle's high >= fvg_low
+                    if candle['low'] <= fvg_high and candle['high'] >= fvg_low:
+                        entry_price = candle['low']  # Price entered from bottom
+                        logger.info(f"✅ CROSS-TF TAP: {smt_tf} candle at {candle['time'].strftime('%H:%M')} "
+                                   f"entered bullish FVG zone (low: {candle['low']:.4f} <= {fvg_high:.4f})")
+                        return True
+                else:  # bearish
+                    # Bearish FVG: zone is below, price enters from above  
+                    # Zone tapped if candle's high >= fvg_low AND candle's low <= fvg_high
+                    if candle['high'] >= fvg_low and candle['low'] <= fvg_high:
+                        entry_price = candle['high']  # Price entered from top
+                        logger.info(f"✅ CROSS-TF TAP: {smt_tf} candle at {candle['time'].strftime('%H:%M')} "
+                                   f"entered bearish FVG zone (high: {candle['high']:.4f} >= {fvg_low:.4f})")
+                        return True
+            
+            logger.info(f"❌ No {smt_tf} candle entered FVG zone around second swing")
+            return False
+            
+        except Exception as e:
+            logger.error(f"❌ Cross-TF tap check error: {e}")
+            return False
     
     def _check_smt_second_swing_in_fvg(self, smt_data, asset, fvg_low, fvg_high, direction, fvg_formation=None):
         """Check SMT 2nd swing taps FVG zone (post-formation, safe extract)."""
