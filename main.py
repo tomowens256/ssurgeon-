@@ -2589,6 +2589,10 @@ class RealTimeFeatureBox:
         """SMT+PSP w/FVG tap priority (abort old if tap, send enhanced)."""
         signals_sent = 0
         fvg_detector = FVGDetector()  # Quick scan
+        if not hasattr(self, 'instruments') or not isinstance(self.instruments, (list, tuple)):
+            logger.error(f"❌ Invalid instruments: {self.instruments} (expected list, got {type(self.instruments)})")
+            return None
+    
         fvgs_per_asset = {inst: [] for inst in self.instruments}
         for tf in ['M15', 'H1', 'H4', 'D']:
             for inst in self.instruments:
