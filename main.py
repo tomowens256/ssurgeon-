@@ -3633,75 +3633,64 @@ class UltimateTradingSystem:
         return message
 
     def _scan_fvg_smt_confluence(self):
-        """Pure FVG + SMT tap (dir match, second swing in zone) + PSP req. Fallback: Double SMT w/PSP."""
+        """Cross-timeframe: Lower TF SMT taps into Higher TF FVG"""
         try:
-            logger.info(f"🔍 PURE FVG + SMT TAP SCAN for {self.pair_group}")
-            fvg_detector = self.fvg_detector
-            fvgs_per_asset = {inst: [] for inst in self.instruments}
-            smts = []  # All SMTs
-    
-            # Raw FVG scan (no zones—just dir)
-            for tf in ['M15', 'H1', 'H2', 'H3', 'H4', 'D']:
+            logger.info(f"🔍 CROSS-TF FVG+SMT SCAN for {self.pair_group}")
+            
+            # Map FVG timeframes to allowed SMT cycles
+            fvg_smt_mapping = {
+                
+                'H4': ['weekly', 'daily'],
+                'H2':['daily'],
+                'H1': ['daily'],
+                'M30':['daily'],
+                'M15': ['daily', '90min']
+            }
+            
+            # Scan FVGs on H4, H1, M15
+            for fvg_tf in ['H4', 'H1', 'M15']:
+                # Get FVGs for each instrument on this timeframe
+                fvgs_per_asset = {}
                 for inst in self.instruments:
-                    data = self.market_data[inst].get(tf)
+                    data = self.market_data[inst].get(fvg_tf)
                     if data is not None and not data.empty:
-                        new_fvgs = fvg_detector.scan_tf(data, tf, inst)
-                        fvgs_per_asset[inst].extend(new_fvgs)
-                        logger.info(f"🔍 {inst} {tf}: Found {len(new_fvgs)} FVGs ({[f['direction'] for f in new_fvgs]})")
-    
-                # HP unicorn check
-                if len(self.instruments) >= 2:
-                    fvg_detector.check_cross_asset_hp(fvgs_per_asset[self.instruments[0]], fvgs_per_asset[self.instruments[1]], tf)
-    
-            logger.info(f"🔍 Total FVGs: {sum(len(v) for v in fvgs_per_asset.values())}")
-    
-            # SMT scan per cycle/TF
-            for cycle, cycle_tf in self.pair_config['timeframe_mapping'].items():
-                if cycle_tf not in ['M15', 'H1', 'H4', 'D']:
-                    continue
-                asset1_data = self.market_data[self.instruments[0]].get(cycle_tf)
-                asset2_data = self.market_data[self.instruments[1]].get(cycle_tf)
-                if asset1_data is None or asset2_data is None or asset1_data.empty or asset2_data.empty:
-                    logger.warning(f"⚠️ Skip {cycle} {cycle_tf}: No data")
-                    continue
-    
-                smt_signal = self.smt_detector.detect_smt_all_cycles(asset1_data, asset2_data, cycle)
-                if smt_signal:
-                    psp = self.smt_detector.check_psp_for_smt(smt_signal, asset1_data, asset2_data)
-                    smt_signal['psp_confirmed'] = psp is not None
-                    smt_signal['tf'] = cycle_tf
-                    logger.info(f"🎯 SMT {cycle} {smt_signal['direction']} + PSP: {smt_signal['psp_confirmed']}")
-    
-                    # Tap check per FVG (dir + zone entry)
-                    tapped = False
-                    matched_fvg = None
-                    for inst in self.instruments:
-                        for fvg in [f for f in fvgs_per_asset[inst] if f['tf'] == cycle_tf and f['direction'] == smt_signal['direction']]:
-                            fvg_low = fvg['fvg_low']
-                            fvg_high = fvg['fvg_high']
-                            direction = fvg['direction']
-                            is_tapped = self._check_smt_second_swing_in_fvg(smt_signal, inst, fvg['fvg_low'], fvg['fvg_high'], direction, fvg['formation_time'])  # Pass formation
-                            logger.info(f"🔍 TAP CHECK {smt_signal['cycle']} on {inst} FVG: {is_tapped} (swing low/high {smt_signal.get('second_swing_low', 'N/A')}/{smt_signal.get('second_swing_high', 'N/A')} vs zone {fvg_low}-{fvg_high})")
-                            if is_tapped:
-                                tapped = True
-                                matched_fvg = fvg
-                                break
-                        if tapped:
-                            break
-    
-                    if tapped and smt_signal['psp_confirmed']:
-                        is_hp = matched_fvg['is_hp'] if matched_fvg else False
-                        logger.info(f"✅ BREAD & BUTTER: FVG + SMT tap + PSP on {matched_fvg['asset']} {cycle_tf}")
-                        return self._send_fvg_smt_tap_signal(matched_fvg, smt_signal, True, is_hp)
-    
-                    smts.append(smt_signal)
-    
-            # Fallback doubles
-            logger.info(f"🔍 No FVG+SMT+PSP - checking doubles")
+                        fvgs = self.fvg_detector.scan_tf(data, fvg_tf, inst)
+                        fvgs_per_asset[inst] = fvgs
+                        logger.info(f"🔍 {inst} {fvg_tf}: Found {len(fvgs)} FVGs")
+                
+                # Check each FVG for SMT confluence
+                allowed_smt_cycles = fvg_smt_mapping[fvg_tf]
+                
+                for inst in self.instruments:
+                    for fvg in fvgs_per_asset.get(inst, []):
+                        fvg_direction = fvg['direction']
+                        fvg_low = fvg['fvg_low']
+                        fvg_high = fvg['fvg_high']
+                        
+                        # Check active SMTs that could tap this FVG
+                        for smt_cycle in allowed_smt_cycles:
+                            # Find SMTs in this cycle with matching direction
+                            smt_tf = self.pair_config['timeframe_mapping'][smt_cycle]
+                            
+                            # Check if any SMT tapped this FVG
+                            # (Need to implement this check)
+                            tapped = self._check_cross_tf_smt_tap(
+                                fvg, inst, fvg_tf, smt_cycle, smt_tf
+                            )
+                            
+                            if tapped:
+                                # Get SMT data and check PSP
+                                smt_data = self._get_smt_for_cycle(smt_cycle, fvg_direction)
+                                if smt_data:
+                                    has_psp = smt_data.get('psp_confirmed', False)
+                                    return self._send_fvg_smt_tap_signal(
+                                        fvg, smt_data, has_psp, fvg['is_hp']
+                                    )
+            
             return self._scan_double_smts_temporal()
-    
+            
         except Exception as e:
-            logger.error(f"❌ FVG+SMT scan: {str(e)}", exc_info=True)
+            logger.error(f"❌ Cross-TF FVG+SMT scan: {str(e)}", exc_info=True)
             return False
     
     def _scan_fvg_with_smt_tap(self):
