@@ -3649,55 +3649,7 @@ class UltimateTradingSystem:
         
         return ". ".join(reasons)
     
-    def _find_zone_fvgs(self, fib_zone, direction):
-        """Find FVGs in specific Fibonacci zone with direction"""
-        zone_fvgs = []
-        
-        for timeframe in ['H4', 'H1', 'M15']:
-            for instrument in self.instruments:
-                data = self.market_data[instrument].get(timeframe)
-                if not self._is_valid_data(data):
-                    continue
-                
-                # Use the FVG analyzer to find FVGs
-                scanner = self.fvg_analyzer.fvg_scanners[timeframe]
-                fvgs = scanner._detect_all_fvgs(data, instrument, timeframe)
-                
-                for fvg in fvgs:
-                    # Classify the FVG
-                    fib_levels = scanner._calculate_fib_levels(data)
-                    classified_fvg = scanner._classify_fvg(fvg, data, fib_levels)
-                    
-                    # Check if it matches our zone and direction
-                    if (classified_fvg['fib_context'] == fib_zone and 
-                        classified_fvg['direction'] == direction):
-                        
-                        # Check if FVG was recently tapped (last 5 candles)
-                        if scanner._was_fvg_tapped_recently(classified_fvg, data, lookback_candles=5):
-                            trade_idea = self._create_basic_fvg_idea(classified_fvg, instrument, timeframe)
-                            zone_fvgs.append(trade_idea)
-                            logger.info(f"✅ {fib_zone} FVG found: {trade_idea['fvg_name']}")
-        
-        # Sort by timeframe importance (H4 > H1 > M15)
-        zone_fvgs.sort(key=lambda x: ['H4', 'H1', 'M15'].index(x['timeframe']))
-        return zone_fvgs
-    
-    def _create_basic_fvg_idea(self, fvg, asset, timeframe):
-        """Create basic FVG trade idea"""
-        return {
-            'type': 'BASIC_FVG',
-            'pair_group': self.pair_group,
-            'direction': fvg['direction'],
-            'asset': asset,
-            'timeframe': timeframe,
-            'fvg_name': f"{asset}_{timeframe}_{fvg['formation_time'].strftime('%m%d%H%M')}",
-            'fvg_type': fvg['classification'],
-            'fvg_levels': f"{fvg['fvg_low']:.4f} - {fvg['fvg_high']:.4f}",
-            'formation_time': fvg['formation_time'],
-            'fib_zone': fvg['fib_context'],
-            'timestamp': datetime.now(NY_TZ)
-        }
-    
+
     def _create_ultimate_fvg_smt_idea(self, fvg_idea, smt_confluence):
         """Create ULTIMATE FVG + Multiple SMTs with PSP idea"""
         # Get the multiple SMTs
@@ -3972,59 +3924,7 @@ class UltimateTradingSystem:
                 'is_inversion': False,
                 'description': f"Regular {fvg_idea['direction']} FVG in {fvg_idea['fib_zone']} zone"
             }
-    
-    def _check_fvg_inversion(self, fvg_idea, data, fvg_low, fvg_high):
-        """Check if FVG has been inverted (price went through it)"""
-        formation_time = fvg_idea['formation_time']
-        
-        # Find the formation candle index
-        formation_idx = data[data['time'] == formation_time].index
-        if len(formation_idx) == 0:
-            return False
-            
-        formation_idx = formation_idx[0]
-        
-        # Check candles after formation for inversion
-        for idx in range(formation_idx + 1, len(data)):
-            candle = data.iloc[idx]
-            
-            if fvg_idea['direction'] == 'bullish':
-                # Bullish FVG inverted if price went below fvg_low
-                if candle['low'] < fvg_low:
-                    return True
-            else:  # bearish
-                # Bearish FVG inverted if price went above fvg_high
-                if candle['high'] > fvg_high:
-                    return True
-        
-        return False
-    
-    def _check_hp_fvg(self, fvg_idea):
-        """Check if this is a High Probability FVG (only one asset has FVG)"""
-        # Get the other instrument in this pair group
-        instruments = self.instruments
-        current_asset = fvg_idea['asset']
-        other_asset = [inst for inst in instruments if inst != current_asset][0]
-        
-        # Check if the other asset has any FVG around the same time
-        fvg_formation_time = fvg_idea['formation_time']
-        
-        # Scan the other asset for FVGs in the same timeframe
-        scanner = self.fvg_analyzer.fvg_scanners[fvg_idea['timeframe']]
-        other_data = self.market_data[other_asset].get(fvg_idea['timeframe'])
-        
-        if not self._is_valid_data(other_data):
-            return False
-        
-        other_fvgs = scanner._detect_all_fvgs(other_data, other_asset, fvg_idea['timeframe'])
-        
-        # Check if other asset has FVG around same time (±2 hours)
-        for other_fvg in other_fvgs:
-            time_diff = abs((other_fvg['formation_time'] - fvg_formation_time).total_seconds())
-            if time_diff < 7200:  # 2 hours
-                return False  # Both have FVGs, not HP
-        
-        return True  # Only this asset has FVG
+
     
     def _format_fvg_smt_idea_message(self, idea):
         """Format FVG-SMT confluence trade idea - REMOVED CONFIDENCE"""
