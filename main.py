@@ -3991,26 +3991,29 @@ class UltimateTradingSystem:
                 self.feature_box.add_smt(smt_signal, psp_signal)
 
     def _check_hp_fvg_fix(self, fvg_idea, tapped_asset):
-        """Check if only ONE asset tapped the FVG"""
+        """Check if only ONE asset tapped the FVG (using FVGDetector data)"""
         other_asset = [inst for inst in self.instruments if inst != tapped_asset][0]
         fvg_time = fvg_idea['formation_time']
         timeframe = fvg_idea['timeframe']
         
-        # Get data for other asset
+        # Get FVGs for other asset
         other_data = self.market_data[other_asset].get(timeframe)
-        if not self._is_valid_data(other_data):
-            return True  # If no data, assume HP
+        if other_data is None or other_data.empty:
+            # If no data for other asset, can't determine - assume NOT HP to be safe
+            return False
         
-        # Check if other asset has FVG at same time (±1 candle)
-        scanner = self.fvg_analyzer.fvg_scanners[timeframe]
-        other_fvgs = scanner._detect_all_fvgs(other_data, other_asset, timeframe)
+        # Scan for FVGs in other asset
+        other_fvgs = self.fvg_detector.scan_tf(other_data, timeframe, other_asset)
         
+        # Check if other asset has FVG around same time (±2 hours)
         for other_fvg in other_fvgs:
-            time_diff = abs((other_fvg['formation_time'] - fvg_time).total_seconds() / 60)
-            if time_diff < 120:  # Within 2 hours
+            time_diff = abs((other_fvg['formation_time'] - fvg_time).total_seconds() / 3600)
+            if time_diff < 2:  # Within 2 hours
+                logger.info(f"❌ NOT HP FVG: Both assets have FVGs within 2 hours")
                 return False  # Both have FVGs, not HP
         
-        return True
+        logger.info(f"✅ HP FVG: Only {tapped_asset} has FVG")
+        return True  # Only this asset has FVG
 
     def _scan_double_smts_temporal(self):
         """Double SMT (PSP req, dir match, span from 2nd swing): daily-daily 6hr, weekly-daily 1D, daily-90min 200min."""
