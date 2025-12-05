@@ -4456,25 +4456,24 @@ class UltimateTradingSystem:
         idea = {
             'type': 'FVG_SMT_TAP',
             'pair_group': self.pair_group,
-            'direction': fvg_idea['direction'],
-            'asset': fvg_idea['asset'],
-            'timeframe': fvg_idea.get('tf', fvg_idea.get('timeframe', 'Unknown')),
-            'fvg_name': fvg_idea.get('fvg_name', f"{fvg_idea['asset']}_{fvg_idea.get('tf', 'Unknown')}_{fvg_idea['formation_time'].strftime('%m%d%H%M')}"),
-            'fvg_type': fvg_idea.get('classification', 'regular_fvg').replace('_', ' ').title(),
-            'fvg_levels': f"{fvg_idea['fvg_low']:.4f} - {fvg_idea['fvg_high']:.4f}",
-            'formation_time': fvg_idea['formation_time'],
-            'fib_zone': '',  # No zones
+            'direction': fvg['direction'],
+            'asset': fvg['asset'],
+            'timeframe': fvg['tf'],  # Note: 'tf' not 'timeframe'
+            'fvg_name': f"{fvg['asset']}_{fvg['tf']}_{fvg['formation_time'].strftime('%m%d%H%M')}",
+            'fvg_type': 'regular_fvg',  # Simple classification
+            'fvg_levels': f"{fvg['fvg_low']:.4f} - {fvg['fvg_high']:.4f}",
+            'formation_time': fvg['formation_time'],
+            'fib_zone': '',  # No Fibonacci
             'smt_cycle': smt_data['cycle'],
             'smt_has_psp': has_psp,
             'is_hp_fvg': is_hp_fvg,
-            'confluence_strength': strength,  # For formatter
-            'strength': strength,
-            'reasoning': f"{fvg_idea['direction']} FVG (formed {fvg_idea['formation_time'].strftime('%H:%M')}, zone {fvg_idea['fvg_low']:.4f}-{fvg_idea['fvg_high']:.4f}) tapped by {smt_data['cycle']} SMT 2nd swing ({smt_data.get('second_swing_time', smt_data['formation_time']).strftime('%H:%M')}) + {'PSP' if has_psp else 'no PSP'}",
+            'confluence_strength': 'STRONG' if is_hp_fvg else 'GOOD',
+            'reasoning': f"{fvg['direction']} FVG tapped by {smt_data['cycle']} SMT",
             'timestamp': datetime.now(NY_TZ),
             'idea_key': f"FVG_SMT_{self.pair_group}_{smt_data['cycle']}_{datetime.now(NY_TZ).strftime('%H%M%S')}"
         }
        
-        # Send (your old)
+        
         return self._send_fvg_trade_idea(idea)
     
     def _send_double_smt_only_signal(self, primary_smt, secondary_smt, span_min):
