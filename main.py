@@ -3676,30 +3676,7 @@ class UltimateTradingSystem:
         }
         
         return idea
-    
 
-
-    
-    def _generate_ultimate_reasoning(self, fvg_idea, smt_confluence):
-        """Generate reasoning for ultimate confluence"""
-        reasons = []
-        
-        # FVG context
-        zone = "premium" if fvg_idea['fib_zone'] == 'premium_zone' else "discount"
-        reasons.append(f"{zone.upper()} zone {fvg_idea['direction']} FVG for reversal")
-        
-        # Multiple SMTs
-        smt_cycles = [smt['smt_data']['cycle'] for smt in smt_confluence['smts'][:2]]
-        reasons.append(f"Multiple SMTs confirming direction: {', '.join(smt_cycles)}")
-        
-        # PSP confirmation
-        if smt_confluence['with_psp']:
-            reasons.append("All SMTs have PSP confirmation")
-        
-        # Timeframe alignment
-        reasons.append(f"{fvg_idea['timeframe']} FVG aligns with SMT timeframes")
-        
-        return ". ".join(reasons)
     
     def _generate_strong_reasoning(self, fvg_idea, smt_confluence):
         """Generate reasoning for strong confluence"""
