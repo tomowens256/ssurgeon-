@@ -4068,7 +4068,7 @@ class UltimateTradingSystem:
         """Pure FVG + SMT tap (dir match, second swing in zone) + PSP req. Fallback: Double SMT w/PSP."""
         try:
             logger.info(f"🔍 PURE FVG + SMT TAP SCAN for {self.pair_group}")
-            fvg_detector = FVGDetector()  # Your class
+            fvg_detector = self.fvg_detector
             fvgs_per_asset = {inst: [] for inst in self.instruments}
             smts = []  # All SMTs
     
