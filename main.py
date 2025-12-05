@@ -3872,58 +3872,6 @@ class UltimateTradingSystem:
 
 
     
-    def _classify_fvg_type(self, fvg_idea):
-        """Classify FVG type: regular, inversion, or HP FVG"""
-        # Get the scanner for this timeframe
-        scanner = self.fvg_analyzer.fvg_scanners[fvg_idea['timeframe']]
-        
-        # Get market data for this instrument
-        data = self.market_data[fvg_idea['asset']].get(fvg_idea['timeframe'])
-        if not self._is_valid_data(data):
-            return {
-                'type': 'REGULAR_FVG',
-                'class': 'regular',
-                'is_hp': False,
-                'is_inversion': False,
-                'description': f"Regular {fvg_idea['direction']} FVG in {fvg_idea['fib_zone']} zone"
-            }
-        
-        # Extract FVG levels from the string "low - high"
-        fvg_levels = fvg_idea['fvg_levels']
-        fvg_low = float(fvg_levels.split(' - ')[0])
-        fvg_high = float(fvg_levels.split(' - ')[1])
-        
-        # Check for inversion (price went through the FVG)
-        is_inverted = self._check_fvg_inversion(fvg_idea, data, fvg_low, fvg_high)
-        
-        # Check for HP FVG (only one asset has FVG)
-        is_hp_fvg = self._check_hp_fvg(fvg_idea)
-        
-        # Determine classification
-        if is_inverted:
-            return {
-                'type': 'INVERSION_FVG',
-                'class': 'inversion',
-                'is_hp': is_hp_fvg,
-                'is_inversion': True,
-                'description': f"Inversion {fvg_idea['direction']} FVG in {fvg_idea['fib_zone']} zone"
-            }
-        elif is_hp_fvg:
-            return {
-                'type': 'HP_FVG',
-                'class': 'hp',
-                'is_hp': True,
-                'is_inversion': False,
-                'description': f"High Probability {fvg_idea['direction']} FVG in {fvg_idea['fib_zone']} zone"
-            }
-        else:
-            return {
-                'type': 'REGULAR_FVG',
-                'class': 'regular',
-                'is_hp': False,
-                'is_inversion': False,
-                'description': f"Regular {fvg_idea['direction']} FVG in {fvg_idea['fib_zone']} zone"
-            }
 
     
     def _format_fvg_smt_idea_message(self, idea):
