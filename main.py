@@ -3129,7 +3129,11 @@ class UltimateTradingSystem:
                 
                 # Scan for FVG-SMT confluence
                 #fvg_idea_sent = self._scan_fvg_smt_confluence()
-                self._scan_fvg_smt_confluence()
+                fvg_signal = self._scan_fvg_with_smt_tap()
+
+                if not fvg_signal:
+                    logger.info(f"🔍 No FVG+SMT - checking double SMTs")
+                    self._scan_double_smts_temporal()
                 
                 # Get current feature summary
                 summary = self.feature_box.get_active_features_summary()
