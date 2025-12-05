@@ -3423,6 +3423,72 @@ class FVGDetector:
                     f2['is_hp'] = False
                     break
 
+
+class SmartTimingSystem:
+    def __init__(self):
+        self.candle_watch_times = {
+            'M5': None,   # 5-minute candles
+            'M15': None,  # 15-minute candles  
+            'H1': None,   # 1-hour candles
+            'H4': None    # 4-hour candles
+        }
+        
+    def get_smart_sleep_time(self):
+        """Calculate sleep time until next relevant candle with buffer"""
+        now = datetime.now(NY_TZ)
+        
+        # Calculate next candle times with 5-second buffer for API latency
+        next_m5 = self._get_next_candle_time('M5') + timedelta(seconds=5)
+        next_m15 = self._get_next_candle_time('M15') + timedelta(seconds=5)
+        next_h1 = self._get_next_candle_time('H1') + timedelta(seconds=5)
+        next_h4 = self._get_next_candle_time('H4') + timedelta(seconds=5)
+        
+        # Find the earliest upcoming candle
+        next_candle_time = min(next_m5, next_m15, next_h1, next_h4)
+        sleep_seconds = (next_candle_time - now).total_seconds()
+        
+        logger.info(f"⏰ Next scan in {sleep_seconds:.0f}s (at {next_candle_time.strftime('%H:%M:%S')})")
+        return max(sleep_seconds, 5)  # Minimum 5 seconds
+    
+    def _get_next_candle_time(self, timeframe):
+        """Calculate exact time when next candle will be available"""
+        now = datetime.now(NY_TZ)
+        
+        if timeframe == 'M5':
+            # Next 5-minute boundary
+            next_minute = (now.minute // 5 + 1) * 5
+            if next_minute >= 60:
+                next_minute = 0
+                next_time = now.replace(hour=now.hour + 1, minute=0, second=0, microsecond=0)
+            else:
+                next_time = now.replace(minute=next_minute, second=0, microsecond=0)
+                
+        elif timeframe == 'M15':
+            # Next 15-minute boundary
+            next_minute = (now.minute // 15 + 1) * 15
+            if next_minute >= 60:
+                next_minute = 0
+                next_time = now.replace(hour=now.hour + 1, minute=0, second=0, microsecond=0)
+            else:
+                next_time = now.replace(minute=next_minute, second=0, microsecond=0)
+                
+        elif timeframe == 'H1':
+            # Next hour boundary
+            next_time = now.replace(hour=now.hour + 1, minute=0, second=0, microsecond=0)
+            
+        elif timeframe == 'H4':
+            # Next 4-hour boundary
+            next_hour = (now.hour // 4 + 1) * 4
+            if next_hour >= 24:
+                next_hour = 0
+                next_time = now.replace(day=now.day + 1, hour=0, minute=0, second=0, microsecond=0)
+            else:
+                next_time = now.replace(hour=next_hour, minute=0, second=0, microsecond=0)
+        
+        return next_time
+
+
+
 # ================================
 # ULTIMATE TRADING SYSTEM WITH TRIPLE CONFLUENCE
 # ================================
