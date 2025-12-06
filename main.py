@@ -3108,8 +3108,9 @@ class UltimateTradingSystem:
         # Initialize components
         self.timing_manager = RobustTimingManager()
         self.quarter_manager = RobustQuarterManager()
-        self.crt_detector = RobustCRTDetector(self.timing_manager)
         self.smt_detector = UltimateSMTDetector(pair_config, self.timing_manager)
+        self.crt_detector = RobustCRTDetector(self.timing_manager)
+        self.crt_detector.feature_box = self.feature_box 
         
         # ✅ CORRECT: Now we can use self.pair_group because we're inside __init__
         self.feature_box = RealTimeFeatureBox(
@@ -3158,9 +3159,8 @@ class UltimateTradingSystem:
                 
                 # Scan for new features and add to Feature Box
                 await self._scan_and_add_features_immediate()
-                
                 # Scan for FVG-SMT confluence
-                #fvg_idea_sent = self._scan_fvg_smt_confluence()
+                self._scan_fvg_with_smt_tap()
                 fvg_signal = self._scan_fvg_with_smt_tap()
 
                 if not fvg_signal:
@@ -3291,10 +3291,21 @@ class UltimateTradingSystem:
                 
                 asset1_data = self.market_data[self.instruments[0]].get(timeframe)
                 asset2_data = self.market_data[self.instruments[1]].get(timeframe)
+
+                logger.info(f"🔍 SMT Data Check - {self.instruments[0]} {timeframe}: "
+                       f"{'Has data' if asset1_data is not None else 'NO DATA'}, "
+                       f"{len(asset1_data) if asset1_data is not None else 0} candles")
+                logger.info(f"🔍 SMT Data Check - {self.instruments[1]} {timeframe}: "
+                           f"{'Has data' if asset2_data is not None else 'NO DATA'}, "
+                           f"{len(asset2_data) if asset2_data is not None else 0} candles")
+            
                 
                 if (asset1_data is not None and isinstance(asset1_data, pd.DataFrame) and not asset1_data.empty and
                     asset2_data is not None and isinstance(asset2_data, pd.DataFrame) and not asset2_data.empty):
                     
+                    logger.info(f"🔍 Scanning {cycle} cycle ({timeframe}) for SMT...")
+                    smt_signal = self.smt_detector.detect_smt_all_cycles(asset1_data, asset2_data, cycle)
+
                     logger.info(f"🔍 Scanning {cycle} cycle ({timeframe}) for SMT...")
                     smt_signal = self.smt_detector.detect_smt_all_cycles(asset1_data, asset2_data, cycle)
                     
@@ -3302,8 +3313,15 @@ class UltimateTradingSystem:
                         # Check for PSP immediately
                         psp_signal = self.smt_detector.check_psp_for_smt(smt_signal, asset1_data, asset2_data)
                         
-                        # Add to Feature Box (triggers immediate confluence check)
                         self.feature_box.add_smt(smt_signal, psp_signal)
+                        smt_detected_count += 1
+                        logger.info(f"✅ SMT DETECTED: {cycle} {smt_signal['direction']} - PSP: {'Yes' if psp_signal else 'No'}")
+                    else:
+                        logger.info(f"🔍 No SMT found for {cycle} cycle")
+                else:
+                    logger.warning(f"⚠️ No data for {cycle} SMT scan")
+        
+        logger.info(f"📊 SMT Scan Complete: Detected {smt_detected_count} SMTs")
     
     
 
