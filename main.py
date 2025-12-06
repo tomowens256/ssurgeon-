@@ -2034,6 +2034,7 @@ class RealTimeFeatureBox:
     
     def add_smt(self, smt_data, psp_data=None):
         """Add SMT feature to tracking - triggers immediate confluence check"""
+        logger.info(f"📦 FEATUREBOX: Adding SMT - {smt_data['cycle']} {smt_data['direction']}")
         if not smt_data:
             return False
             
@@ -2054,6 +2055,7 @@ class RealTimeFeatureBox:
         }
         
         logger.info(f"📥 SMT ADDED to FeatureBox: {smt_data['cycle']} {smt_data['direction']} {smt_data['quarters']}")
+        logger.info(f"📦 FEATUREBOX: Now has {len(self.active_features['smt'])} active SMTs")
         
         # Immediate confluence check
         return self._check_immediate_confluence(signal_key, 'smt')
