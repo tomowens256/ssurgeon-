@@ -82,7 +82,14 @@ TRADING_PAIRS = {
     }
 }
 
-CRT_TIMEFRAMES = [ 'H4', 'H6', 'H12']
+CRT_TIMEFRAMES = [ 'H1','H2','H4', 'H6', 'H12']
+CRT_SMT_MAPPING = {
+    'H4': ['weekly', 'daily'],    # 4hr CRT can use weekly OR daily SMT
+    'H1': ['daily', '90min'],
+    'H6' :['weekly', 'daily'],
+    'H12' :['weekly', 'daily'],# 1hr CRT can use daily SMT
+    'H2': ['daily', '90min']     # 15min CRT can use daily OR 90min SMT
+}
 FVG_TIMEFRAMES = ['M15', 'H1', 'H4', 'D']
 
 CYCLE_SLEEP_TIMEFRAMES = {
