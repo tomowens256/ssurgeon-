@@ -876,6 +876,7 @@ class RobustCRTDetector:
     def __init__(self, timing_manager):
         self.timing_manager = timing_manager
         self.psp_cache = {}  # Cache PSP signals by timeframe
+        self.feature_box = None
     
     def calculate_crt_current_candle(self, df, asset1_data, asset2_data, timeframe):
         """Calculate CRT on current candle AND check for PSP on same timeframe"""
