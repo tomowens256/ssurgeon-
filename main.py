@@ -908,20 +908,20 @@ class RobustCRTDetector:
             if buy_crt or sell_crt:
                 direction = 'bullish' if buy_crt else 'bearish'
                 
-                # CHECK FOR PSP ON SAME TIMEFRAME
-                psp_signal = self._detect_psp_for_crt(asset1_data, asset2_data, timeframe, current_candle['time'])
-                
-                logger.info(f"🔷 {direction.upper()} CRT DETECTED: {timeframe} candle at {c3['time'].strftime('%H:%M')}")
-                if psp_signal:
-                    logger.info(f"🎯 PSP FOUND for CRT: {psp_signal['asset1_color']}/{psp_signal['asset2_color']} at {psp_signal['formation_time'].strftime('%H:%M')}")
-                
-                return {
-                    'direction': direction, 
-                    'timestamp': c3['time'],
-                    'timeframe': timeframe,
-                    'signal_key': f"CRT_{timeframe}_{c3['time'].strftime('%m%d_%H%M')}_{direction}",
-                    'psp_signal': psp_signal  # Include PSP if found
-                }
+                    # Check for SMT confluence
+                    smt_confluence = self._check_smt_confluence_for_crt(crt_signal, timeframe)
+                    
+                    # Check for PSP
+                    psp_signal = self._detect_psp_for_crt(asset1_data, asset2_data, timeframe, crt_time)
+                    
+                    return {
+                        'direction': direction, 
+                        'timestamp': c3['time'],
+                        'timeframe': timeframe,
+                        'signal_key': f"CRT_{timeframe}_{c3['time'].strftime('%m%d_%H%M')}_{direction}",
+                        'psp_signal': psp_signal,
+                        'smt_confluence': smt_confluence  # New: SMT info
+                    }
                 
         except (ValueError, TypeError) as e:
             logger.error(f"Error in CRT calculation: {e}")
