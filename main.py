@@ -928,6 +928,30 @@ class RobustCRTDetector:
             return None
         
         return None
+
+    def _check_smt_confluence_for_crt(self, crt_signal, timeframe):
+        """Check for SMT confluence with CRT"""
+        if not hasattr(self, 'feature_box'):  # Need reference to feature box
+            return None
+        
+        allowed_cycles = CRT_SMT_MAPPING.get(timeframe, [])
+        crt_direction = crt_signal['direction']
+        
+        # Check active SMTs
+        for smt_key, smt_feature in self.feature_box.active_features['smt'].items():
+            if self.feature_box._is_feature_expired(smt_feature):
+                continue
+                
+            smt_data = smt_feature['smt_data']
+            
+            # Check if SMT is allowed cycle and same direction
+            if (smt_data['cycle'] in allowed_cycles and 
+                smt_data['direction'] == crt_direction):
+                
+                logger.info(f"✅ CRT-SMT CONFLUENCE: {timeframe} CRT + {smt_data['cycle']} SMT")
+                return smt_data
+        
+        return None
     
     def _detect_psp_for_crt(self, asset1_data, asset2_data, timeframe, crt_time):
         """Detect PSP on the same timeframe as CRT (look at recent completed candles)"""
