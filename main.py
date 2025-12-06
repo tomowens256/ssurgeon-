@@ -3166,8 +3166,16 @@ class UltimateTradingSystem:
                 fvg_signal = self._scan_fvg_with_smt_tap()
 
                 if not fvg_signal:
-                    logger.info(f"🔍 No FVG+SMT - checking double SMTs")
-                    self._scan_double_smts_temporal()
+                    # === CHECK 2: CRT + SMT CONFLUENCE ===
+                    crt_smt_signal = self._scan_crt_smt_confluence()
+                    
+                    if not crt_smt_signal:
+                        # === CHECK 3: DOUBLE SMT FALLBACK ===
+                        logger.info(f"🔍 No FVG+SMT or CRT+SMT - checking double SMTs")
+                        self._scan_double_smts_temporal()
+
+                else:
+                    logger.info(f"✅ FVG+SMT signal found - skipping other checks")
                 
                 # Get current feature summary
                 summary = self.feature_box.get_active_features_summary()
