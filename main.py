@@ -3331,6 +3331,125 @@ class UltimateTradingSystem:
                     logger.warning(f"⚠️ No data for {cycle} SMT scan")
         
         logger.info(f"📊 SMT Scan Complete: Detected {smt_detected_count} SMTs")
+
+    def _scan_crt_smt_confluence(self):
+        """Check CRT with SMT confluence (CRT on higher TF, SMT on lower TF)"""
+        logger.info(f"🔷 SCANNING: CRT + SMT Confluence")
+        
+        # CRT timeframes to check
+        crt_timeframes = ['H4', 'H1', 'M15']
+        
+        # Mapping: CRT timeframe -> allowed SMT cycles
+        CRT_SMT_MAPPING = {
+            'H4': ['weekly', 'daily'],  # 4hr CRT → Weekly OR Daily SMT
+            'H1': ['daily'],           # 1hr CRT → Daily SMT
+            'M15': ['daily', '90min']  # 15min CRT → Daily OR 90min SMT
+        }
+        
+        # Check each instrument for CRT
+        for instrument in self.instruments:
+            for crt_tf in crt_timeframes:
+                data = self.market_data[instrument].get(crt_tf)
+                if data is None or data.empty:
+                    continue
+                
+                # Get the other instrument's data for CRT detection
+                other_instrument = [inst for inst in self.instruments if inst != instrument][0]
+                other_data = self.market_data[other_instrument].get(crt_tf)
+                
+                if other_data is None or other_data.empty:
+                    continue
+                
+                # Detect CRT
+                crt_signal = self.crt_detector.calculate_crt_current_candle(
+                    data, data, other_data, crt_tf
+                )
+                
+                if crt_signal:
+                    logger.info(f"🔷 CRT DETECTED: {crt_tf} {crt_signal['direction']} on {instrument}")
+                    
+                    # Check for SMT confluence
+                    allowed_cycles = CRT_SMT_MAPPING.get(crt_tf, [])
+                    crt_direction = crt_signal['direction']
+                    
+                    # Look for active SMTs in allowed cycles
+                    for smt_key, smt_feature in self.feature_box.active_features['smt'].items():
+                        if self.feature_box._is_feature_expired(smt_feature):
+                            continue
+                            
+                        smt_data = smt_feature['smt_data']
+                        smt_cycle = smt_data['cycle']
+                        
+                        # Check if SMT is allowed cycle and same direction
+                        if (smt_cycle in allowed_cycles and 
+                            smt_data['direction'] == crt_direction):
+                            
+                            # Check PSP
+                            has_psp = smt_feature['psp_data'] is not None
+                            
+                            logger.info(f"✅ CRT-SMT CONFLUENCE: {crt_tf} CRT + {smt_cycle} SMT "
+                                       f"({crt_direction}, PSP: {has_psp})")
+                            
+                            # Send the signal
+                            return self._send_crt_smt_signal(crt_signal, smt_data, has_psp, instrument)
+        
+        logger.info(f"🔷 No CRT+SMT confluence found")
+        return False
+    
+    def _send_crt_smt_signal(self, crt_signal, smt_data, has_psp, instrument):
+        """Send CRT+SMT confluence signal"""
+        crt_direction = crt_signal['direction']
+        crt_tf = crt_signal['timeframe']
+        smt_cycle = smt_data['cycle']
+        
+        idea = {
+            'type': 'CRT_SMT_CONFLUENCE',
+            'pair_group': self.pair_group,
+            'direction': crt_direction,
+            'crt_timeframe': crt_tf,
+            'smt_cycle': smt_cycle,
+            'asset': instrument,
+            'crt_time': crt_signal['timestamp'],
+            'smt_time': smt_data['formation_time'],
+            'has_psp': has_psp,
+            'strength': 'VERY STRONG' if has_psp else 'STRONG',
+            'reasoning': f"{crt_tf} {crt_direction} CRT + {smt_cycle} {crt_direction} SMT confluence",
+            'timestamp': datetime.now(NY_TZ),
+            'idea_key': f"CRT_SMT_{self.pair_group}_{crt_tf}_{smt_cycle}_{datetime.now(NY_TZ).strftime('%H%M%S')}"
+        }
+        
+        # Format and send
+        message = self._format_crt_smt_message(idea)
+        if self._send_telegram_message(message):
+            logger.info(f"🚀 CRT-SMT SIGNAL SENT: {crt_tf} CRT + {smt_cycle} SMT {crt_direction}")
+            return True
+        return False
+    
+    def _format_crt_smt_message(self, idea):
+        """Format CRT+SMT confluence message"""
+        dir_emoji = "🟢" if idea['direction'] == 'bullish' else "🔴"
+        crt_time = idea['crt_time'].strftime('%H:%M')
+        smt_time = idea['smt_time'].strftime('%H:%M')
+        
+        return f"""
+            🔷 *CRT + SMT CONFLUENCE* 🔷
+                
+            *Group:* {idea['pair_group'].replace('_', ' ').title()}
+            *Direction:* {idea['direction'].upper()} {dir_emoji}
+            *Asset:* {idea['asset']}
+            *Strength:* {idea['strength']}
+                
+            *Details:*
+            • CRT: {idea['crt_timeframe']} at {crt_time}
+            • SMT: {idea['smt_cycle']} cycle at {smt_time}
+            • PSP: {'✅ Confirmed' if idea['has_psp'] else '❌ Not Confirmed'}
+                
+            *Reasoning:* {idea['reasoning']}
+                
+            *Detection:* {idea['timestamp'].strftime('%H:%M:%S')}
+                
+            #{idea['pair_group']} #CRT_SMT #{idea['direction']}
+        """
     
     
 
