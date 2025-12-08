@@ -3158,6 +3158,8 @@ class UltimateTradingSystem:
             
             # Fetch data (this will get the new candle)
             await self._fetch_all_data_parallel(api_key)
+
+            self.reset_smt_detector_state()
             
             # Check if we have new candles that warrant immediate scanning
             new_candles_detected = self._check_new_candles()
@@ -3326,9 +3328,13 @@ class UltimateTradingSystem:
                     
                 logger.info(f"🔍 Scanning {cycle} cycle ({timeframe}) for SMT...")
                 smt_signal = self.smt_detector.detect_smt_all_cycles(asset1_data, asset2_data, cycle)
+                if smt_signal:
+                    logger.info(f"🔍 SMT RETURNED: {smt_signal.get('signal_key', 'No key')}")
+                else:
+                    logger.info(f"🔍 SMT detector returned None for {cycle}")
 
-                logger.info(f"🔍 Scanning {cycle} cycle ({timeframe}) for SMT...")
-                smt_signal = self.smt_detector.detect_smt_all_cycles(asset1_data, asset2_data, cycle)
+                # logger.info(f"🔍 Scanning {cycle} cycle ({timeframe}) for SMT...")
+                # smt_signal = self.smt_detector.detect_smt_all_cycles(asset1_data, asset2_data, cycle)
                     
                 if smt_signal:
                         # Check for PSP immediately
@@ -3343,6 +3349,13 @@ class UltimateTradingSystem:
                 logger.warning(f"⚠️ No data for {cycle} SMT scan")
         
         logger.info(f"📊 SMT Scan Complete: Detected {smt_detected_count} SMTs")
+
+    def reset_smt_detector_state(self):
+        """Reset SMT detector state to avoid duplicate issues"""
+        logger.info("🔄 Resetting SMT detector state")
+        self.smt_detector.last_smt_candle = None
+        self.smt_detector.signal_counts = {}
+        self.smt_detector.invalidated_smts = set()
 
     def _scan_crt_smt_confluence(self):
         """Check CRT with SMT confluence (CRT on higher TF, SMT on lower TF)"""
