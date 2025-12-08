@@ -4348,6 +4348,11 @@ class UltimateTradingSystem:
                 logger.warning(f"TRACE TAP SKIP: No second swing time in {smt_data['signal_key']}")
                 return False
             
+            # CRITICAL FIX: Check if second swing happens AFTER FVG formation
+            if fvg_formation and second_swing_time <= fvg_formation:
+                logger.info(f"❌ TRACE TAP REJECTED: SMT second swing at {second_swing_time} is BEFORE FVG formation at {fvg_formation}")
+                return False
+            
             logger.info(f"TRACE TAP {smt_data['cycle']} on {asset} FVG: 2nd swing {second_swing_time.strftime('%H:%M')} price {second_swing_price:.4f}")
             
             # Post-formation filter
@@ -4383,6 +4388,8 @@ class UltimateTradingSystem:
         except Exception as e:
             logger.error(f"TRACE TAP ERROR: {e}")
             return False
+
+    
     def _extract_smt_second_swing_time(self, smt_data):
         """Extract the second swing time from SMT data"""
         # Try different possible field names
