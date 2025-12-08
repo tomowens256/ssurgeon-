@@ -3161,6 +3161,7 @@ class UltimateTradingSystem:
         logger.info(f"🎯 FVG Analyzer initialized for {pair_group}")
         self.fvg_detector = FVGDetector(min_gap_pct=0.20)
         self.fvg_smt_tap_sent = {}  # Track FVG+SMT tap signals sent
+        self.crt_smt_ideas_sent = {}
         self.fvg_ideas_sent = {}
         self.smart_timing = SmartTimingSystem()
         self.last_candle_scan = {}
@@ -3179,6 +3180,8 @@ class UltimateTradingSystem:
         try:
             # Cleanup expired features first
             self.feature_box.cleanup_expired_features()
+
+            self.cleanup_old_signals()
             
             # Fetch data (this will get the new candle)
             await self._fetch_all_data_parallel(api_key)
@@ -3223,6 +3226,25 @@ class UltimateTradingSystem:
         except Exception as e:
             logger.error(f"❌ Error in candle-triggered analysis for {self.pair_group}: {str(e)}", exc_info=True)
             return None
+
+    def cleanup_old_signals(self):
+        """Cleanup old signals from all tracking dictionaries"""
+        self._cleanup_old_fvg_smt_signals()
+        self._cleanup_old_crt_smt_signals()
+        
+        # Also cleanup old FVG ideas if needed
+        if hasattr(self, 'fvg_ideas_sent'):
+            current_time = datetime.now(NY_TZ)
+            keys_to_remove = []
+            for key, sent_time in self.fvg_ideas_sent.items():
+                if (current_time - sent_time).total_seconds() > 86400:  # 24 hours
+                    keys_to_remove.append(key)
+            
+            for key in keys_to_remove:
+                del self.fvg_ideas_sent[key]
+            
+            if keys_to_remove:
+                logger.debug(f"🧹 Cleaned up {len(keys_to_remove)} old FVG ideas")
     
     def _check_new_candles(self):
         """Check if we have new candles that warrant immediate scanning"""
