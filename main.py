@@ -4340,7 +4340,7 @@ class UltimateTradingSystem:
             'H4': 40,  # Monthly
             'H1': 40,  # Weekly
             'M15': 40,  # Daily
-            'M5': 30,  # 90min
+            'M5': 45,  # 90min
             'H2': 10, 'H3': 10, 'H6': 10, 'H8': 10, 'H12': 10
         }
         return proven_counts.get(timeframe, 100)
