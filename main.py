@@ -4513,35 +4513,68 @@ class UltimateTradingSystem:
 
 
     def _send_fvg_smt_tap_signal(self, fvg_idea, smt_data, has_psp, is_hp_fvg):
-        """Send FVG+SMT tap signal"""
+        """Send FVG+SMT tap signal with cooldown tracking"""
         fvg_direction = fvg_idea['direction']
         fvg_tf = fvg_idea['timeframe']
         smt_cycle = smt_data['cycle']
         
+        # Create a unique identifier for this signal
+        signal_id = f"FVG_SMT_TAP_{self.pair_group}_{fvg_idea['asset']}_{fvg_tf}_{smt_data.get('signal_key', '')}"
+        
+        # Check cooldown (1 hour cooldown)
+        if signal_id in self.fvg_smt_tap_sent:
+            last_sent = self.fvg_smt_tap_sent[signal_id]
+            if (datetime.now(NY_TZ) - last_sent).total_seconds() < 3600:  # 1 hour
+                logger.info(f"⏳ FVG+SMT tap recently sent: {signal_id}")
+                return False
+        
         idea = {
             'type': 'FVG_SMT_TAP',
             'pair_group': self.pair_group,
-            'direction': fvg_direction,  # FIXED: use fvg_idea
+            'direction': fvg_idea['direction'],
             'asset': fvg_idea['asset'],
             'fvg_timeframe': fvg_tf,
             'fvg_levels': fvg_idea['fvg_levels'],
             'fvg_formation_time': fvg_idea['formation_time'],
             'smt_cycle': smt_cycle,
             'smt_direction': smt_data['direction'],
+            'smt_signal_key': smt_data.get('signal_key', ''),
             'has_psp': has_psp,
             'is_hp_fvg': is_hp_fvg,
             'timestamp': datetime.now(NY_TZ),
-            'idea_key': f"FVG_SMT_TAP_{self.pair_group}_{fvg_idea['asset']}_{fvg_tf}_{datetime.now(NY_TZ).strftime('%H%M%S')}"
+            'idea_key': signal_id  # Use the same ID
         }
         
         # Format and send
         message = self._format_fvg_smt_tap_message(idea)
         
         if self._send_telegram_message(message):
+            # Record when we sent this signal
+            self.fvg_smt_tap_sent[signal_id] = datetime.now(NY_TZ)
             logger.info(f"🚀 FVG+SMT TAP SIGNAL SENT: {fvg_idea['asset']} {fvg_tf} FVG + {smt_cycle} SMT")
+            
+            # Cleanup old entries (optional, to prevent memory bloat)
+            self._cleanup_old_fvg_smt_signals()
             return True
+        
         return False
 
+    def _cleanup_old_fvg_smt_signals(self):
+        """Remove old FVG+SMT signals from tracking"""
+        current_time = datetime.now(NY_TZ)
+        signals_to_remove = []
+        
+        for signal_id, sent_time in self.fvg_smt_tap_sent.items():
+            hours_since_sent = (current_time - sent_time).total_seconds() / 3600
+            if hours_since_sent > 24:  # Remove entries older than 24 hours
+                signals_to_remove.append(signal_id)
+        
+        for signal_id in signals_to_remove:
+            del self.fvg_smt_tap_sent[signal_id]
+        
+        if signals_to_remove:
+            logger.debug(f"🧹 Cleaned up {len(signals_to_remove)} old FVG+SMT signals")
+    
     def _format_fvg_smt_tap_message(self, idea):
         """Format FVG+SMT tap message"""
         direction_emoji = "🟢" if idea['direction'] == 'bullish' else "🔴"
@@ -4577,7 +4610,6 @@ class UltimateTradingSystem:
         #FVG_SMT_Tap #{idea['pair_group']} #{idea['direction']} #{idea['fvg_timeframe']}
         """
         return message
-    
     def _send_double_smt_only_signal(self, primary_smt, secondary_smt, span_min):
         """Send double SMT signal w/criteria deets."""
         idea = {
