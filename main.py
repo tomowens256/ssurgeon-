@@ -2050,12 +2050,13 @@ class RealTimeFeatureBox:
             logger.info(f"📦 SMT already exists: {signal_key}")
             return False
         
-        # Create feature
+        # Create feature WITH EXPIRATION
         feature = {
             'type': 'smt',
             'smt_data': smt_data,
             'psp_data': psp_data,
-            'timestamp': datetime.now(NY_TZ)
+            'timestamp': datetime.now(NY_TZ),
+            'expiration': datetime.now(NY_TZ) + timedelta(minutes=self.expiration_times['smt'])
         }
         
         self.active_features['smt'][signal_key] = feature
