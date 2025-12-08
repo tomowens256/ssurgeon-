@@ -4481,10 +4481,14 @@ class UltimateTradingSystem:
                 
             smt_data = smt_feature['smt_data']
             if smt_data['direction'] == 'bullish':
-                # Add PSP status
+                # Create a copy with both SMT and PSP data
                 smt_data_copy = smt_data.copy()
                 smt_data_copy['has_psp'] = smt_feature['psp_data'] is not None
                 smt_data_copy['signal_key'] = smt_key
+                
+                # If there's PSP data, include it
+                if smt_feature['psp_data']:
+                    smt_data_copy['psp_data'] = smt_feature['psp_data']
                 bullish_smts.append(smt_data_copy)
         
         # Sort by cycle importance
