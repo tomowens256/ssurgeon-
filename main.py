@@ -3163,6 +3163,7 @@ class UltimateTradingSystem:
         self.fvg_smt_tap_sent = {}  # Track FVG+SMT tap signals sent
         self.crt_smt_ideas_sent = {}
         self.fvg_ideas_sent = {}
+        self.double_smt_sent = {}
         self.smart_timing = SmartTimingSystem()
         self.last_candle_scan = {}
         self.timeframe_cycle_map = {
@@ -3227,10 +3228,30 @@ class UltimateTradingSystem:
             logger.error(f"❌ Error in candle-triggered analysis for {self.pair_group}: {str(e)}", exc_info=True)
             return None
 
+    def _cleanup_old_double_smt_signals(self):
+        """Remove old Double SMT signals from tracking"""
+        if not hasattr(self, 'double_smt_sent'):
+            return
+        
+        current_time = datetime.now(NY_TZ)
+        signals_to_remove = []
+        
+        for signal_id, sent_time in self.double_smt_sent.items():
+            hours_since_sent = (current_time - sent_time).total_seconds() / 3600
+            if hours_since_sent > 24:  # Remove entries older than 24 hours
+                signals_to_remove.append(signal_id)
+        
+        for signal_id in signals_to_remove:
+            del self.double_smt_sent[signal_id]
+        
+        if signals_to_remove:
+            logger.debug(f"🧹 Cleaned up {len(signals_to_remove)} old Double SMT signals")
+
     def cleanup_old_signals(self):
         """Cleanup old signals from all tracking dictionaries"""
         self._cleanup_old_fvg_smt_signals()
         self._cleanup_old_crt_smt_signals()
+        self._cleanup_old_double_smt_signals()
         
         # Also cleanup old FVG ideas if needed
         if hasattr(self, 'fvg_ideas_sent'):
@@ -4424,44 +4445,125 @@ class UltimateTradingSystem:
         return True  # Only this asset has FVG
 
     def _scan_double_smts_temporal(self):
-        """Double SMT (PSP req, dir match, span from 2nd swing): daily-daily 6hr, weekly-daily 1D, daily-90min 200min."""
-        logger.info(f"🔍 DOUBLE SMT SCAN: Hierarchy + span from 2nd swing")
+        """Check for double SMT signals with cooldown"""
+        logger.info(f"🔍 SCANNING: Double SMTs (Temporal)")
         
-        # Active SMTs w/PSP
-        smt_by_cycle = {'daily': [], 'weekly': [], '90min': []}
+        # Group SMTs by direction and sort by cycle importance
+        cycle_order = {'weekly': 3, 'daily': 2, '90min': 1, 'monthly': 4}
+        
+        # Check bullish SMTs
+        bullish_smts = []
         for smt_key, smt_feature in self.feature_box.active_features['smt'].items():
             if self.feature_box._is_feature_expired(smt_feature):
                 continue
-            if not smt_feature['psp_data']:
-                continue
+                
             smt_data = smt_feature['smt_data']
-            second_swing = smt_data.get('second_swing_time', smt_data['formation_time'])
-            smt_by_cycle[smt_data['cycle']].append((smt_data, second_swing))
+            if smt_data['direction'] == 'bullish':
+                # Add PSP status
+                smt_data_copy = smt_data.copy()
+                smt_data_copy['has_psp'] = smt_feature['psp_data'] is not None
+                smt_data_copy['signal_key'] = smt_key
+                bullish_smts.append(smt_data_copy)
         
-        logger.info(f"🔍 SMTs w/PSP: daily {len(smt_by_cycle['daily'])}, weekly {len(smt_by_cycle['weekly'])}, 90min {len(smt_by_cycle['90min'])}")
+        # Sort by cycle importance
+        bullish_smts.sort(key=lambda x: cycle_order.get(x['cycle'], 0), reverse=True)
         
-        # Check pairs
-        checked = 0
-        for primary_cycle in ['weekly', 'daily']:  # HTF first
-            for primary, primary_swing in smt_by_cycle[primary_cycle]:
-                primary_dir = primary['direction']
-                for secondary_cycle in ['daily', '90min'] if primary_cycle == 'daily' else ['daily']:
-                    for secondary, secondary_swing in smt_by_cycle[secondary_cycle]:
-                        if secondary == primary:
-                            continue
-                        if secondary['direction'] != primary_dir:
-                            continue
-                        
-                        span_min = abs((secondary_swing - primary_swing).total_seconds() / 60)
-                        max_span = 1440 if primary_cycle == 'weekly' and secondary_cycle == 'daily' else (360 if secondary_cycle == 'daily' else 200)
-                        
-                        if 0 < span_min <= max_span:
-                            checked += 1
-                            logger.info(f"✅ DOUBLE SMT: {primary_cycle} at {primary_swing.strftime('%H:%M')} → {secondary_cycle} at {secondary_swing.strftime('%H:%M')} ({span_min:.0f}min)")
-                            return self._send_double_smt_only_signal(primary, secondary, span_min)
+        # Check for double SMTs
+        if len(bullish_smts) >= 2:
+            primary = bullish_smts[0]
+            secondary = bullish_smts[1]
+            
+            # Check cycles are different
+            if primary['cycle'] != secondary['cycle']:
+                # Create unique signal ID
+                signal_id = f"DOUBLE_SMT_{self.pair_group}_{primary['cycle']}_{secondary['cycle']}_bullish"
+                
+                # Check cooldown (1 hour)
+                if hasattr(self, 'double_smt_sent') and signal_id in self.double_smt_sent:
+                    last_sent = self.double_smt_sent[signal_id]
+                    if (datetime.now(NY_TZ) - last_sent).total_seconds() < 3600:
+                        logger.info(f"⏳ Double SMT recently sent: {signal_id}")
+                        return False
+                
+                # Calculate span
+                span_minutes = 0
+                if 'formation_time' in primary and 'formation_time' in secondary:
+                    span_minutes = abs((primary['formation_time'] - secondary['formation_time']).total_seconds() / 60)
+                
+                idea = {
+                    'pair_group': self.pair_group,
+                    'direction': 'bullish',
+                    'primary_smt': primary,
+                    'secondary_smt': secondary,
+                    'span_minutes': span_minutes,
+                    'reasoning': f"{primary['cycle']} bullish SMT + {secondary['cycle']} confirm (span: {span_minutes:.1f}min from 2nd swings)",
+                    'detection_time': datetime.now(NY_TZ),
+                    'idea_key': signal_id
+                }
+                
+                message = self._format_double_smt_message(idea)
+                if self._send_telegram_message(message):
+                    # Initialize if not exists
+                    if not hasattr(self, 'double_smt_sent'):
+                        self.double_smt_sent = {}
+                    self.double_smt_sent[signal_id] = datetime.now(NY_TZ)
+                    logger.info(f"🚀 DOUBLE SMT SIGNAL SENT: {primary['cycle']} + {secondary['cycle']} bullish")
+                    return True
         
-        logger.info(f"🔍 Checked {checked} pairs - no doubles")
+        # Similar logic for bearish SMTs
+        bearish_smts = []
+        for smt_key, smt_feature in self.feature_box.active_features['smt'].items():
+            if self.feature_box._is_feature_expired(smt_feature):
+                continue
+                
+            smt_data = smt_feature['smt_data']
+            if smt_data['direction'] == 'bearish':
+                smt_data_copy = smt_data.copy()
+                smt_data_copy['has_psp'] = smt_feature['psp_data'] is not None
+                smt_data_copy['signal_key'] = smt_key
+                bearish_smts.append(smt_data_copy)
+        
+        bearish_smts.sort(key=lambda x: cycle_order.get(x['cycle'], 0), reverse=True)
+        
+        if len(bearish_smts) >= 2:
+            primary = bearish_smts[0]
+            secondary = bearish_smts[1]
+            
+            if primary['cycle'] != secondary['cycle']:
+                signal_id = f"DOUBLE_SMT_{self.pair_group}_{primary['cycle']}_{secondary['cycle']}_bearish"
+                
+                if hasattr(self, 'double_smt_sent') and signal_id in self.double_smt_sent:
+                    last_sent = self.double_smt_sent[signal_id]
+                    if (datetime.now(NY_TZ) - last_sent).total_seconds() < 3600:
+                        logger.info(f"⏳ Double SMT recently sent: {signal_id}")
+                        return False
+                
+                span_minutes = 0
+                if 'formation_time' in primary and 'formation_time' in secondary:
+                    span_minutes = abs((primary['formation_time'] - secondary['formation_time']).total_seconds() / 60)
+                
+                idea = {
+                    'pair_group': self.pair_group,
+                    'direction': 'bearish',
+                    'primary_smt': primary,
+                    'secondary_smt': secondary,
+                    'span_minutes': span_minutes,
+                    'reasoning': f"{primary['cycle']} bearish SMT + {secondary['cycle']} confirm (span: {span_minutes:.1f}min from 2nd swings)",
+                    'detection_time': datetime.now(NY_TZ),
+                    'idea_key': signal_id
+                }
+                
+                message = self._format_double_smt_message(idea)
+                if self._send_telegram_message(message):
+                    if not hasattr(self, 'double_smt_sent'):
+                        self.double_smt_sent = {}
+                    self.double_smt_sent[signal_id] = datetime.now(NY_TZ)
+                    logger.info(f"🚀 DOUBLE SMT SIGNAL SENT: {primary['cycle']} + {secondary['cycle']} bearish")
+                    return True
+        
         return False
+
+    
 
     async def _fetch_all_data(self, api_key):
         """Fetch data with PROVEN candle counts - FIXED DataFrame checks"""
@@ -4650,9 +4752,17 @@ class UltimateTradingSystem:
             logger.debug(f"🧹 Cleaned up {len(signals_to_remove)} old FVG+SMT signals")
     
     def _format_fvg_smt_tap_message(self, idea):
-        """Format FVG+SMT tap message"""
+        """Format FVG+SMT tap message with SMT quarter details"""
         direction_emoji = "🟢" if idea['direction'] == 'bullish' else "🔴"
         fvg_time = idea['fvg_formation_time'].strftime('%m/%d %H:%M')
+        
+        # Get SMT details
+        smt_data = idea.get('smt_data', {})
+        
+        # Format quarters
+        quarters = smt_data.get('quarters', '').replace('_', '→')
+        asset1_action = smt_data.get('asset1_action', '')
+        asset2_action = smt_data.get('asset2_action', '')
         
         hp_emoji = "🎯" if idea['is_hp_fvg'] else ""
         psp_emoji = "✅" if idea['has_psp'] else "❌"
@@ -4675,9 +4785,11 @@ class UltimateTradingSystem:
         • Levels: {idea['fvg_levels']}
         • Formation: {fvg_time}
         
-        *SMT Details:*
-        • Cycle: {idea['smt_cycle']}
-        • Direction: {idea['smt_direction']}
+        *SMT Quarter Details:*
+        • {idea['smt_cycle']} {quarters}
+          - {asset1_action}
+          - {asset2_action}
+        • PSP: {'✅ Confirmed' if idea['has_psp'] else '❌ Not Confirmed'}
         
         *Detection Time:* {idea['timestamp'].strftime('%Y-%m-%d %H:%M:%S')}
         
