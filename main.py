@@ -4512,39 +4512,34 @@ class UltimateTradingSystem:
 
 
     def _send_fvg_smt_tap_signal(self, fvg_idea, smt_data, has_psp, is_hp_fvg):
-        """Send FVG+SMT tap w/criteria deets."""
-        # Determine strength (your old)
-        if is_hp_fvg and has_psp:
-            strength = "ULTRA STRONG"
-        elif is_hp_fvg:
-            strength = "VERY STRONG"
-        elif has_psp:
-            strength = "STRONG"
-        else:
-            strength = "GOOD"
-       
+        """Send FVG+SMT tap signal"""
+        fvg_direction = fvg_idea['direction']
+        fvg_tf = fvg_idea['timeframe']
+        smt_cycle = smt_data['cycle']
+        
         idea = {
             'type': 'FVG_SMT_TAP',
             'pair_group': self.pair_group,
-            'direction': fvg['direction'],
-            'asset': fvg['asset'],
-            'timeframe': fvg['tf'],  # Note: 'tf' not 'timeframe'
-            'fvg_name': f"{fvg['asset']}_{fvg['tf']}_{fvg['formation_time'].strftime('%m%d%H%M')}",
-            'fvg_type': 'regular_fvg',  # Simple classification
-            'fvg_levels': f"{fvg['fvg_low']:.4f} - {fvg['fvg_high']:.4f}",
-            'formation_time': fvg['formation_time'],
-            'fib_zone': '',  # No Fibonacci
-            'smt_cycle': smt_data['cycle'],
-            'smt_has_psp': has_psp,
+            'direction': fvg_direction,  # FIXED: use fvg_idea
+            'asset': fvg_idea['asset'],
+            'fvg_timeframe': fvg_tf,
+            'fvg_levels': fvg_idea['fvg_levels'],
+            'fvg_formation_time': fvg_idea['formation_time'],
+            'smt_cycle': smt_cycle,
+            'smt_direction': smt_data['direction'],
+            'has_psp': has_psp,
             'is_hp_fvg': is_hp_fvg,
-            'confluence_strength': 'STRONG' if is_hp_fvg else 'GOOD',
-            'reasoning': f"{fvg['direction']} FVG tapped by {smt_data['cycle']} SMT",
             'timestamp': datetime.now(NY_TZ),
-            'idea_key': f"FVG_SMT_{self.pair_group}_{smt_data['cycle']}_{datetime.now(NY_TZ).strftime('%H%M%S')}"
+            'idea_key': f"FVG_SMT_TAP_{self.pair_group}_{fvg_idea['asset']}_{fvg_tf}_{datetime.now(NY_TZ).strftime('%H%M%S')}"
         }
-       
         
-        return self._send_fvg_trade_idea(idea)
+        # Format and send
+        message = self._format_fvg_smt_tap_message(idea)
+        
+        if self._send_telegram_message(message):
+            logger.info(f"🚀 FVG+SMT TAP SIGNAL SENT: {fvg_idea['asset']} {fvg_tf} FVG + {smt_cycle} SMT")
+            return True
+        return False
     
     def _send_double_smt_only_signal(self, primary_smt, secondary_smt, span_min):
         """Send double SMT signal w/criteria deets."""
