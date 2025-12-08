@@ -3448,13 +3448,14 @@ class UltimateTradingSystem:
         logger.info(f"🔷 SCANNING: CRT + SMT Confluence")
         
         # CRT timeframes to check
-        crt_timeframes = ['H4', 'H1', 'M15']
+        crt_timeframes = ['H4', 'H1', 'H6','H12']
         
         # Mapping: CRT timeframe -> allowed SMT cycles
         CRT_SMT_MAPPING = {
             'H4': ['weekly', 'daily'],  # 4hr CRT → Weekly OR Daily SMT
             'H1': ['daily'],           # 1hr CRT → Daily SMT
-            'M15': ['daily', '90min']  # 15min CRT → Daily OR 90min SMT
+            'H6': ['daily','weekly'],  # 15min CRT → Daily OR 90min SMT
+            'H12': ['daily','weekly']
         }
         
         # Check each instrument for CRT
