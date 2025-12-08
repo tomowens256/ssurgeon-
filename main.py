@@ -4698,7 +4698,7 @@ class UltimateTradingSystem:
         signal_id = f"FVG_SMT_TAP_{self.pair_group}_{fvg_idea['asset']}_{fvg_tf}_{smt_data.get('signal_key', '')}"
         
         # Check cooldown (1 hour cooldown)
-        if signal_id in self.fvg_smt_tap_sent:
+        if hasattr(self, 'fvg_smt_tap_sent') and signal_id in self.fvg_smt_tap_sent:
             last_sent = self.fvg_smt_tap_sent[signal_id]
             if (datetime.now(NY_TZ) - last_sent).total_seconds() < 3600:  # 1 hour
                 logger.info(f"⏳ FVG+SMT tap recently sent: {signal_id}")
@@ -4707,18 +4707,18 @@ class UltimateTradingSystem:
         idea = {
             'type': 'FVG_SMT_TAP',
             'pair_group': self.pair_group,
-            'direction': fvg_idea['direction'],
+            'direction': fvg_direction,
             'asset': fvg_idea['asset'],
             'fvg_timeframe': fvg_tf,
             'fvg_levels': fvg_idea['fvg_levels'],
             'fvg_formation_time': fvg_idea['formation_time'],
             'smt_cycle': smt_cycle,
             'smt_direction': smt_data['direction'],
-            'smt_signal_key': smt_data.get('signal_key', ''),
+            'smt_data': smt_data,  # ADD THIS LINE - pass the full SMT data
             'has_psp': has_psp,
             'is_hp_fvg': is_hp_fvg,
             'timestamp': datetime.now(NY_TZ),
-            'idea_key': signal_id  # Use the same ID
+            'idea_key': signal_id
         }
         
         # Format and send
@@ -4726,15 +4726,12 @@ class UltimateTradingSystem:
         
         if self._send_telegram_message(message):
             # Record when we sent this signal
+            if not hasattr(self, 'fvg_smt_tap_sent'):
+                self.fvg_smt_tap_sent = {}
             self.fvg_smt_tap_sent[signal_id] = datetime.now(NY_TZ)
             logger.info(f"🚀 FVG+SMT TAP SIGNAL SENT: {fvg_idea['asset']} {fvg_tf} FVG + {smt_cycle} SMT")
-            
-            # Cleanup old entries (optional, to prevent memory bloat)
-            self._cleanup_old_fvg_smt_signals()
             return True
-        
         return False
-
     def _cleanup_old_fvg_smt_signals(self):
         """Remove old FVG+SMT signals from tracking"""
         current_time = datetime.now(NY_TZ)
@@ -4756,16 +4753,47 @@ class UltimateTradingSystem:
         direction_emoji = "🟢" if idea['direction'] == 'bullish' else "🔴"
         fvg_time = idea['fvg_formation_time'].strftime('%m/%d %H:%M')
         
-        # Get SMT details
+        # Get SMT details - now it should be available
         smt_data = idea.get('smt_data', {})
         
-        # Format quarters
-        quarters = smt_data.get('quarters', '').replace('_', '→')
+        # Extract SMT information
+        smt_cycle = idea['smt_cycle']
+        quarters = smt_data.get('quarters', '')
+        
+        # Format quarters for display
+        if quarters:
+            quarters_display = quarters.replace('_', '→')
+        else:
+            quarters_display = ''
+        
+        # Get asset actions
         asset1_action = smt_data.get('asset1_action', '')
         asset2_action = smt_data.get('asset2_action', '')
         
         hp_emoji = "🎯" if idea['is_hp_fvg'] else ""
         psp_emoji = "✅" if idea['has_psp'] else "❌"
+        
+        # Build SMT details section
+        smt_details = ""
+        if quarters_display or asset1_action or asset2_action:
+            smt_details = f"• {smt_cycle} {quarters_display}\n"
+            if asset1_action:
+                smt_details += f"  - {asset1_action}\n"
+            if asset2_action:
+                smt_details += f"  - {asset2_action}\n"
+        else:
+            smt_details = f"• {smt_cycle} cycle\n"
+        
+        # Get PSP details if available
+        psp_details = ""
+        if idea['has_psp'] and 'psp_data' in smt_data:
+            psp_data = smt_data['psp_data']
+            if psp_data:
+                psp_timeframe = psp_data.get('timeframe', '')
+                psp_time = psp_data.get('formation_time', '')
+                if psp_time and isinstance(psp_time, datetime):
+                    psp_time_str = psp_time.strftime('%H:%M')
+                    psp_details = f"*PSP Details:*\n• Timeframe: {psp_timeframe}\n• Time: {psp_time_str}\n\n"
         
         message = f"""
         🎯 *FVG + SMT TAP CONFIRMED* 🎯
@@ -4777,19 +4805,17 @@ class UltimateTradingSystem:
         
         *Cross-Timeframe Confluence:*
         • FVG: {idea['fvg_timeframe']} at {fvg_time}
-        • SMT: {idea['smt_cycle']} cycle
+        • SMT: {smt_cycle} cycle
         • HP FVG: {hp_emoji} {'YES' if idea['is_hp_fvg'] else 'NO'}
         • PSP: {psp_emoji} {'Confirmed' if idea['has_psp'] else 'Not Confirmed'}
         
+        {psp_details}
         *FVG Details:*
         • Levels: {idea['fvg_levels']}
         • Formation: {fvg_time}
         
         *SMT Quarter Details:*
-        • {idea['smt_cycle']} {quarters}
-          - {asset1_action}
-          - {asset2_action}
-        • PSP: {'✅ Confirmed' if idea['has_psp'] else '❌ Not Confirmed'}
+        {smt_details}
         
         *Detection Time:* {idea['timestamp'].strftime('%Y-%m-%d %H:%M:%S')}
         
