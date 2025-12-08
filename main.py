@@ -4305,13 +4305,31 @@ class UltimateTradingSystem:
                 logger.info(f"❌ No {smt_tf} data for {asset}")
                 return False
             
-            # Get the second swing time from SMT data
-            swing_times = smt_data.get('swing_times', [])
-            if not swing_times or len(swing_times) < 2:
-                logger.info(f"❌ No swing times in SMT data")
+            # Get the swing_times dictionary
+            swing_times = smt_data.get('swing_times', {})
+            
+            # Determine which asset key to use
+            if asset == self.instruments[0]:
+                asset_key = 'asset1_curr'
+            else:
+                asset_key = 'asset2_curr'
+            
+            # Get the current swing for this asset
+            asset_curr = swing_times.get(asset_key, {})
+            
+            if not asset_curr:
+                logger.info(f"❌ No swing data for {asset} in SMT {smt_cycle}")
                 return False
             
-            second_swing_time = swing_times[1]
+            # Extract second swing time
+            if isinstance(asset_curr, dict):
+                second_swing_time = asset_curr.get('time')
+            else:
+                second_swing_time = asset_curr  # Assuming it's already a Timestamp
+            
+            if not second_swing_time:
+                logger.info(f"❌ No second swing time for {asset} in SMT {smt_cycle}")
+                return False
             
             # CRITICAL: Check if second swing happens AFTER FVG formation
             if second_swing_time <= fvg_formation_time:
