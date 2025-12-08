@@ -3615,17 +3615,44 @@ class UltimateTradingSystem:
         crt_time = idea['crt_time'].strftime('%H:%M')
         smt_time = idea['smt_time'].strftime('%H:%M')
         
-        # Get SMT details from the smt_data
+        # Get SMT details
         smt_data = idea.get('smt_data', {})
-        quarters = smt_data.get('quarters', '')
-        asset1_action = smt_data.get('asset1_action', '')
-        asset2_action = smt_data.get('asset2_action', '')
         
-        # Format quarters for display
+        # Extract SMT information
+        smt_cycle = idea['smt_cycle']
+        quarters = smt_data.get('quarters', '')
+        
+        # Format quarters
         if quarters:
             quarters_display = quarters.replace('_', '→')
         else:
             quarters_display = ''
+        
+        # Get asset actions
+        asset1_action = smt_data.get('asset1_action', '')
+        asset2_action = smt_data.get('asset2_action', '')
+        
+        # Build SMT details
+        smt_details = ""
+        if quarters_display or asset1_action or asset2_action:
+            smt_details = f"\n*SMT Quarter Details:*\n"
+            if quarters_display:
+                smt_details += f"• {smt_cycle} {quarters_display}\n"
+            if asset1_action:
+                smt_details += f"  - {asset1_action}\n"
+            if asset2_action:
+                smt_details += f"  - {asset2_action}\n"
+        
+        # Get PSP details if available
+        psp_details = ""
+        if idea['has_psp'] and 'psp_data' in smt_data:
+            psp_data = smt_data['psp_data']
+            if psp_data:
+                psp_timeframe = psp_data.get('timeframe', '')
+                psp_time = psp_data.get('formation_time', '')
+                if psp_time and isinstance(psp_time, datetime):
+                    psp_time_str = psp_time.strftime('%H:%M')
+                    psp_details = f"\n*PSP Details:*\n• Timeframe: {psp_timeframe}\n• Time: {psp_time_str}\n"
         
         return f"""
             🔷 *CRT + SMT CONFLUENCE* 🔷
@@ -3639,12 +3666,7 @@ class UltimateTradingSystem:
             • CRT: {idea['crt_timeframe']} at {crt_time}
             • SMT: {idea['smt_cycle']} cycle at {smt_time}
             • PSP: {'✅ Confirmed' if idea['has_psp'] else '❌ Not Confirmed'}
-                
-            *SMT Quarter Details:*
-            • {idea['smt_cycle']} {quarters_display}
-              - {asset1_action}
-              - {asset2_action}
-                
+            {smt_details}{psp_details}
             *Reasoning:* {idea['reasoning']}
                 
             *Detection:* {idea['timestamp'].strftime('%H:%M:%S')}
