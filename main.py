@@ -3867,9 +3867,43 @@ class UltimateTradingSystem:
             if not self._is_valid_data(data):
                 return False
             
-            # Get SMT formation time (approximate)
+            # Get SMT formation time
             smt_time = smt_data.get('timestamp')
             if not smt_time:
+                return False
+            
+            # Get FVG formation time from fvg_idea
+            fvg_time = fvg_idea.get('formation_time')
+            if not fvg_time:
+                logger.warning(f"⚠️ FVG missing formation_time: {fvg_idea}")
+                return False
+            
+            # Get the second swing time from SMT data
+            swing_times = smt_data.get('swing_times', [])
+            if not swing_times or len(swing_times) < 2:
+                logger.warning(f"⚠️ SMT missing swing_times: {smt_data}")
+                return False
+            
+            second_swing_time = swing_times[1]  # Second element is the second swing
+            
+            # CRITICAL CHECK: Second swing must occur AFTER FVG formation
+            if second_swing_time <= fvg_time:
+                logger.info(f"❌ SMT SECOND SWING BEFORE FVG: {instrument} {timeframe} - "
+                           f"Second swing at {second_swing_time}, FVG formed at {fvg_time}")
+                return False
+            
+            # Optional: Also check that the SMT formation/recognition time is after FVG
+            if smt_time <= fvg_time:
+                logger.info(f"❌ SMT RECOGNITION BEFORE FVG: {instrument} {timeframe} - "
+                           f"SMT at {smt_time}, FVG at {fvg_time}")
+                return False
+            
+            # Optional: Add a reasonable time window check
+            time_diff = second_swing_time - fvg_time
+            max_allowed_diff = pd.Timedelta(days=30)  # Adjust based on your strategy
+            if time_diff > max_allowed_diff:
+                logger.info(f"❌ SMT TOO LONG AFTER FVG: {instrument} {timeframe} - "
+                           f"{time_diff} exceeds max {max_allowed_diff}")
                 return False
             
             # Look for candles around SMT formation time that entered FVG zone
@@ -3890,15 +3924,20 @@ class UltimateTradingSystem:
                 if fvg_idea['direction'] == 'bullish':
                     # For bullish FVG, tap occurs when price (low) <= fvg_high
                     if candle['low'] <= fvg_high:
-                        logger.info(f"✅ SMT TAP CONFIRMED: {instrument} {timeframe} - Low {candle['low']:.4f} entered FVG up to {fvg_high:.4f}")
+                        logger.info(f"✅ SMT TAP CONFIRMED: {instrument} {timeframe} - "
+                                   f"Low {candle['low']:.4f} entered FVG up to {fvg_high:.4f} "
+                                   f"(FVG: {fvg_time}, 2nd swing: {second_swing_time})")
                         return True
                 else:  # bearish
                     # For bearish FVG, tap occurs when price (high) >= fvg_low
                     if candle['high'] >= fvg_low:
-                        logger.info(f"✅ SMT TAP CONFIRMED: {instrument} {timeframe} - High {candle['high']:.4f} entered FVG from {fvg_low:.4f}")
+                        logger.info(f"✅ SMT TAP CONFIRMED: {instrument} {timeframe} - "
+                                   f"High {candle['high']:.4f} entered FVG from {fvg_low:.4f} "
+                                   f"(FVG: {fvg_time}, 2nd swing: {second_swing_time})")
                         return True
             
-            logger.info(f"❌ SMT DID NOT TAP: {instrument} {timeframe} - No candle entered FVG zone")
+            logger.info(f"❌ SMT DID NOT TAP: {instrument} {timeframe} - "
+                       f"No candle entered FVG zone (FVG: {fvg_time}, 2nd swing: {second_swing_time})")
             return False
             
         except Exception as e:
