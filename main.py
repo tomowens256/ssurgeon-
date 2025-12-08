@@ -3160,6 +3160,7 @@ class UltimateTradingSystem:
         logger.info(f"🎯 Initialized ULTIMATE trading system for {self.pair_group}: {', '.join(self.instruments)}")
         logger.info(f"🎯 FVG Analyzer initialized for {pair_group}")
         self.fvg_detector = FVGDetector(min_gap_pct=0.20)
+        self.fvg_smt_tap_sent = {}  # Track FVG+SMT tap signals sent
         self.fvg_ideas_sent = {}
         self.smart_timing = SmartTimingSystem()
         self.last_candle_scan = {}
