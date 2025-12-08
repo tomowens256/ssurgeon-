@@ -4882,15 +4882,55 @@ class UltimateTradingSystem:
         primary_smt = idea['primary_smt']
         secondary_smt = idea['secondary_smt']
         
-        # Format quarters
-        primary_quarters = primary_smt['quarters'].replace('_', '→') if 'quarters' in primary_smt else ''
-        secondary_quarters = secondary_smt['quarters'].replace('_', '→') if 'quarters' in secondary_smt else ''
+        def format_smt_section(smt, label):
+            """Format a single SMT section"""
+            section = f"*{label} SMT ({smt['cycle']}):*\n"
+            
+            # Quarters
+            quarters = smt.get('quarters', '')
+            if quarters:
+                quarters_display = quarters.replace('_', '→')
+                section += f"• Quarter Transition: {quarters_display}\n"
+            
+            # PSP status
+            has_psp = smt.get('has_psp', False)
+            section += f"• PSP: {'✅ Confirmed' if has_psp else '❌ Not confirmed'}\n"
+            
+            # PSP details if available
+            if has_psp and 'psp_data' in smt:
+                psp_data = smt['psp_data']
+                psp_timeframe = psp_data.get('timeframe', '')
+                psp_time = psp_data.get('formation_time', '')
+                if psp_time and isinstance(psp_time, datetime):
+                    psp_time_str = psp_time.strftime('%H:%M')
+                    section += f"• PSP Time: {psp_timeframe} at {psp_time_str}\n"
+            
+            # Asset actions
+            asset1_action = smt.get('asset1_action', '')
+            asset2_action = smt.get('asset2_action', '')
+            if asset1_action or asset2_action:
+                section += "• Actions:\n"
+                if asset1_action:
+                    section += f"  - {asset1_action}\n"
+                if asset2_action:
+                    section += f"  - {asset2_action}\n"
+            
+            # Time
+            formation_time = smt.get('formation_time', datetime.now(NY_TZ))
+            if isinstance(formation_time, str):
+                try:
+                    formation_time = datetime.strptime(formation_time, '%Y-%m-%d %H:%M:%S')
+                except:
+                    formation_time = datetime.now(NY_TZ)
+            section += f"• Time: {formation_time.strftime('%H:%M')}\n"
+            
+            return section
         
-        # Format PSP status
-        primary_psp = "✅" if primary_smt.get('has_psp', False) else "❌"
-        secondary_psp = "✅" if secondary_smt.get('has_psp', False) else "❌"
+        # Build sections
+        primary_section = format_smt_section(primary_smt, "Primary")
+        secondary_section = format_smt_section(secondary_smt, "Secondary")
         
-        # Determine strength based on PSP
+        # Determine overall strength
         if primary_smt.get('has_psp', False) and secondary_smt.get('has_psp', False):
             strength = "ULTRA STRONG"
             psp_status = "✅ Both confirmed"
@@ -4901,10 +4941,6 @@ class UltimateTradingSystem:
             strength = "STRONG"
             psp_status = "❌ None"
         
-        # Format SMT actions
-        primary_actions = f"• {primary_smt['asset1_action']}\n  • {primary_smt['asset2_action']}" if 'asset1_action' in primary_smt else ""
-        secondary_actions = f"• {secondary_smt['asset1_action']}\n  • {secondary_smt['asset2_action']}" if 'asset1_action' in secondary_smt else ""
-        
         message = f"""
         {emoji} *DOUBLE SMT CONFIRM* {emoji}
         
@@ -4912,19 +4948,8 @@ class UltimateTradingSystem:
         *Direction:* {direction}
         *Strength:* {strength}
         
-        *Primary SMT ({primary_smt['cycle']}):*
-        • Quarter Transition: {primary_quarters}
-        • PSP: {primary_psp} {'Confirmed' if primary_smt.get('has_psp') else 'Not confirmed'}
-        • Actions:
-          {primary_actions}
-        • Time: {primary_smt['formation_time'].strftime('%H:%M')}
-        
-        *Secondary SMT ({secondary_smt['cycle']}):*
-        • Quarter Transition: {secondary_quarters}
-        • PSP: {secondary_psp} {'Confirmed' if secondary_smt.get('has_psp') else 'Not confirmed'}
-        • Actions:
-          {secondary_actions}
-        • Time: {secondary_smt['formation_time'].strftime('%H:%M')}
+        {primary_section}
+        {secondary_section}
         
         *Confluence Details:*
         • Span: {idea['span_minutes']:.1f}min from 2nd swings
