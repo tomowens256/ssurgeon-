@@ -3107,14 +3107,11 @@ class UltimateTradingSystem:
             self.instruments = [pair_config['pair1'], pair_config['pair2']]
             logger.info(f"🔄 Converted old structure for {pair_group} to instruments: {self.instruments}")
         
-        # Initialize components
+        # Initialize components - REORDERED!
         self.timing_manager = RobustTimingManager()
         self.quarter_manager = RobustQuarterManager()
-        self.smt_detector = UltimateSMTDetector(pair_config, self.timing_manager)
-        self.crt_detector = RobustCRTDetector(self.timing_manager)
-        self.crt_detector.feature_box = self.feature_box 
         
-        # ✅ CORRECT: Now we can use self.pair_group because we're inside __init__
+        # FIRST create FeatureBox
         self.feature_box = RealTimeFeatureBox(
             self.pair_group, 
             self.timing_manager, 
@@ -3122,8 +3119,10 @@ class UltimateTradingSystem:
             self.telegram_chat_id
         )
         
-        # NEW: Enhanced FVG Analysis
-        
+        # THEN create detectors and connect FeatureBox
+        self.smt_detector = UltimateSMTDetector(pair_config, self.timing_manager)
+        self.crt_detector = RobustCRTDetector(self.timing_manager)
+        self.crt_detector.feature_box = self.feature_box  # ← NOW THIS WORKS!
         
         # Data storage for all instruments
         self.market_data = {inst: {} for inst in self.instruments}
@@ -3162,7 +3161,7 @@ class UltimateTradingSystem:
                 # Scan for new features and add to Feature Box
                 await self._scan_and_add_features_immediate()
                 # Scan for FVG-SMT confluence
-                self._scan_fvg_with_smt_tap()
+               
                 fvg_signal = self._scan_fvg_with_smt_tap()
 
                 if not fvg_signal:
