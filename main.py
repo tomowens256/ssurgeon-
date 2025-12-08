@@ -3551,10 +3551,22 @@ class UltimateTradingSystem:
         return False
     
     def _format_crt_smt_message(self, idea):
-        """Format CRT+SMT confluence message"""
+        """Format CRT+SMT confluence message with SMT details"""
         dir_emoji = "🟢" if idea['direction'] == 'bullish' else "🔴"
         crt_time = idea['crt_time'].strftime('%H:%M')
         smt_time = idea['smt_time'].strftime('%H:%M')
+        
+        # Get SMT details from the smt_data
+        smt_data = idea.get('smt_data', {})
+        quarters = smt_data.get('quarters', '')
+        asset1_action = smt_data.get('asset1_action', '')
+        asset2_action = smt_data.get('asset2_action', '')
+        
+        # Format quarters for display
+        if quarters:
+            quarters_display = quarters.replace('_', '→')
+        else:
+            quarters_display = ''
         
         return f"""
             🔷 *CRT + SMT CONFLUENCE* 🔷
@@ -3568,6 +3580,11 @@ class UltimateTradingSystem:
             • CRT: {idea['crt_timeframe']} at {crt_time}
             • SMT: {idea['smt_cycle']} cycle at {smt_time}
             • PSP: {'✅ Confirmed' if idea['has_psp'] else '❌ Not Confirmed'}
+                
+            *SMT Quarter Details:*
+            • {idea['smt_cycle']} {quarters_display}
+              - {asset1_action}
+              - {asset2_action}
                 
             *Reasoning:* {idea['reasoning']}
                 
