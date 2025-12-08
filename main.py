@@ -4710,30 +4710,69 @@ class UltimateTradingSystem:
         return False
 
     def _format_double_smt_message(self, idea):
-        """Format double SMT w/criteria deets for Telegram."""
-        dir_emoji = "🟢" if idea['direction'] == 'bullish' else "🔴"
-        primary_time = idea['primary_time'].strftime('%H:%M')
-        secondary_time = idea['secondary_time'].strftime('%H:%M')
-        return f"""
-            {dir_emoji} *DOUBLE SMT CONFIRM* {dir_emoji}
-            
-            *Group:* {idea['pair_group'].replace('_', ' ').title()}
-            *Direction:* {idea['direction'].upper()}
-            *Strength:* {idea['strength']}
-            
-            *Criteria:*
-            • Primary Cycle: {idea['primary_cycle']} SMT at {primary_time}
-            • Secondary Cycle: {idea['secondary_cycle']} SMT at {secondary_time}
-            • Span: {idea['span_minutes']}min from 2nd swings
-            • PSP: ✅ Both confirmed
-            
-            *Reasoning:* {idea['reasoning']}
-            
-            *Detect:* {idea['timestamp'].strftime('%H:%M:%S')}
-            
-            #{idea['pair_group']} #DoubleSMT #{idea['direction']}
-            """
-
+        """Format Double SMT message with detailed SMT and PSP information"""
+        direction = idea['direction'].upper()
+        emoji = "🟢" if direction == "BULLISH" else "🔴"
+        
+        # Get SMT details
+        primary_smt = idea['primary_smt']
+        secondary_smt = idea['secondary_smt']
+        
+        # Format quarters
+        primary_quarters = primary_smt['quarters'].replace('_', '→') if 'quarters' in primary_smt else ''
+        secondary_quarters = secondary_smt['quarters'].replace('_', '→') if 'quarters' in secondary_smt else ''
+        
+        # Format PSP status
+        primary_psp = "✅" if primary_smt.get('has_psp', False) else "❌"
+        secondary_psp = "✅" if secondary_smt.get('has_psp', False) else "❌"
+        
+        # Determine strength based on PSP
+        if primary_smt.get('has_psp', False) and secondary_smt.get('has_psp', False):
+            strength = "ULTRA STRONG"
+            psp_status = "✅ Both confirmed"
+        elif primary_smt.get('has_psp', False) or secondary_smt.get('has_psp', False):
+            strength = "VERY STRONG"
+            psp_status = "⚠️ One confirmed"
+        else:
+            strength = "STRONG"
+            psp_status = "❌ None"
+        
+        # Format SMT actions
+        primary_actions = f"• {primary_smt['asset1_action']}\n  • {primary_smt['asset2_action']}" if 'asset1_action' in primary_smt else ""
+        secondary_actions = f"• {secondary_smt['asset1_action']}\n  • {secondary_smt['asset2_action']}" if 'asset1_action' in secondary_smt else ""
+        
+        message = f"""
+        {emoji} *DOUBLE SMT CONFIRM* {emoji}
+        
+        *Group:* {idea['pair_group'].replace('_', ' ').title()}
+        *Direction:* {direction}
+        *Strength:* {strength}
+        
+        *Primary SMT ({primary_smt['cycle']}):*
+        • Quarter Transition: {primary_quarters}
+        • PSP: {primary_psp} {'Confirmed' if primary_smt.get('has_psp') else 'Not confirmed'}
+        • Actions:
+          {primary_actions}
+        • Time: {primary_smt['formation_time'].strftime('%H:%M')}
+        
+        *Secondary SMT ({secondary_smt['cycle']}):*
+        • Quarter Transition: {secondary_quarters}
+        • PSP: {secondary_psp} {'Confirmed' if secondary_smt.get('has_psp') else 'Not confirmed'}
+        • Actions:
+          {secondary_actions}
+        • Time: {secondary_smt['formation_time'].strftime('%H:%M')}
+        
+        *Confluence Details:*
+        • Span: {idea['span_minutes']:.1f}min from 2nd swings
+        • PSP Status: {psp_status}
+        
+        *Reasoning:* {idea['reasoning']}
+        
+        *Detect:* {idea['detection_time'].strftime('%H:%M:%S')}
+        
+        #{idea['pair_group']} #DoubleSMT #{idea['direction']}
+        """
+        return message
 
     def _check_alternative_confluences_with_fvgs(self, fvgs):
         """Only double SMTs as alternative"""
