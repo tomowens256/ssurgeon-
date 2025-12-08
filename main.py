@@ -923,22 +923,14 @@ class RobustCRTDetector:
                 if psp_signal:
                     logger.info(f"🎯 PSP FOUND for CRT: {psp_signal['asset1_color']}/{psp_signal['asset2_color']} at {psp_signal['formation_time'].strftime('%H:%M')}")
                 
-                # Create CRT signal FIRST
-                crt_signal = {
+                # Create and return CRT signal
+                return {
                     'direction': direction, 
                     'timestamp': c3['time'],
                     'timeframe': timeframe,
                     'signal_key': f"CRT_{timeframe}_{c3['time'].strftime('%m%d_%H%M')}_{direction}",
                     'psp_signal': psp_signal  # Include PSP if found
                 }
-                
-                # NOW check for SMT confluence (if we have feature_box)
-                if hasattr(self, 'feature_box') and self.feature_box:
-                    smt_confluence = self._check_smt_confluence_for_crt(crt_signal, timeframe)
-                    if smt_confluence:
-                        crt_signal['smt_confluence'] = smt_confluence
-                
-                return crt_signal
                 
         except (ValueError, TypeError) as e:
             logger.error(f"Error in CRT calculation: {e}")
