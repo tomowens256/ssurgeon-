@@ -3167,6 +3167,7 @@ class UltimateTradingSystem:
                 
                 # Scan for new features and add to Feature Box
                 await self._scan_and_add_features_immediate()
+                self.debug_smt_detection()
                 # Scan for FVG-SMT confluence
                
                 fvg_signal = self._scan_fvg_with_smt_tap()
@@ -3461,7 +3462,34 @@ class UltimateTradingSystem:
         """
     
     
-
+    def debug_smt_detection(self):
+        """Debug why SMTs aren't being detected"""
+        logger.info("🔧 DEBUGGING SMT DETECTION")
+        
+        for cycle in ['weekly', 'daily', '90min']:
+            timeframe = self.pair_config['timeframe_mapping'][cycle]
+            
+            asset1_data = self.market_data[self.instruments[0]].get(timeframe)
+            asset2_data = self.market_data[self.instruments[1]].get(timeframe)
+            
+            if asset1_data is None or asset2_data is None:
+                logger.info(f"🔧 {cycle} ({timeframe}): No data")
+                continue
+            
+            logger.info(f"🔧 {cycle} ({timeframe}): {len(asset1_data)} & {len(asset2_data)} candles")
+            
+            # Check if we have the 'complete' column
+            if 'complete' in asset1_data.columns:
+                complete_candles = asset1_data[asset1_data['complete'] == True]
+                logger.info(f"🔧 Complete candles in {cycle}: {len(complete_candles)}")
+            
+            # Try to detect SMT
+            smt_signal = self.smt_detector.detect_smt_all_cycles(asset1_data, asset2_data, cycle)
+            
+            if smt_signal:
+                logger.info(f"🔧 SMT DETECTED: {cycle} {smt_signal['direction']}")
+            else:
+                logger.info(f"🔧 NO SMT for {cycle}")
     
     def _generate_good_reasoning(self, fvg_idea, smt_confluence):
         """Generate reasoning for good confluence"""
