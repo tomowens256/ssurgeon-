@@ -2029,7 +2029,7 @@ class RealTimeFeatureBox:
         
         # Feature expiration times (minutes)
         self.expiration_times = {
-            'smt': 240,    # 4 hours for SMT
+            'smt': 1200,    # 4 hours for SMT
             'crt': 120,    # 2 hours for CRT  
             'psp': 60      # 1 hour for PSP
         }
@@ -2039,33 +2039,55 @@ class RealTimeFeatureBox:
         
 
     
-    def add_smt(self, smt_data, psp_data=None):
-        """Add SMT feature to tracking - triggers immediate confluence check"""
-        logger.info(f"📦 FEATUREBOX: Adding SMT - {smt_data['cycle']} {smt_data['direction']}")
-        if not smt_data:
-            return False
-            
-        signal_key = smt_data['signal_key']
+    # In RealTimeFeatureBox.add_smt():
+    def add_smt(self, smt_data, psp_data):
+        """Add SMT to active features"""
+        logger.info(f"📦 ADD_SMT CALLED: {smt_data['cycle']} {smt_data['direction']}")
         
-        # Check if already exists and is still valid
+        # Check if already exists
+        signal_key = smt_data.get('signal_key')
         if signal_key in self.active_features['smt']:
-            if not self._is_feature_expired(self.active_features['smt'][signal_key]):
-                logger.debug(f"🔄 SMT already active: {signal_key}")
-                return False
+            logger.info(f"📦 SMT already exists: {signal_key}")
+            return False
         
-        # Store SMT feature
-        self.active_features['smt'][signal_key] = {
+        # Create feature
+        feature = {
+            'type': 'smt',
             'smt_data': smt_data,
             'psp_data': psp_data,
-            'timestamp': datetime.now(NY_TZ),
-            'expiration': datetime.now(NY_TZ) + timedelta(minutes=self.expiration_times['smt'])
+            'timestamp': datetime.now(NY_TZ)
         }
         
-        logger.info(f"📥 SMT ADDED to FeatureBox: {smt_data['cycle']} {smt_data['direction']} {smt_data['quarters']}")
-        logger.info(f"📦 FEATUREBOX: Now has {len(self.active_features['smt'])} active SMTs")
+        self.active_features['smt'][signal_key] = feature
+        logger.info(f"📦 SMT ADDED SUCCESS: {signal_key}")
+        logger.info(f"📦 Total active SMTs: {len(self.active_features['smt'])}")
         
-        # Immediate confluence check
-        return self._check_immediate_confluence(signal_key, 'smt')
+        return True
+
+    def _is_feature_expired(self, feature):
+        """Check if feature is expired - EXTENDED FOR TESTING"""
+        feature_type = feature.get('type')
+        creation_time = feature.get('timestamp')
+        
+        if not creation_time:
+            return True
+        
+        # EXTENDED EXPIRY FOR TESTING
+        expiry_hours = {
+            'smt': 24,    # 24 hours instead of 1-2
+            'crt': 24,
+            'psp': 24
+        }
+        
+        current_time = datetime.now(NY_TZ)
+        hours_passed = (current_time - creation_time).total_seconds() / 3600
+        
+        expired = hours_passed > expiry_hours.get(feature_type, 1)
+        
+        if expired:
+            logger.debug(f"🕒 Feature expired: {feature.get('signal_key', 'Unknown')} - {hours_passed:.1f}h old")
+        
+        return expired
     
     def add_crt(self, crt_data, psp_data=None):
         """Add CRT feature to tracking - triggers immediate confluence check"""
@@ -3356,6 +3378,68 @@ class UltimateTradingSystem:
         self.smt_detector.last_smt_candle = None
         self.smt_detector.signal_counts = {}
         self.smt_detector.invalidated_smts = set()
+
+    def debug_quarter_comparison(self):
+        """Compare quarter data between debug and main scan"""
+        logger.info("🔬 QUARTER COMPARISON DEBUG")
+        
+        for cycle in ['weekly', 'daily']:
+            timeframe = self.pair_config['timeframe_mapping'][cycle]
+            
+            asset1_data = self.market_data[self.instruments[0]].get(timeframe)
+            asset2_data = self.market_data[self.instruments[1]].get(timeframe)
+            
+            if asset1_data is None or asset2_data is None:
+                continue
+            
+            # Get quarter grouping
+            quarters1 = self.smt_detector.quarter_manager.group_candles_by_quarters(asset1_data, cycle)
+            quarters2 = self.smt_detector.quarter_manager.group_candles_by_quarters(asset2_data, cycle)
+            
+            logger.info(f"🔬 {cycle} ({timeframe}) quarters:")
+            for q in ['q1', 'q2', 'q3', 'q4']:
+                if q in quarters1:
+                    logger.info(f"🔬   Asset1 {q}: {len(quarters1[q])} candles")
+                if q in quarters2:
+                    logger.info(f"🔬   Asset2 {q}: {len(quarters2[q])} candles")
+
+    def test_smt_workflow(self):
+        """Test the complete SMT workflow"""
+        logger.info("🧪 TESTING COMPLETE SMT WORKFLOW")
+        
+        # 1. Reset everything
+        self.reset_smt_detector_state()
+        self.feature_box.active_features['smt'] = {}  # Clear FeatureBox
+        
+        # 2. Test weekly cycle
+        timeframe = self.pair_config['timeframe_mapping']['weekly']
+        asset1_data = self.market_data[self.instruments[0]].get(timeframe)
+        asset2_data = self.market_data[self.instruments[1]].get(timeframe)
+        
+        if asset1_data is None or asset2_data is None:
+            logger.info("❌ No data for test")
+            return
+        
+        logger.info(f"🧪 Testing with {len(asset1_data)} candles")
+        
+        # 3. Detect SMT
+        smt_signal = self.smt_detector.detect_smt_all_cycles(asset1_data, asset2_data, 'weekly')
+        
+        if smt_signal:
+            logger.info(f"🧪 SMT Detected: {smt_signal['signal_key']}")
+            
+            # 4. Check PSP
+            psp_signal = self.smt_detector.check_psp_for_smt(smt_signal, asset1_data, asset2_data)
+            logger.info(f"🧪 PSP: {'Found' if psp_signal else 'Not found'}")
+            
+            # 5. Add to FeatureBox
+            success = self.feature_box.add_smt(smt_signal, psp_signal)
+            logger.info(f"🧪 Added to FeatureBox: {success}")
+            
+            # 6. Check FeatureBox
+            logger.info(f"🧪 FeatureBox now has {len(self.feature_box.active_features['smt'])} SMTs")
+        else:
+            logger.info("🧪 No SMT detected")
 
     def _scan_crt_smt_confluence(self):
         """Check CRT with SMT confluence (CRT on higher TF, SMT on lower TF)"""
