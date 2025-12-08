@@ -4273,7 +4273,7 @@ class UltimateTradingSystem:
         
         return False
 
-    def _check_cross_tf_smt_second_swing_in_fvg(self, smt_data, asset, fvg_low, fvg_high, fvg_direction, fvg_tf, smt_cycle):
+    def _check_cross_tf_smt_second_swing_in_fvg(self, smt_data, asset, fvg_low, fvg_high, fvg_direction, fvg_tf, smt_cycle, fvg_formation_time):
         """Check if SMT's second swing (on lower TF) entered FVG zone (on higher TF)"""
         try:
             # Get SMT's timeframe from config
@@ -4285,18 +4285,18 @@ class UltimateTradingSystem:
                 logger.info(f"❌ No {smt_tf} data for {asset}")
                 return False
             
-            # Get SMT formation time
-            smt_formation_time = smt_data.get('formation_time')
-            if not smt_formation_time:
-                logger.info(f"❌ No formation time in SMT data")
+            # Get the second swing time from SMT data
+            swing_times = smt_data.get('swing_times', [])
+            if not swing_times or len(swing_times) < 2:
+                logger.info(f"❌ No swing times in SMT data")
                 return False
             
-            # Get FVG formation time
-            fvg_formation_time = None  # We need to pass this from fvg_idea
-            # We'll get it from the fvg data in the calling method
+            second_swing_time = swing_times[1]
             
-            # Get the second swing time from SMT data
-            second_swing_time = smt_data.get('second_swing_time', smt_formation_time)
+            # CRITICAL: Check if second swing happens AFTER FVG formation
+            if second_swing_time <= fvg_formation_time:
+                logger.info(f"❌ CROSS-TF REJECTED: SMT second swing at {second_swing_time} is BEFORE FVG formation at {fvg_formation_time}")
+                return False
             
             # Look for candles around second swing time in SMT timeframe
             time_diffs = abs(smt_price_data['time'] - second_swing_time)
