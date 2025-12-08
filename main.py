@@ -4540,6 +4540,42 @@ class UltimateTradingSystem:
             logger.info(f"🚀 FVG+SMT TAP SIGNAL SENT: {fvg_idea['asset']} {fvg_tf} FVG + {smt_cycle} SMT")
             return True
         return False
+
+    def _format_fvg_smt_tap_message(self, idea):
+        """Format FVG+SMT tap message"""
+        direction_emoji = "🟢" if idea['direction'] == 'bullish' else "🔴"
+        fvg_time = idea['fvg_formation_time'].strftime('%m/%d %H:%M')
+        
+        hp_emoji = "🎯" if idea['is_hp_fvg'] else ""
+        psp_emoji = "✅" if idea['has_psp'] else "❌"
+        
+        message = f"""
+        🎯 *FVG + SMT TAP CONFIRMED* 🎯
+        
+        *Pair Group:* {idea['pair_group'].replace('_', ' ').title()}
+        *Direction:* {idea['direction'].upper()} {direction_emoji}
+        *Asset:* {idea['asset']}
+        *Strength:* {'ULTRA STRONG' if idea['is_hp_fvg'] and idea['has_psp'] else 'STRONG'}
+        
+        *Cross-Timeframe Confluence:*
+        • FVG: {idea['fvg_timeframe']} at {fvg_time}
+        • SMT: {idea['smt_cycle']} cycle
+        • HP FVG: {hp_emoji} {'YES' if idea['is_hp_fvg'] else 'NO'}
+        • PSP: {psp_emoji} {'Confirmed' if idea['has_psp'] else 'Not Confirmed'}
+        
+        *FVG Details:*
+        • Levels: {idea['fvg_levels']}
+        • Formation: {fvg_time}
+        
+        *SMT Details:*
+        • Cycle: {idea['smt_cycle']}
+        • Direction: {idea['smt_direction']}
+        
+        *Detection Time:* {idea['timestamp'].strftime('%Y-%m-%d %H:%M:%S')}
+        
+        #FVG_SMT_Tap #{idea['pair_group']} #{idea['direction']} #{idea['fvg_timeframe']}
+        """
+        return message
     
     def _send_double_smt_only_signal(self, primary_smt, secondary_smt, span_min):
         """Send double SMT signal w/criteria deets."""
