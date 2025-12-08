@@ -4239,11 +4239,31 @@ class UltimateTradingSystem:
                     continue
                 
                 # CRITICAL: Check temporal relationship BEFORE checking tap
-                swing_times = smt_data.get('swing_times', [])
-                if not swing_times or len(swing_times) < 2:
+                # Get swing_times - it's a dictionary, not a list!
+                swing_times = smt_data.get('swing_times', {})
+                
+                # Determine which asset key to use
+                if fvg_asset == self.instruments[0]:
+                    asset_key = 'asset1_curr'
+                else:
+                    asset_key = 'asset2_curr'
+                
+                # Get the current swing for this asset
+                asset_curr = swing_times.get(asset_key, {})
+                
+                if not asset_curr:
+                    logger.info(f"⚠️ No swing data for {fvg_asset} in SMT {smt_cycle}")
                     continue
                 
-                second_swing_time = swing_times[1]
+                # Extract second swing time (could be dict or Timestamp)
+                if isinstance(asset_curr, dict):
+                    second_swing_time = asset_curr.get('time')
+                else:
+                    second_swing_time = asset_curr  # Assuming it's already a Timestamp
+                
+                if not second_swing_time:
+                    logger.info(f"⚠️ No second swing time found for {fvg_asset} in SMT {smt_cycle}")
+                    continue
                 
                 # REJECT if SMT second swing is BEFORE FVG formation
                 if second_swing_time <= fvg_formation_time:
