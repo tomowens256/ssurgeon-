@@ -3290,6 +3290,8 @@ class UltimateTradingSystem:
     async def _scan_and_add_features_immediate(self):
         """Scan for features immediately when new candles are detected"""
         cycles = ['monthly', 'weekly', 'daily', '90min']
+        logger.info(f"🔍 SMT SCAN: Starting scan for {len(cycles)} cycles")
+        smt_detected_count = 0
         
         for cycle in cycles:
             timeframe = self.pair_config['timeframe_mapping'][cycle]
