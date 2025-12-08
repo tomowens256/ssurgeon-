@@ -917,19 +917,19 @@ class RobustCRTDetector:
                 direction = 'bullish' if buy_crt else 'bearish'
                 
                     # Check for SMT confluence
-                    smt_confluence = self._check_smt_confluence_for_crt(crt_signal, timeframe)
+                smt_confluence = self._check_smt_confluence_for_crt(crt_signal, timeframe)
                     
                     # Check for PSP
-                    psp_signal = self._detect_psp_for_crt(asset1_data, asset2_data, timeframe, crt_time)
+                psp_signal = self._detect_psp_for_crt(asset1_data, asset2_data, timeframe, crt_time)
                     
-                    return {
+                return {
                         'direction': direction, 
                         'timestamp': c3['time'],
                         'timeframe': timeframe,
                         'signal_key': f"CRT_{timeframe}_{c3['time'].strftime('%m%d_%H%M')}_{direction}",
                         'psp_signal': psp_signal,
                         'smt_confluence': smt_confluence  # New: SMT info
-                    }
+                }
                 
         except (ValueError, TypeError) as e:
             logger.error(f"Error in CRT calculation: {e}")
