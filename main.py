@@ -948,8 +948,14 @@ class RobustCRTDetector:
 
     def _check_smt_confluence_for_crt(self, crt_signal, timeframe):
         """Check for SMT confluence with CRT"""
-        if not hasattr(self, 'feature_box'):  # Need reference to feature box
+        if not self.feature_box:
             return None
+        
+        CRT_SMT_MAPPING = {
+            'H4': ['weekly', 'daily'],  # 4hr CRT → Weekly OR Daily SMT
+            'H2': ['daily'],           # 1hr CRT → Daily SMT
+            'H1': ['daily', '90min']  # 15min CRT → Daily OR 90min SMT
+        }
         
         allowed_cycles = CRT_SMT_MAPPING.get(timeframe, [])
         crt_direction = crt_signal['direction']
@@ -965,7 +971,7 @@ class RobustCRTDetector:
             if (smt_data['cycle'] in allowed_cycles and 
                 smt_data['direction'] == crt_direction):
                 
-                logger.info(f"✅ CRT-SMT CONFLUENCE: {timeframe} CRT + {smt_data['cycle']} SMT")
+                logger.info(f"✅ CRT-SMT CONFLUENCE IN DETECTOR: {timeframe} CRT + {smt_data['cycle']} SMT")
                 return smt_data
         
         return None
