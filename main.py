@@ -3167,7 +3167,9 @@ class UltimateTradingSystem:
                 
                 # Scan for new features and add to Feature Box
                 await self._scan_and_add_features_immediate()
+                self.debug_feature_box()
                 self.debug_smt_detection()
+                
                 # Scan for FVG-SMT confluence
                
                 fvg_signal = self._scan_fvg_with_smt_tap()
@@ -3305,40 +3307,40 @@ class UltimateTradingSystem:
             timeframe = self.pair_config['timeframe_mapping'][cycle]
             
             # Check if we have new data for this cycle's timeframe
-            if self._has_new_candle_data(timeframe):
-                logger.info(f"🔍 Immediate scan: {cycle} cycle ({timeframe})")
+            #if self._has_new_candle_data(timeframe):
+            logger.info(f"🔍 Immediate scan: {cycle} cycle ({timeframe})")
                 
-                asset1_data = self.market_data[self.instruments[0]].get(timeframe)
-                asset2_data = self.market_data[self.instruments[1]].get(timeframe)
+            asset1_data = self.market_data[self.instruments[0]].get(timeframe)
+            asset2_data = self.market_data[self.instruments[1]].get(timeframe)
 
-                logger.info(f"🔍 SMT Data Check - {self.instruments[0]} {timeframe}: "
-                       f"{'Has data' if asset1_data is not None else 'NO DATA'}, "
-                       f"{len(asset1_data) if asset1_data is not None else 0} candles")
-                logger.info(f"🔍 SMT Data Check - {self.instruments[1]} {timeframe}: "
-                           f"{'Has data' if asset2_data is not None else 'NO DATA'}, "
-                           f"{len(asset2_data) if asset2_data is not None else 0} candles")
+            logger.info(f"🔍 SMT Data Check - {self.instruments[0]} {timeframe}: "
+                    f"{'Has data' if asset1_data is not None else 'NO DATA'}, "
+                    f"{len(asset1_data) if asset1_data is not None else 0} candles")
+            logger.info(f"🔍 SMT Data Check - {self.instruments[1]} {timeframe}: "
+                        f"{'Has data' if asset2_data is not None else 'NO DATA'}, "
+                        f"{len(asset2_data) if asset2_data is not None else 0} candles")
             
                 
-                if (asset1_data is not None and isinstance(asset1_data, pd.DataFrame) and not asset1_data.empty and
-                    asset2_data is not None and isinstance(asset2_data, pd.DataFrame) and not asset2_data.empty):
+            if (asset1_data is not None and isinstance(asset1_data, pd.DataFrame) and not asset1_data.empty and
+                asset2_data is not None and isinstance(asset2_data, pd.DataFrame) and not asset2_data.empty):
                     
-                    logger.info(f"🔍 Scanning {cycle} cycle ({timeframe}) for SMT...")
-                    smt_signal = self.smt_detector.detect_smt_all_cycles(asset1_data, asset2_data, cycle)
+                logger.info(f"🔍 Scanning {cycle} cycle ({timeframe}) for SMT...")
+                smt_signal = self.smt_detector.detect_smt_all_cycles(asset1_data, asset2_data, cycle)
 
-                    logger.info(f"🔍 Scanning {cycle} cycle ({timeframe}) for SMT...")
-                    smt_signal = self.smt_detector.detect_smt_all_cycles(asset1_data, asset2_data, cycle)
+                logger.info(f"🔍 Scanning {cycle} cycle ({timeframe}) for SMT...")
+                smt_signal = self.smt_detector.detect_smt_all_cycles(asset1_data, asset2_data, cycle)
                     
-                    if smt_signal:
+                if smt_signal:
                         # Check for PSP immediately
-                        psp_signal = self.smt_detector.check_psp_for_smt(smt_signal, asset1_data, asset2_data)
+                    psp_signal = self.smt_detector.check_psp_for_smt(smt_signal, asset1_data, asset2_data)
                         
-                        self.feature_box.add_smt(smt_signal, psp_signal)
-                        smt_detected_count += 1
-                        logger.info(f"✅ SMT DETECTED: {cycle} {smt_signal['direction']} - PSP: {'Yes' if psp_signal else 'No'}")
-                    else:
-                        logger.info(f"🔍 No SMT found for {cycle} cycle")
+                    self.feature_box.add_smt(smt_signal, psp_signal)
+                    smt_detected_count += 1
+                    logger.info(f"✅ SMT DETECTED: {cycle} {smt_signal['direction']} - PSP: {'Yes' if psp_signal else 'No'}")
                 else:
-                    logger.warning(f"⚠️ No data for {cycle} SMT scan")
+                    logger.info(f"🔍 No SMT found for {cycle} cycle")
+            else:
+                logger.warning(f"⚠️ No data for {cycle} SMT scan")
         
         logger.info(f"📊 SMT Scan Complete: Detected {smt_detected_count} SMTs")
 
@@ -3405,6 +3407,20 @@ class UltimateTradingSystem:
         
         logger.info(f"🔷 No CRT+SMT confluence found")
         return False
+
+    def debug_feature_box(self):
+        """Debug what's in FeatureBox"""
+        logger.info("📦 DEBUGGING FEATURE BOX")
+        
+        # Check SMTs
+        smt_count = len(self.feature_box.active_features['smt'])
+        logger.info(f"📦 Active SMTs: {smt_count}")
+        
+        for smt_key, smt_feature in self.feature_box.active_features['smt'].items():
+            smt_data = smt_feature['smt_data']
+            expired = self.feature_box._is_feature_expired(smt_feature)
+            logger.info(f"📦 SMT: {smt_data['cycle']} {smt_data['direction']} "
+                       f"(expired: {expired}, PSP: {smt_feature['psp_data'] is not None})")
     
     def _send_crt_smt_signal(self, crt_signal, smt_data, has_psp, instrument):
         """Send CRT+SMT confluence signal"""
