@@ -3522,10 +3522,20 @@ class UltimateTradingSystem:
                        f"(expired: {expired}, PSP: {smt_feature['psp_data'] is not None})")
     
     def _send_crt_smt_signal(self, crt_signal, smt_data, has_psp, instrument):
-        """Send CRT+SMT confluence signal"""
+        """Send CRT+SMT confluence signal with cooldown"""
         crt_direction = crt_signal['direction']
         crt_tf = crt_signal['timeframe']
         smt_cycle = smt_data['cycle']
+        
+        # Create unique signal ID
+        signal_id = f"CRT_SMT_{self.pair_group}_{crt_tf}_{smt_cycle}_{instrument}_{crt_signal['timestamp'].strftime('%H%M')}"
+        
+        # Check cooldown (1 hour)
+        if hasattr(self, 'crt_smt_ideas_sent') and signal_id in self.crt_smt_ideas_sent:
+            last_sent = self.crt_smt_ideas_sent[signal_id]
+            if (datetime.now(NY_TZ) - last_sent).total_seconds() < 3600:
+                logger.info(f"⏳ CRT+SMT recently sent: {signal_id}")
+                return False
         
         idea = {
             'type': 'CRT_SMT_CONFLUENCE',
@@ -3533,6 +3543,7 @@ class UltimateTradingSystem:
             'direction': crt_direction,
             'crt_timeframe': crt_tf,
             'smt_cycle': smt_cycle,
+            'smt_data': smt_data,  # ADD THIS LINE
             'asset': instrument,
             'crt_time': crt_signal['timestamp'],
             'smt_time': smt_data['formation_time'],
@@ -3540,12 +3551,16 @@ class UltimateTradingSystem:
             'strength': 'VERY STRONG' if has_psp else 'STRONG',
             'reasoning': f"{crt_tf} {crt_direction} CRT + {smt_cycle} {crt_direction} SMT confluence",
             'timestamp': datetime.now(NY_TZ),
-            'idea_key': f"CRT_SMT_{self.pair_group}_{crt_tf}_{smt_cycle}_{datetime.now(NY_TZ).strftime('%H%M%S')}"
+            'idea_key': signal_id
         }
         
         # Format and send
         message = self._format_crt_smt_message(idea)
         if self._send_telegram_message(message):
+            # Initialize if not exists
+            if not hasattr(self, 'crt_smt_ideas_sent'):
+                self.crt_smt_ideas_sent = {}
+            self.crt_smt_ideas_sent[signal_id] = datetime.now(NY_TZ)
             logger.info(f"🚀 CRT-SMT SIGNAL SENT: {crt_tf} CRT + {smt_cycle} SMT {crt_direction}")
             return True
         return False
@@ -3592,6 +3607,25 @@ class UltimateTradingSystem:
                 
             #{idea['pair_group']} #CRT_SMT #{idea['direction']}
         """
+
+    def _cleanup_old_crt_smt_signals(self):
+        """Remove old CRT+SMT signals from tracking"""
+        if not hasattr(self, 'crt_smt_ideas_sent'):
+            return
+        
+        current_time = datetime.now(NY_TZ)
+        signals_to_remove = []
+        
+        for signal_id, sent_time in self.crt_smt_ideas_sent.items():
+            hours_since_sent = (current_time - sent_time).total_seconds() / 3600
+            if hours_since_sent > 24:  # Remove entries older than 24 hours
+                signals_to_remove.append(signal_id)
+        
+        for signal_id in signals_to_remove:
+            del self.crt_smt_ideas_sent[signal_id]
+        
+        if signals_to_remove:
+            logger.debug(f"🧹 Cleaned up {len(signals_to_remove)} old CRT+SMT signals")
     
     
     def debug_smt_detection(self):
