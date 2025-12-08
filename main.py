@@ -4215,11 +4215,12 @@ class UltimateTradingSystem:
             fvg_asset = fvg_idea['asset']
             fvg_low = fvg_idea['fvg_low']
             fvg_high = fvg_idea['fvg_high']
+            fvg_formation_time = fvg_idea['formation_time']  # Get FVG formation time
             
             # Get which SMT cycles can tap this FVG timeframe
             relevant_cycles = fvg_to_smt_cycles.get(fvg_timeframe, [])
             
-            logger.info(f"🔍 Checking FVG {fvg_idea['fvg_name']} - Can be tapped by: {relevant_cycles}")
+            logger.info(f"🔍 Checking FVG {fvg_idea['fvg_name']} formed at {fvg_formation_time} - Can be tapped by: {relevant_cycles}")
             
             # Check all active SMTs
             for smt_key, smt_feature in self.feature_box.active_features['smt'].items():
@@ -4237,9 +4238,22 @@ class UltimateTradingSystem:
                 if smt_data['direction'] != fvg_direction:
                     continue
                 
+                # CRITICAL: Check temporal relationship BEFORE checking tap
+                swing_times = smt_data.get('swing_times', [])
+                if not swing_times or len(swing_times) < 2:
+                    continue
+                
+                second_swing_time = swing_times[1]
+                
+                # REJECT if SMT second swing is BEFORE FVG formation
+                if second_swing_time <= fvg_formation_time:
+                    logger.info(f"❌ FVG+SMT REJECTED: SMT {smt_cycle} second swing at {second_swing_time} is BEFORE FVG formation at {fvg_formation_time}")
+                    continue  # Skip this SMT
+                
                 # Check if SMT's second swing traded in FVG zone (CROSS-TIMEFRAME)
                 tapped = self._check_cross_tf_smt_second_swing_in_fvg(
-                    smt_data, fvg_asset, fvg_low, fvg_high, fvg_direction, fvg_timeframe, smt_cycle
+                    smt_data, fvg_asset, fvg_low, fvg_high, fvg_direction, 
+                    fvg_timeframe, smt_cycle, fvg_formation_time  # PASS FVG FORMATION TIME!
                 )
                 
                 if tapped:
