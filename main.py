@@ -4173,7 +4173,7 @@ class UltimateTradingSystem:
     
     def _scan_fvg_with_smt_tap(self):
         """Find FVGs where SMT's SECOND SWING traded in FVG zone - CROSS-TIMEFRAME FIXED"""
-        logger.info(f"🔍 SCANNING: FVG + SMT Second Swing Tap (Cross-TF)")
+        logger.info(f"🔍 SCANNING: FVG + SMT Second Swing Tap (Cross-TF) - PSP REQUIRED")
         
         # CORRECT CROSS-TIMEFRAME MAPPING
         fvg_to_smt_cycles = {
@@ -4238,6 +4238,12 @@ class UltimateTradingSystem:
                 if smt_data['direction'] != fvg_direction:
                     continue
                 
+                # ✅ NEW: CHECK PSP REQUIREMENT FIRST
+                has_psp = smt_feature['psp_data'] is not None
+                if not has_psp:
+                    logger.info(f"⏳ Skipping FVG+SMT: {smt_cycle} SMT has no PSP confirmation")
+                    continue  # Skip SMTs without PSP
+                
                 # CRITICAL: Check temporal relationship BEFORE checking tap
                 # Get swing_times - it's a dictionary, not a list!
                 swing_times = smt_data.get('swing_times', {})
@@ -4280,17 +4286,15 @@ class UltimateTradingSystem:
                     # Check if only ONE asset tapped (HP FVG)
                     is_hp_fvg = self._check_hp_fvg_fix(fvg_idea, fvg_asset)
                     
-                    # Get PSP status
-                    has_psp = smt_feature['psp_data'] is not None
-                    
-                    logger.info(f"✅ FVG+SMT TAP CONFIRMED: {smt_cycle} {smt_data['direction']} "
-                               f"tapped {fvg_timeframe} FVG on {fvg_asset}, HP: {is_hp_fvg}, PSP: {has_psp}")
+                    logger.info(f"✅ FVG+SMT TAP CONFIRMED WITH PSP: {smt_cycle} {smt_data['direction']} "
+                               f"tapped {fvg_timeframe} FVG on {fvg_asset}, HP: {is_hp_fvg}")
                     
                     # Send the signal
                     return self._send_fvg_smt_tap_signal(
                         fvg_idea, smt_data, has_psp, is_hp_fvg
                     )
         
+        logger.info(f"🔍 No FVG+SMT setups with PSP found")
         return False
 
     def _check_cross_tf_smt_second_swing_in_fvg(self, smt_data, asset, fvg_low, fvg_high, fvg_direction, fvg_tf, smt_cycle, fvg_formation_time):
