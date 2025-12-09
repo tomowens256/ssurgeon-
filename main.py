@@ -2075,9 +2075,9 @@ class RealTimeFeatureBox:
         
         # EXTENDED EXPIRY FOR TESTING
         expiry_hours = {
-            'smt': 24,    # 24 hours instead of 1-2
-            'crt': 24,
-            'psp': 24
+            'smt': 10,    # 24 hours instead of 1-2
+            'crt': 2,
+            'psp': 1
         }
         
         current_time = datetime.now(NY_TZ)
