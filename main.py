@@ -2911,7 +2911,7 @@ class RealTimeFeatureBox:
 
 
 class FVGDetector:
-    def __init__(self, min_gap_pct: float = 0.20):
+    def __init__(self, min_gap_pct: float = 0.05):
         self.min_gap_pct = min_gap_pct
         self.active_fvgs = {}  # tf -> [fvgs]
         self.invalidate_std_mult = 4.0
