@@ -2995,14 +2995,14 @@ class FVGDetector:
         for _, candle in post_df.iterrows():
             close = candle['close']
             if fvg['direction'] == 'bullish':
-                if close < fvg['candle_b_low']:  # Breach
+                if close < fvg['fvg_low']:  # Breach
                     logger.info(f"❌ Bull FVG invalidated: Close {close:.4f} < B low {fvg['candle_b_low']:.4f}")
                     return True
                 if close > (fvg['candle_b_high'] + threshold):  # Over-extend up
                     logger.info(f"❌ Bull FVG invalidated: Over-extend {close:.4f} > B high +4std {fvg['candle_b_high'] + threshold:.4f}")
                     return True
             else:  # Bearish
-                if close > fvg['candle_b_high']:  # Breach
+                if close > fvg['fvg_high']:  # Breach
                     logger.info(f"❌ Bear FVG invalidated: Close {close:.4f} > B high {fvg['candle_b_high']:.4f}")
                     return True
                 if close < (fvg['candle_b_low'] - threshold):  # Over-extend down
