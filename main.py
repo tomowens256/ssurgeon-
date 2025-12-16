@@ -3595,10 +3595,16 @@ class UltimateTradingSystem:
             if tf not in required_timeframes:
                 required_timeframes.append(tf)
         
+        # ✅ ADD MORE CANDLES FOR SUPPLY/DEMAND ZONES
         # Create all fetch tasks
         for instrument in self.instruments:
             for tf in required_timeframes:
-                count = self._get_proven_count(tf)
+                # Use different counts for different purposes
+                if tf in ['M5','M15', 'H1', 'H4']:  # Timeframes for Supply/Demand zones
+                    count = 500  # Get 500 candles for Supply/Demand
+                else:
+                    count = self._get_proven_count(tf)  # Use normal count for others
+                
                 task = asyncio.create_task(
                     self._fetch_single_instrument_data(instrument, tf, count, api_key)
                 )
@@ -3606,8 +3612,8 @@ class UltimateTradingSystem:
         
         # Wait for ALL data with timeout
         try:
-            await asyncio.wait_for(asyncio.gather(*tasks), timeout=30.0)
-            logger.info(f"✅ Parallel data fetch completed for {self.pair_group}")
+            await asyncio.wait_for(asyncio.gather(*tasks), timeout=45.0)  # Increased timeout
+            logger.info(f"✅ Parallel data fetch completed for {self.pair_group} (SD zones: 500 candles)")
         except asyncio.TimeoutError:
             logger.warning(f"⚠️ Parallel data fetch timeout for {self.pair_group}")
     
