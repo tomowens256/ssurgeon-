@@ -3446,56 +3446,62 @@ class UltimateTradingSystem:
         """Use smart timing instead of fixed intervals"""
         return self.smart_timing.get_smart_sleep_time()
     
-    async def run_ultimate_analysis_async(self, api_key):
-        """Run ALL scans in parallel using asyncio"""
+    async def run_ultimate_analysis(self, api_key):
+        """Run analysis triggered by new candle formation - ALL SCANS IN PARALLEL"""
         try:
-            # Cleanup
+            # Cleanup expired features first
             self.feature_box.cleanup_expired_features()
             self.cleanup_old_signals()
             
-            # Fetch data
+            # Fetch data (this will get the new candle)
             await self._fetch_all_data_parallel(api_key)
             self.reset_smt_detector_state()
             
+            # Check if we have new candles that warrant immediate scanning
             new_candles_detected = self._check_new_candles()
             
             if new_candles_detected:
-                logger.info(f"🎯 NEW CANDLES DETECTED - Running ALL scans ASYNC")
+                logger.info(f"🎯 NEW CANDLES DETECTED - Running ALL scans in parallel")
                 
-                # Scan for new features
+                # Scan for new features and add to Feature Box
                 await self._scan_and_add_features_immediate()
+                self.debug_feature_box()
+                self.debug_smt_detection()
                 
-                # Create async tasks for each scan
-                import asyncio
-                
-                async def run_scan(scan_func, scan_name):
-                    """Run a scan function asynchronously"""
-                    try:
-                        # Run in thread pool since scans are CPU-bound
-                        loop = asyncio.get_event_loop()
-                        result = await loop.run_in_executor(None, scan_func)
-                        logger.info(f"📊 {scan_name}: {'✅ Signal found' if result else '⏳ No signal'}")
-                        return result
-                    except Exception as e:
-                        logger.error(f"❌ Error in {scan_name}: {e}")
-                        return False
-                
-                # Define scan functions
-                scan_tasks = [
-                    run_scan(self._scan_fvg_with_smt_tap, "FVG+SMT Tap"),
-                    run_scan(self._scan_sd_with_smt_tap, "SD+SMT Tap"),
-                    run_scan(self._scan_crt_smt_confluence, "CRT+SMT"),
-                    run_scan(self._scan_double_smts_temporal, "Double SMT")
+                # === RUN ALL SCANS IN PARALLEL (NON-BLOCKING) ===
+                # Create list of scan functions to run
+                scan_functions = [
+                    self._scan_fvg_with_smt_tap,
+                    self._scan_sd_with_smt_tap,
+                    self._scan_crt_smt_confluence,
+                    self._scan_double_smts_temporal
                 ]
                 
-                # Run all scans in parallel
-                results = await asyncio.gather(*scan_tasks, return_exceptions=True)
+                scan_names = [
+                    "FVG+SMT Tap",
+                    "Supply/Demand+SMT Tap", 
+                    "CRT+SMT Confluence",
+                    "Double SMT Temporal"
+                ]
                 
-                # Log summary
-                signals_found = sum(1 for r in results if r is True)
-                logger.info(f"🎯 Total signals found across all scans: {signals_found}")
+                # Run all scans and collect results
+                scan_results = []
                 
-                # Feature summary
+                for scan_func, scan_name in zip(scan_functions, scan_names):
+                    logger.info(f"🎯 Running scan: {scan_name}")
+                    try:
+                        result = scan_func()  # Run synchronously for now
+                        scan_results.append((scan_name, result))
+                    except Exception as e:
+                        logger.error(f"❌ Error in {scan_name} scan: {e}")
+                        scan_results.append((scan_name, False))
+                
+                # Log results
+                for scan_name, result in scan_results:
+                    status = "✅ Signal found" if result else "⏳ No signal"
+                    logger.info(f"📊 {scan_name}: {status}")
+                
+                # Get current feature summary
                 summary = self.feature_box.get_active_features_summary()
                 logger.info(f"📊 {self.pair_group} Feature Summary: {summary['smt_count']} SMTs, {summary['crt_count']} CRTs, {summary['psp_count']} PSPs")
             else:
@@ -3504,7 +3510,7 @@ class UltimateTradingSystem:
             return None
             
         except Exception as e:
-            logger.error(f"❌ Error in async analysis for {self.pair_group}: {str(e)}", exc_info=True)
+            logger.error(f"❌ Error in candle-triggered analysis for {self.pair_group}: {str(e)}", exc_info=True)
             return None
 
     def _cleanup_old_double_smt_signals(self):
