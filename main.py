@@ -3824,7 +3824,7 @@ class UltimateTradingSystem:
         for zone in active_zones:
             logger.info(f"📦   {zone['zone_name']}: {zone['type']} at {zone['zone_low']:.4f}-{zone['zone_high']:.4f}")
         
-    return zones_added
+        return zones_added
 
     def cleanup_old_signals(self):
         """Cleanup old signals from all tracking dictionaries"""
