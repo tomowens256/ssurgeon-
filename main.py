@@ -2920,7 +2920,15 @@ class FVGDetector:
     def scan_tf(self, df, tf, asset):
         if tf not in ['M15', 'H1','H2', 'H3', 'H4', 'D'] or len(df) < 39:
             return []
-        recent = df.tail(39).reset_index(drop=True)
+
+        # ✅ NEW: Filter for CLOSED candles only
+        if 'complete' in df.columns:
+            # Get only closed candles
+            df = df[df['complete'] == True].copy()
+            logger.info(f"🔍 FVG Scan {asset} {tf}: Using {len(df)} closed candles")
+        else:
+            logger.warning(f"⚠️ FVG Scan {asset} {tf}: No 'complete' column - using all candles")
+        recent = df.tail(38).reset_index(drop=True)
         fvgs = []
         for i in range(2, len(recent)):
             a, b, c = recent.iloc[i-2], recent.iloc[i-1], recent.iloc[i]
