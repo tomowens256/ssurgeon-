@@ -4172,8 +4172,8 @@ class UltimateTradingSystem:
     
     
     def _scan_fvg_with_smt_tap(self):
-        """Find FVGs where SMT's SECOND SWING traded in FVG zone - CROSS-TIMEFRAME FIXED"""
-        logger.info(f"🔍 SCANNING: FVG + SMT Second Swing Tap (Cross-TF) - PSP REQUIRED")
+        """Find FVGs where SMT's SECOND SWING traded in FVG zone - USING CLOSED CANDLES ONLY"""
+        logger.info(f"🔍 SCANNING: FVG + SMT Second Swing Tap (Cross-TF) - PSP REQUIRED - CLOSED CANDLES ONLY")
         
         # CORRECT CROSS-TIMEFRAME MAPPING
         fvg_to_smt_cycles = {
@@ -4183,15 +4183,29 @@ class UltimateTradingSystem:
         }
         
         # We need to get FVGs from FVGDetector, not from _find_zone_fvgs (which uses Fibonacci)
-        # Let's scan for FVGs using FVGDetector
+        # Let's scan for FVGs using FVGDetector with ONLY CLOSED CANDLES
         all_fvgs = []
         
         for instrument in self.instruments:
             for fvg_tf in ['H4', 'H1', 'M15']:  # Only these FVG timeframes
                 data = self.market_data[instrument].get(fvg_tf)
                 if data is not None and not data.empty:
-                    # Use FVGDetector to get FVGs
-                    fvgs = self.fvg_detector.scan_tf(data, fvg_tf, instrument)
+                    # ✅ NEW: Use only CLOSED candles for FVG detection
+                    if 'complete' in data.columns:
+                        closed_data = data[data['complete'] == True].copy()
+                        logger.info(f"📊 {instrument} {fvg_tf}: {len(data)} total candles, {len(closed_data)} closed candles")
+                        
+                        if len(closed_data) < 5:  # Need at least 5 closed candles
+                            logger.warning(f"⚠️ Not enough closed candles for {instrument} {fvg_tf}: {len(closed_data)}")
+                            continue
+                        
+                        # Use FVGDetector to get FVGs from CLOSED CANDLES ONLY
+                        fvgs = self.fvg_detector.scan_tf(closed_data, fvg_tf, instrument)
+                    else:
+                        # Fallback if no 'complete' column
+                        logger.warning(f"⚠️ No 'complete' column in {instrument} {fvg_tf} data")
+                        fvgs = self.fvg_detector.scan_tf(data, fvg_tf, instrument)
+                    
                     for fvg in fvgs:
                         # Convert FVGDetector format to the format expected by this method
                         fvg_idea = {
@@ -4203,11 +4217,12 @@ class UltimateTradingSystem:
                             'formation_time': fvg['formation_time'],
                             'fvg_low': fvg['fvg_low'],  # Keep for easy access
                             'fvg_high': fvg['fvg_high'],
-                            'is_hp': fvg.get('is_hp', False)
+                            'is_hp': fvg.get('is_hp', False),
+                            'is_closed_candle': True  # Mark as from closed candle
                         }
                         all_fvgs.append(fvg_idea)
         
-        logger.info(f"🔍 Found {len(all_fvgs)} FVGs to check (from FVGDetector)")
+        logger.info(f"🔍 Found {len(all_fvgs)} FVGs from CLOSED CANDLES")
         
         for fvg_idea in all_fvgs:
             fvg_direction = fvg_idea['direction']
@@ -4238,7 +4253,7 @@ class UltimateTradingSystem:
                 if smt_data['direction'] != fvg_direction:
                     continue
                 
-                # ✅ NEW: CHECK PSP REQUIREMENT FIRST
+                # ✅ CHECK PSP REQUIREMENT FIRST
                 has_psp = smt_feature['psp_data'] is not None
                 if not has_psp:
                     logger.info(f"⏳ Skipping FVG+SMT: {smt_cycle} SMT has no PSP confirmation")
