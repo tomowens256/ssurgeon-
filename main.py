@@ -3780,7 +3780,7 @@ class UltimateTradingSystem:
             logger.debug(f"🧹 Cleaned up {len(signals_to_remove)} old Double SMT signals")
 
     def _scan_and_add_sd_zones(self):
-        """Scan for Supply/Demand zones and add them to FeatureBox"""
+        """Scan for Supply/Demand zones and add them to FeatureBox - WITH DEBUG"""
         logger.info(f"🔍 SCANNING: Supply/Demand Zones")
         
         # Determine timeframes to scan
@@ -3789,6 +3789,7 @@ class UltimateTradingSystem:
             timeframes_to_scan.append('M5')
         
         zones_added = 0
+        zones_invalidated = 0
         
         for instrument in self.instruments:
             for timeframe in timeframes_to_scan:
@@ -3796,19 +3797,34 @@ class UltimateTradingSystem:
                 if data is not None and not data.empty:
                     # Scan for zones
                     zones = self.sd_detector.scan_timeframe(data, timeframe, instrument)
+                    logger.info(f"📊 {instrument} {timeframe}: Found {len(zones)} zones")
                     
                     for zone in zones:
                         # Check if zone is still valid
-                        if self.sd_detector.check_zone_still_valid(zone, data):
+                        is_valid = self.sd_detector.check_zone_still_valid(zone, data)
+                        
+                        if is_valid:
                             # Add to FeatureBox
                             if self.feature_box.add_sd_zone(zone):
                                 zones_added += 1
-                                logger.info(f"📦 Added {zone['type']} zone: {zone['zone_name']}")
+                                logger.info(f"📦 Added {zone['type']} zone: {zone['zone_name']} "
+                                           f"({zone['zone_low']:.4f}-{zone['zone_high']:.4f})")
+                            else:
+                                logger.info(f"📦 Zone already in FeatureBox: {zone['zone_name']}")
                         else:
+                            zones_invalidated += 1
                             logger.info(f"❌ Zone invalidated: {zone['zone_name']}")
         
-        logger.info(f"📊 Total SD zones added: {zones_added}")
-        return zones_added
+        logger.info(f"📊 SD Zones Summary: {zones_added} added, {zones_invalidated} invalidated")
+        
+        # DEBUG: Show what's in FeatureBox
+        active_zones = self.feature_box.get_active_sd_zones()
+        logger.info(f"📦 FeatureBox now has {len(active_zones)} active SD zones")
+        
+        for zone in active_zones:
+            logger.info(f"📦   {zone['zone_name']}: {zone['type']} at {zone['zone_low']:.4f}-{zone['zone_high']:.4f}")
+        
+    return zones_added
 
     def cleanup_old_signals(self):
         """Cleanup old signals from all tracking dictionaries"""
