@@ -3125,6 +3125,55 @@ class SupplyDemandDetector:
         self.min_zone_pct = min_zone_pct
         logger.info(f"✅ SupplyDemandDetector initialized with min_zone_pct: {min_zone_pct*100}%")
     
+    def check_zone_still_valid(self, zone, current_data):
+        """Check if a zone is still valid given current market data"""
+        try:
+            if current_data is None or current_data.empty:
+                return True  # Assume valid if no data
+            
+            zone_type = zone['type']
+            zone_low = zone['zone_low']
+            zone_high = zone['zone_high']
+            formation_time = zone['formation_time']
+            
+            # Get candles after formation
+            subsequent_candles = current_data[current_data['time'] > formation_time]
+            
+            if len(subsequent_candles) == 0:
+                return True
+            
+            # Check next 2 candles for tolerance
+            if len(subsequent_candles) >= 2:
+                first_two = subsequent_candles.head(2)
+                for _, candle in first_two.iterrows():
+                    if zone_type == 'supply':
+                        # Next 2 candles: invalidated if CLOSE above zone_high or CLOSE below zone_low
+                        if candle['close'] > zone_high or candle['close'] < zone_low:
+                            return False
+                    else:  # demand
+                        # Next 2 candles: invalidated if CLOSE below zone_low or CLOSE above zone_high
+                        if candle['close'] < zone_low or candle['close'] > zone_high:
+                            return False
+            
+            # Check remaining candles (after first 2)
+            if len(subsequent_candles) > 2:
+                remaining = subsequent_candles.iloc[2:]
+                for _, candle in remaining.iterrows():
+                    if zone_type == 'supply':
+                        # After 2 candles: ANY breach invalidates (high above OR low below)
+                        if candle['high'] > zone_high or candle['low'] < zone_low:
+                            return False
+                    else:  # demand
+                        # After 2 candles: ANY breach invalidates (low below OR high above)
+                        if candle['low'] < zone_low or candle['high'] > zone_high:
+                            return False
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Error checking zone validity: {e}")
+            return False
+    
     def calculate_wick_percentage(self, candle):
         """Calculate wick percentage for a candle"""
         body_size = abs(candle['close'] - candle['open'])
