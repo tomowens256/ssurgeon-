@@ -3593,6 +3593,7 @@ class UltimateTradingSystem:
         self.pair_config = pair_config
         self.sd_detector = SupplyDemandDetector(min_zone_pct=0.005)  # 0.5% minimum zone
         self.volatile_pairs = ['XAU_USD']
+        self.feature_box.sd_detector = self.sd_detector
         
         # Handle Telegram credentials
         self.telegram_token = telegram_token
@@ -3742,6 +3743,37 @@ class UltimateTradingSystem:
         
         if signals_to_remove:
             logger.debug(f"🧹 Cleaned up {len(signals_to_remove)} old Double SMT signals")
+
+    def _scan_and_add_sd_zones(self):
+        """Scan for Supply/Demand zones and add them to FeatureBox"""
+        logger.info(f"🔍 SCANNING: Supply/Demand Zones")
+        
+        # Determine timeframes to scan
+        timeframes_to_scan = ['M15', 'H1', 'H4']
+        if 'XAU_USD' in self.instruments:
+            timeframes_to_scan.append('M5')
+        
+        zones_added = 0
+        
+        for instrument in self.instruments:
+            for timeframe in timeframes_to_scan:
+                data = self.market_data[instrument].get(timeframe)
+                if data is not None and not data.empty:
+                    # Scan for zones
+                    zones = self.sd_detector.scan_timeframe(data, timeframe, instrument)
+                    
+                    for zone in zones:
+                        # Check if zone is still valid
+                        if self.sd_detector.check_zone_still_valid(zone, data):
+                            # Add to FeatureBox
+                            if self.feature_box.add_sd_zone(zone):
+                                zones_added += 1
+                                logger.info(f"📦 Added {zone['type']} zone: {zone['zone_name']}")
+                        else:
+                            logger.info(f"❌ Zone invalidated: {zone['zone_name']}")
+        
+        logger.info(f"📊 Total SD zones added: {zones_added}")
+        return zones_added
 
     def cleanup_old_signals(self):
         """Cleanup old signals from all tracking dictionaries"""
