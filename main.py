@@ -29,8 +29,8 @@ NY_TZ = timezone('America/New_York')  # automatically handles EST/EDT
 TRADING_PAIRS = {
     'precious_metals': {
         'pair1': 'XAU_USD',  # OLD structure (keep for compatibility)
-        'pair2': 'XAU_EUR',  # OLD structure (keep for compatibility)
-        'instruments': ['XAU_USD', 'XAU_EUR'],  # NEW structure
+        'pair2': 'XAU_JPY',  # OLD structure (keep for compatibility)
+        'instruments': ['XAU_USD', 'XAU_JPY'],  # NEW structure
         'timeframe_mapping': {
             'monthly': 'H4',
             'weekly': 'H1', 
