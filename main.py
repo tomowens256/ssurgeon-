@@ -3707,26 +3707,15 @@ class UltimateTradingSystem:
             return None
 
     def debug_sd_zones(self):
-        """Debug Supply/Demand zone detection"""
-        logger.info(f"🔧 DEBUG: Supply/Demand Zones for {self.pair_group}")
+        """Debug Supply/Demand zones in FeatureBox"""
+        logger.info(f"🔧 DEBUG: SD Zones in FeatureBox for {self.pair_group}")
         
-        for instrument in self.instruments:
-            for timeframe in ['M15', 'H1', 'H4']:
-                data = self.market_data[instrument].get(timeframe)
-                if data is not None and not data.empty:
-                    logger.info(f"🔧 {instrument} {timeframe}: {len(data)} candles available")
-                    
-                    # Check if we have closed candles
-                    if 'complete' in data.columns:
-                        closed = data[data['complete'] == True]
-                        logger.info(f"🔧   Closed candles: {len(closed)}")
-                    
-                    # Manually scan a few candles
-                    if len(data) >= 10:
-                        for i in range(5):
-                            candle = data.iloc[i]
-                            logger.info(f"🔧   Candle {i}: {candle['time']} - O:{candle['open']:.4f} H:{candle['high']:.4f} "
-                                       f"L:{candle['low']:.4f} C:{candle['close']:.4f}")
+        active_zones = self.feature_box.get_active_sd_zones()
+        logger.info(f"🔧 Active SD zones: {len(active_zones)}")
+        
+        for zone in active_zones:
+            status = "✅ VALID" if zone.get('is_valid', True) else "❌ INVALID"
+            logger.info(f"🔧   {zone['zone_name']}: {zone['type']} at {zone['zone_low']:.4f}-{zone['zone_high']:.4f} - {status}")
 
     def _cleanup_old_double_smt_signals(self):
         """Remove old Double SMT signals from tracking"""
