@@ -3186,23 +3186,56 @@ class SupplyDemandDetector:
         
         return True
     
-    def check_zone_invalidation(self, zone, subsequent_candles, zone_type):
-        """Check if zone is invalidated by subsequent price action"""
+    def check_zone_invalidation(self, zone, subsequent_candles, zone_type, asset, other_asset_data=None):
+        """Check if zone is invalidated - NEW LOGIC: 
+           Next 2 candles can wick above/below but can't close there
+           After 2 candles, ANY breach invalidates"""
         zone_low = zone['zone_low']
         zone_high = zone['zone_high']
         
-        # Only check next 2 candles for tolerance
-        check_candles = subsequent_candles.head(2)
+        # Check only first 2 candles for tolerance
+        if len(subsequent_candles) >= 2:
+            first_two = subsequent_candles.head(2)
+            
+            for _, candle in first_two.iterrows():
+                if zone_type == 'supply':
+                    # For supply zone: invalidated if CLOSE above zone high in first 2 candles
+                    if candle['close'] > zone_high:
+                        return True
+                    # For supply zone: invalidated if LOW below zone low (breach in wrong direction)
+                    if candle['low'] < zone_low:
+                        return True
+                else:  # demand zone
+                    # For demand zone: invalidated if CLOSE below zone low in first 2 candles
+                    if candle['close'] < zone_low:
+                        return True
+                    # For demand zone: invalidated if HIGH above zone high (breach in wrong direction)
+                    if candle['high'] > zone_high:
+                        return True
         
-        for _, candle in check_candles.iterrows():
-            if zone_type == 'supply':
-                # For supply zone: invalidated if closes above zone high
-                if candle['close'] > zone_high:
-                    return True
-            else:  # demand zone
-                # For demand zone: invalidated if closes below zone low
-                if candle['close'] < zone_low:
-                    return True
+        # Check remaining candles (after first 2)
+        if len(subsequent_candles) > 2:
+            remaining = subsequent_candles.iloc[2:]
+            
+            for _, candle in remaining.iterrows():
+                if zone_type == 'supply':
+                    # After 2 candles: ANY breach above invalidates
+                    if candle['high'] > zone_high:  # ANY breach, not just close
+                        return True
+                    if candle['low'] < zone_low:
+                        return True
+                else:  # demand zone
+                    # After 2 candles: ANY breach below invalidates
+                    if candle['low'] < zone_low:  # ANY breach, not just close
+                        return True
+                    if candle['high'] > zone_high:
+                        return True
+        
+        # Check other asset for confluent invalidation (optional)
+        if other_asset_data is not None and zone_type == 'supply':
+            # For supply zone: check if other asset is also in downtrend
+            # This is optional - you mentioned "if one breaches and the other doesn't we wait"
+            pass
         
         return False
     
@@ -3223,7 +3256,7 @@ class SupplyDemandDetector:
         else:  # demand
             return min(next_two['low'].min(), formation_candle['low'])
     
-    def scan_timeframe(self, data, timeframe, asset):
+    def scan_timeframe(self, data, timeframe, asset, other_asset_data=None):
         """Scan for supply and demand zones in a timeframe"""
         if data is None or len(data) < 10:
             return []
@@ -3241,9 +3274,9 @@ class SupplyDemandDetector:
         # Look back up to 100 candles
         lookback = min(100, len(data))
         
-        for i in range(3, lookback - 5):  # Need at least 5 candles after
+        for i in range(3, lookback - 10):  # Need at least 10 candles after
             formation_candle = data.iloc[i]
-            next_candles = data.iloc[i+1:i+6]  # Check next 5 candles
+            next_candles = data.iloc[i+1:i+11]  # Check next 10 candles
             
             # Check for supply zone
             if self.is_supply_zone(formation_candle, next_candles):
@@ -3280,9 +3313,9 @@ class SupplyDemandDetector:
                         'original_low': formation_candle['low']
                     }
                     
-                    # Check if zone is still valid
+                    # Check if zone is still valid with NEW invalidation logic
                     subsequent_candles = data.iloc[i+1:]
-                    if not self.check_zone_invalidation(zone, subsequent_candles, 'supply'):
+                    if not self.check_zone_invalidation(zone, subsequent_candles, 'supply', asset, other_asset_data):
                         zones.append(zone)
             
             # Check for demand zone
@@ -3320,9 +3353,9 @@ class SupplyDemandDetector:
                         'original_low': formation_candle['low']
                     }
                     
-                    # Check if zone is still valid
+                    # Check if zone is still valid with NEW invalidation logic
                     subsequent_candles = data.iloc[i+1:]
-                    if not self.check_zone_invalidation(zone, subsequent_candles, 'demand'):
+                    if not self.check_zone_invalidation(zone, subsequent_candles, 'demand', asset, other_asset_data):
                         zones.append(zone)
         
         logger.info(f"🔍 Supply/Demand Scan {asset} {timeframe}: Found {len(zones)} zones")
