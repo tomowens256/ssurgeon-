@@ -2018,7 +2018,8 @@ class RealTimeFeatureBox:
         self.active_features = {
             'smt': {},      # key: signal_key, value: {smt_data, psp_data, timestamp, expiration}
             'crt': {},      # key: signal_key, value: {crt_data, psp_data, timestamp, expiration}  
-            'psp': {}       # key: signal_key, value: {psp_data, timestamp, expiration}
+            'psp': {},       # key: signal_key, value: {psp_data, timestamp, expiration}
+            'sd_zone': {}
         }
         
         # Signal cooldown to prevent duplicates
@@ -2031,14 +2032,82 @@ class RealTimeFeatureBox:
         self.expiration_times = {
             'smt': 1200,    # 4 hours for SMT
             'crt': 120,    # 2 hours for CRT  
-            'psp': 60      # 1 hour for PSP
+            'psp': 60 ,     # 1 hour for PSP
+            'sd_zone': 288000000
         }
         
         logger.info(f"🎯 RealTimeFeatureBox initialized for {pair_group}")
     
         
 
+    def add_sd_zone(self, zone_data):
+        """Add Supply/Demand zone to active features"""
+        zone_name = zone_data['zone_name']
+        
+        # Check if already exists
+        if zone_name in self.active_features['sd_zone']:
+            logger.info(f"📦 SD Zone already exists: {zone_name}")
+            return False
+        
+        # Create feature with expiration
+        feature = {
+            'type': 'sd_zone',
+            'zone_data': zone_data,
+            'timestamp': datetime.now(NY_TZ),
+            'expiration': datetime.now(NY_TZ) + timedelta(minutes=self.expiration_times['sd_zone'])
+        }
+        
+        self.active_features['sd_zone'][zone_name] = feature
+        logger.info(f"📦 SD Zone ADDED: {zone_name}")
+        return True
     
+    def get_active_sd_zones(self, direction=None, timeframe=None, asset=None):
+        """Get active SD zones with optional filters"""
+        active_zones = []
+        
+        for zone_name, zone_feature in self.active_features['sd_zone'].items():
+            if self._is_feature_expired(zone_feature):
+                continue
+                
+            zone_data = zone_feature['zone_data']
+            
+            # Apply filters
+            if direction and zone_data.get('direction') != direction:
+                continue
+            if timeframe and zone_data.get('timeframe') != timeframe:
+                continue
+            if asset and zone_data.get('asset') != asset:
+                continue
+            
+            active_zones.append(zone_data)
+        
+        return active_zones
+    
+    def cleanup_sd_zones(self, market_data):
+        """Clean up invalidated SD zones"""
+        zones_to_remove = []
+        
+        for zone_name, zone_feature in self.active_features['sd_zone'].items():
+            if self._is_feature_expired(zone_feature):
+                zones_to_remove.append(zone_name)
+                continue
+                
+            zone_data = zone_feature['zone_data']
+            asset = zone_data['asset']
+            timeframe = zone_data['timeframe']
+            
+            # Get current market data for this asset/timeframe
+            if asset in market_data and timeframe in market_data[asset]:
+                current_data = market_data[asset][timeframe]
+                
+                # Check if zone is still valid
+                # We need the SupplyDemandDetector for this - we'll pass it as parameter
+                # This should be called from UltimateTradingSystem which has the detector
+                pass
+        
+        for zone_name in zones_to_remove:
+            del self.active_features['sd_zone'][zone_name]
+            logger.info(f"🧹 Removed expired SD zone: {zone_name}")
     # In RealTimeFeatureBox.add_smt():
     def add_smt(self, smt_data, psp_data):
         """Add SMT to active features"""
