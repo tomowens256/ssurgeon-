@@ -4451,7 +4451,7 @@ class UltimateTradingSystem:
             return False
 
     def _scan_sd_with_smt_tap(self):
-        """Find Supply/Demand zones where SMT's SECOND SWING traded in the zone - USING FEATUREBOX"""
+        """Find Supply/Demand zones where SMT's SECOND SWING traded in the zone - USING FEATUREBOX ZONES"""
         logger.info(f"🔍 SCANNING: Supply/Demand + SMT Tap - USING FEATUREBOX ZONES")
         
         # Timeframe mapping: SD Zone -> allowed SMT cycles
@@ -4476,7 +4476,7 @@ class UltimateTradingSystem:
         
         for zone in active_zones:
             zone_type = zone['type']  # 'supply' or 'demand'
-            zone_direction = zone['direction']  # 'bearish' for supply, 'bullish' for demand
+            zone_direction = 'bearish' if zone_type == 'supply' else 'bullish'  # Convert to direction
             zone_timeframe = zone['timeframe']
             zone_asset = zone['asset']
             zone_low = zone['zone_low']
@@ -4516,35 +4516,9 @@ class UltimateTradingSystem:
                 if not has_psp:
                     continue
                 
-                # Check temporal relationship
-                swing_times = smt_data.get('swing_times', {})
-                
-                # Determine which asset key to use
-                if zone_asset == self.instruments[0]:
-                    asset_key = 'asset1_curr'
-                else:
-                    asset_key = 'asset2_curr'
-                
-                asset_curr = swing_times.get(asset_key, {})
-                if not asset_curr:
-                    continue
-                
-                # Extract second swing time
-                if isinstance(asset_curr, dict):
-                    second_swing_time = asset_curr.get('time')
-                else:
-                    second_swing_time = asset_curr
-                
-                if not second_swing_time:
-                    continue
-                
-                # REJECT if SMT second swing is BEFORE zone formation
-                if second_swing_time <= zone_formation_time:
-                    continue
-                
-                # ✅ Check if SMT's second swing traded in the zone (SAME LOGIC AS FVG)
+                # ✅ USE THE SAME FUNCTION AS FVG!
                 tapped = self._check_cross_tf_smt_second_swing_in_fvg(
-                    smt_data, zone_asset, zone_low, zone_high, zone_direction, 
+                    smt_data, zone_asset, zone_low, zone_high, zone_direction,
                     zone_timeframe, smt_cycle, zone_formation_time
                 )
                 
