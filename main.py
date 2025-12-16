@@ -3530,7 +3530,7 @@ class UltimateTradingSystem:
         return self.smart_timing.get_smart_sleep_time()
     
     async def run_ultimate_analysis(self, api_key):
-        """Run analysis triggered by new candle formation - ALL SCANS NON-BLOCKING"""
+        """Run analysis triggered by new candle formation - SIMPLER PARALLEL"""
         try:
             # Cleanup expired features first
             self.feature_box.cleanup_expired_features()
@@ -3545,55 +3545,32 @@ class UltimateTradingSystem:
             new_candles_detected = self._check_new_candles()
             
             if new_candles_detected:
-                logger.info(f"🎯 NEW CANDLES DETECTED - Running ALL scans (non-blocking)")
+                logger.info(f"🎯 NEW CANDLES DETECTED - Running ALL scans")
                 
                 # Scan for new features and add to Feature Box
                 await self._scan_and_add_features_immediate()
                 self.debug_feature_box()
                 self.debug_smt_detection()
                 
-                # ✅ RUN ALL SCANS IN PARALLEL - NO BLOCKING
-                # Each scan runs independently and can send signals
+                # ✅ SIMPLER APPROACH: Just run all scans sequentially but non-blocking for signals
                 
-                # 1. FVG+SMT Scan
-                logger.info(f"🎯 Running scan: FVG+SMT Tap")
-                fvg_task = asyncio.create_task(
-                    asyncio.get_event_loop().run_in_executor(
-                        None, self._scan_fvg_with_smt_tap
-                    )
-                )
+                # Create a list of scan functions with their names
+                scans = [
+                    (self._scan_fvg_with_smt_tap, "FVG+SMT Tap"),
+                    (self._scan_sd_with_smt_tap, "Supply/Demand+SMT Tap"),
+                    (self._scan_crt_smt_confluence, "CRT+SMT Confluence"),
+                    (self._scan_double_smts_temporal, "Double SMTs")
+                ]
                 
-                # 2. Supply/Demand+SMT Scan  
-                logger.info(f"🎯 Running scan: Supply/Demand+SMT Tap")
-                sd_task = asyncio.create_task(
-                    asyncio.get_event_loop().run_in_executor(
-                        None, self._scan_sd_with_smt_tap
-                    )
-                )
-                
-                # 3. CRT+SMT Scan
-                logger.info(f"🎯 Running scan: CRT+SMT Confluence")
-                crt_task = asyncio.create_task(
-                    asyncio.get_event_loop().run_in_executor(
-                        None, self._scan_crt_smt_confluence
-                    )
-                )
-                
-                # 4. Double SMT Scan
-                logger.info(f"🎯 Running scan: Double SMTs")
-                double_task = asyncio.create_task(
-                    asyncio.get_event_loop().run_in_executor(
-                        None, self._scan_double_smts_temporal
-                    )
-                )
-                
-                # Wait for all scans to complete (but they send signals as they find them)
-                try:
-                    await asyncio.wait_for(asyncio.gather(
-                        fvg_task, sd_task, crt_task, double_task
-                    ), timeout=10.0)
-                except asyncio.TimeoutError:
-                    logger.info(f"⏳ Scans continuing in background")
+                # Run each scan - they don't block each other's signal sending
+                for scan_func, scan_name in scans:
+                    logger.info(f"🎯 Running scan: {scan_name}")
+                    try:
+                        # Run synchronously (they can still send signals as they find them)
+                        scan_func()
+                        logger.info(f"✅ {scan_name} completed")
+                    except Exception as e:
+                        logger.error(f"❌ Error in {scan_name}: {e}")
                 
                 # Get current feature summary
                 summary = self.feature_box.get_active_features_summary()
