@@ -4203,17 +4203,33 @@ class UltimateTradingSystem:
             'H4': ['weekly', 'daily'],      # H4 Zone → Weekly (H1) or Daily (M15) SMT
             'H1': ['weekly', 'daily'],      # H1 Zone → Weekly (H1) or Daily (M15) SMT  
             'M15': ['daily'],               # M15 Zone → Daily (M15) SMT
-            'M5': ['90min']                 # M5 Zone → 90min (M5) SMT
+            'M5': ['90min']                 # M5 Zone → 90min (M5) SMT - ONLY for volatile pairs
         }
+        
+        # Determine timeframes to scan based on pair group volatility
+        timeframes_to_scan = ['M15', 'H1', 'H4']
+        
+        # Add M5 for volatile pairs (like XAU_USD)
+        volatile_pairs = ['XAU_USD', 'XAG_USD', 'precious_metals']
+        if self.pair_group in volatile_pairs or any(pair in self.instruments for pair in ['XAU_USD', 'XAG_USD']):
+            timeframes_to_scan.append('M5')
+            logger.info(f"🔍 Including M5 zones for volatile pair: {self.pair_group}")
         
         # Scan for all Supply/Demand zones
         all_zones = self.sd_detector.scan_all_timeframes(
             self.market_data, 
             self.instruments, 
-            timeframes=['M15', 'H1', 'H4']
+            timeframes=timeframes_to_scan
         )
         
         logger.info(f"🔍 Found {len(all_zones)} Supply/Demand zones to check")
+        
+        # Process zones in parallel (non-blocking)
+        signals_sent = []
+        
+        # Sort zones by timeframe importance (H4 > H1 > M15 > M5)
+        timeframe_order = {'H4': 4, 'H1': 3, 'M15': 2, 'M5': 1}
+        all_zones.sort(key=lambda x: timeframe_order.get(x['timeframe'], 0), reverse=True)
         
         for zone in all_zones:
             zone_type = zone['type']  # 'supply' or 'demand'
@@ -4227,7 +4243,9 @@ class UltimateTradingSystem:
             # Get which SMT cycles can tap this zone timeframe
             relevant_cycles = sd_to_smt_cycles.get(zone_timeframe, [])
             
-            logger.info(f"🔍 Checking {zone_type.upper()} zone {zone['zone_name']} - Can be tapped by: {relevant_cycles}")
+            # For M5 zones, check if we have 90min SMTs
+            if zone_timeframe == 'M5':
+                logger.info(f"🔍 Checking M5 zone - requires 90min SMT")
             
             # Check all active SMTs
             for smt_key, smt_feature in self.feature_box.active_features['smt'].items():
@@ -4248,7 +4266,6 @@ class UltimateTradingSystem:
                 # Check PSP requirement
                 has_psp = smt_feature['psp_data'] is not None
                 if not has_psp:
-                    logger.info(f"⏳ Skipping SD+SMT: {smt_cycle} SMT has no PSP")
                     continue
                 
                 # Check temporal relationship
@@ -4275,7 +4292,6 @@ class UltimateTradingSystem:
                 
                 # REJECT if SMT second swing is BEFORE zone formation
                 if second_swing_time <= zone_formation_time:
-                    logger.info(f"❌ SD+SMT REJECTED: SMT {smt_cycle} second swing is BEFORE zone formation")
                     continue
                 
                 # Check if SMT's second swing traded in the zone
@@ -4291,13 +4307,16 @@ class UltimateTradingSystem:
                     logger.info(f"✅ SD+SMT TAP CONFIRMED: {smt_cycle} {smt_data['direction']} "
                                f"tapped {zone_timeframe} {zone_type} on {zone_asset}, HP: {is_hp_zone}")
                     
-                    # Send the signal
-                    return self._send_sd_smt_tap_signal(
+                    # Send the signal (non-blocking)
+                    signal_sent = self._send_sd_smt_tap_signal(
                         zone, smt_data, has_psp, is_hp_zone
                     )
+                    
+                    if signal_sent:
+                        signals_sent.append(signal_sent)
         
-        logger.info(f"🔍 No SD+SMT setups with PSP found")
-        return False
+        logger.info(f"🔍 SD+SMT scan complete. Signals sent: {len(signals_sent)}")
+        return len(signals_sent) > 0
 
     def _check_smt_tap_in_sd_zone(self, smt_data, asset, zone_low, zone_high, zone_direction, zone_tf, smt_cycle, zone_formation_time):
         """Check if SMT's second swing traded in Supply/Demand zone"""
