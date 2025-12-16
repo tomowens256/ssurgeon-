@@ -3649,7 +3649,7 @@ class UltimateTradingSystem:
         return self.smart_timing.get_smart_sleep_time()
     
     async def run_ultimate_analysis(self, api_key):
-        """Run analysis triggered by new candle formation - SIMPLER PARALLEL"""
+        """Run analysis triggered by new candle formation"""
         try:
             # Cleanup expired features first
             self.feature_box.cleanup_expired_features()
@@ -3664,36 +3664,39 @@ class UltimateTradingSystem:
             new_candles_detected = self._check_new_candles()
             
             if new_candles_detected:
-                logger.info(f"🎯 NEW CANDLES DETECTED - Running ALL scans")
+                logger.info(f"🎯 NEW CANDLES DETECTED - Running analysis")
                 
                 # Scan for new features and add to Feature Box
                 await self._scan_and_add_features_immediate()
+                
+                # ✅ Scan for Supply/Demand zones and add to FeatureBox
+                self._scan_and_add_sd_zones()
+                
                 self.debug_feature_box()
                 self.debug_smt_detection()
                 
-                # ✅ SIMPLER APPROACH: Just run all scans sequentially but non-blocking for signals
+                # ✅ Run ALL scans - they each check for signals independently
                 
-                # Create a list of scan functions with their names
-                scans = [
-                    (self._scan_fvg_with_smt_tap, "FVG+SMT Tap"),
-                    (self._scan_sd_with_smt_tap, "Supply/Demand+SMT Tap"),
-                    (self._scan_crt_smt_confluence, "CRT+SMT Confluence"),
-                    (self._scan_double_smts_temporal, "Double SMTs")
-                ]
+                # 1. FVG+SMT Scan
+                fvg_signal = self._scan_fvg_with_smt_tap()
                 
-                # Run each scan - they don't block each other's signal sending
-                for scan_func, scan_name in scans:
-                    logger.info(f"🎯 Running scan: {scan_name}")
-                    try:
-                        # Run synchronously (they can still send signals as they find them)
-                        scan_func()
-                        logger.info(f"✅ {scan_name} completed")
-                    except Exception as e:
-                        logger.error(f"❌ Error in {scan_name}: {e}")
+                # 2. Supply/Demand+SMT Scan (regardless of FVG result)
+                sd_signal = self._scan_sd_with_smt_tap()
+                
+                # 3. CRT+SMT Scan (regardless of previous results)
+                crt_signal = self._scan_crt_smt_confluence()
+                
+                # 4. Double SMT Scan (regardless of previous results)
+                double_signal = self._scan_double_smts_temporal()
+                
+                # Log what we found
+                signals_found = sum([fvg_signal, sd_signal, crt_signal, double_signal])
+                logger.info(f"🎯 Signals found: {signals_found} (FVG:{fvg_signal}, SD:{sd_signal}, CRT:{crt_signal}, Double:{double_signal})")
                 
                 # Get current feature summary
                 summary = self.feature_box.get_active_features_summary()
-                logger.info(f"📊 {self.pair_group} Feature Summary: {summary['smt_count']} SMTs, {summary['crt_count']} CRTs, {summary['psp_count']} PSPs")
+                sd_count = len(self.feature_box.active_features['sd_zone'])
+                logger.info(f"📊 {self.pair_group} Feature Summary: {summary['smt_count']} SMTs, {sd_count} SD zones, {summary['crt_count']} CRTs, {summary['psp_count']} PSPs")
             else:
                 logger.info(f"⏸️ No new candles - skipping analysis")
             
