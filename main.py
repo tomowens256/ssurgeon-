@@ -3530,7 +3530,7 @@ class UltimateTradingSystem:
         return self.smart_timing.get_smart_sleep_time()
     
     async def run_ultimate_analysis(self, api_key):
-        """Run analysis triggered by new candle formation - ALL SCANS IN PARALLEL"""
+        """Run analysis triggered by new candle formation - ALL SCANS NON-BLOCKING"""
         try:
             # Cleanup expired features first
             self.feature_box.cleanup_expired_features()
@@ -3538,51 +3538,62 @@ class UltimateTradingSystem:
             
             # Fetch data (this will get the new candle)
             await self._fetch_all_data_parallel(api_key)
+    
             self.reset_smt_detector_state()
             
             # Check if we have new candles that warrant immediate scanning
             new_candles_detected = self._check_new_candles()
             
             if new_candles_detected:
-                logger.info(f"🎯 NEW CANDLES DETECTED - Running ALL scans in parallel")
+                logger.info(f"🎯 NEW CANDLES DETECTED - Running ALL scans (non-blocking)")
                 
                 # Scan for new features and add to Feature Box
                 await self._scan_and_add_features_immediate()
                 self.debug_feature_box()
                 self.debug_smt_detection()
                 
-                # === RUN ALL SCANS IN PARALLEL (NON-BLOCKING) ===
-                # Create list of scan functions to run
-                scan_functions = [
-                    self._scan_fvg_with_smt_tap,
-                    self._scan_sd_with_smt_tap,
-                    self._scan_crt_smt_confluence,
-                    self._scan_double_smts_temporal
-                ]
+                # ✅ RUN ALL SCANS IN PARALLEL - NO BLOCKING
+                # Each scan runs independently and can send signals
                 
-                scan_names = [
-                    "FVG+SMT Tap",
-                    "Supply/Demand+SMT Tap", 
-                    "CRT+SMT Confluence",
-                    "Double SMT Temporal"
-                ]
+                # 1. FVG+SMT Scan
+                logger.info(f"🎯 Running scan: FVG+SMT Tap")
+                fvg_task = asyncio.create_task(
+                    asyncio.get_event_loop().run_in_executor(
+                        None, self._scan_fvg_with_smt_tap
+                    )
+                )
                 
-                # Run all scans and collect results
-                scan_results = []
+                # 2. Supply/Demand+SMT Scan  
+                logger.info(f"🎯 Running scan: Supply/Demand+SMT Tap")
+                sd_task = asyncio.create_task(
+                    asyncio.get_event_loop().run_in_executor(
+                        None, self._scan_sd_with_smt_tap
+                    )
+                )
                 
-                for scan_func, scan_name in zip(scan_functions, scan_names):
-                    logger.info(f"🎯 Running scan: {scan_name}")
-                    try:
-                        result = scan_func()  # Run synchronously for now
-                        scan_results.append((scan_name, result))
-                    except Exception as e:
-                        logger.error(f"❌ Error in {scan_name} scan: {e}")
-                        scan_results.append((scan_name, False))
+                # 3. CRT+SMT Scan
+                logger.info(f"🎯 Running scan: CRT+SMT Confluence")
+                crt_task = asyncio.create_task(
+                    asyncio.get_event_loop().run_in_executor(
+                        None, self._scan_crt_smt_confluence
+                    )
+                )
                 
-                # Log results
-                for scan_name, result in scan_results:
-                    status = "✅ Signal found" if result else "⏳ No signal"
-                    logger.info(f"📊 {scan_name}: {status}")
+                # 4. Double SMT Scan
+                logger.info(f"🎯 Running scan: Double SMTs")
+                double_task = asyncio.create_task(
+                    asyncio.get_event_loop().run_in_executor(
+                        None, self._scan_double_smts_temporal
+                    )
+                )
+                
+                # Wait for all scans to complete (but they send signals as they find them)
+                try:
+                    await asyncio.wait_for(asyncio.gather(
+                        fvg_task, sd_task, crt_task, double_task
+                    ), timeout=10.0)
+                except asyncio.TimeoutError:
+                    logger.info(f"⏳ Scans continuing in background")
                 
                 # Get current feature summary
                 summary = self.feature_box.get_active_features_summary()
@@ -3595,6 +3606,28 @@ class UltimateTradingSystem:
         except Exception as e:
             logger.error(f"❌ Error in candle-triggered analysis for {self.pair_group}: {str(e)}", exc_info=True)
             return None
+
+    def debug_sd_zones(self):
+        """Debug Supply/Demand zone detection"""
+        logger.info(f"🔧 DEBUG: Supply/Demand Zones for {self.pair_group}")
+        
+        for instrument in self.instruments:
+            for timeframe in ['M15', 'H1', 'H4']:
+                data = self.market_data[instrument].get(timeframe)
+                if data is not None and not data.empty:
+                    logger.info(f"🔧 {instrument} {timeframe}: {len(data)} candles available")
+                    
+                    # Check if we have closed candles
+                    if 'complete' in data.columns:
+                        closed = data[data['complete'] == True]
+                        logger.info(f"🔧   Closed candles: {len(closed)}")
+                    
+                    # Manually scan a few candles
+                    if len(data) >= 10:
+                        for i in range(5):
+                            candle = data.iloc[i]
+                            logger.info(f"🔧   Candle {i}: {candle['time']} - O:{candle['open']:.4f} H:{candle['high']:.4f} "
+                                       f"L:{candle['low']:.4f} C:{candle['close']:.4f}")
 
     def _cleanup_old_double_smt_signals(self):
         """Remove old Double SMT signals from tracking"""
