@@ -3593,7 +3593,7 @@ class UltimateTradingSystem:
         self.pair_config = pair_config
         self.sd_detector = SupplyDemandDetector(min_zone_pct=0.005)  # 0.5% minimum zone
         self.volatile_pairs = ['XAU_USD']
-        self.feature_box.sd_detector = self.sd_detector
+        
         
         # Handle Telegram credentials
         self.telegram_token = telegram_token
@@ -3623,6 +3623,7 @@ class UltimateTradingSystem:
         self.smt_detector = UltimateSMTDetector(pair_config, self.timing_manager)
         self.crt_detector = RobustCRTDetector(self.timing_manager)
         self.crt_detector.feature_box = self.feature_box  # ← NOW THIS WORKS!
+        self.feature_box.sd_detector = self.sd_detector
         
         # Data storage for all instruments
         self.market_data = {inst: {} for inst in self.instruments}
