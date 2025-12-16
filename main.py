@@ -3120,6 +3120,232 @@ class SmartTimingSystem:
         return next_time
 
 
+class SupplyDemandDetector:
+    def __init__(self, min_zone_pct=0.005):  # 0.5% minimum zone size
+        self.min_zone_pct = min_zone_pct
+        logger.info(f"✅ SupplyDemandDetector initialized with min_zone_pct: {min_zone_pct*100}%")
+    
+    def calculate_wick_percentage(self, candle):
+        """Calculate wick percentage for a candle"""
+        body_size = abs(candle['close'] - candle['open'])
+        total_range = candle['high'] - candle['low']
+        
+        if total_range == 0:
+            return 0
+        
+        if candle['close'] > candle['open']:  # Bullish
+            upper_wick = candle['high'] - candle['close']
+            wick_percentage = (upper_wick / total_range) * 100
+        else:  # Bearish
+            lower_wick = candle['open'] - candle['low']
+            wick_percentage = (lower_wick / total_range) * 100
+        
+        return wick_percentage
+    
+    def is_supply_zone(self, formation_candle, next_candles):
+        """Check if a bullish candle forms a valid supply zone"""
+        # Check if formation candle is bullish
+        if formation_candle['close'] <= formation_candle['open']:
+            return False
+        
+        # Check if price moves down after formation
+        # The next candle should have lower close than formation candle's close
+        if len(next_candles) < 1:
+            return False
+        
+        # Check downward movement (at least 2 of next 3 candles should close lower)
+        down_candles = 0
+        for i in range(min(3, len(next_candles))):
+            if next_candles.iloc[i]['close'] < formation_candle['close']:
+                down_candles += 1
+        
+        if down_candles < 2:
+            return False
+        
+        return True
+    
+    def is_demand_zone(self, formation_candle, next_candles):
+        """Check if a bearish candle forms a valid demand zone"""
+        # Check if formation candle is bearish
+        if formation_candle['close'] >= formation_candle['open']:
+            return False
+        
+        # Check if price moves up after formation
+        # The next candle should have higher close than formation candle's close
+        if len(next_candles) < 1:
+            return False
+        
+        # Check upward movement (at least 2 of next 3 candles should close higher)
+        up_candles = 0
+        for i in range(min(3, len(next_candles))):
+            if next_candles.iloc[i]['close'] > formation_candle['close']:
+                up_candles += 1
+        
+        if up_candles < 2:
+            return False
+        
+        return True
+    
+    def check_zone_invalidation(self, zone, subsequent_candles, zone_type):
+        """Check if zone is invalidated by subsequent price action"""
+        zone_low = zone['zone_low']
+        zone_high = zone['zone_high']
+        
+        # Only check next 2 candles for tolerance
+        check_candles = subsequent_candles.head(2)
+        
+        for _, candle in check_candles.iterrows():
+            if zone_type == 'supply':
+                # For supply zone: invalidated if closes above zone high
+                if candle['close'] > zone_high:
+                    return True
+            else:  # demand zone
+                # For demand zone: invalidated if closes below zone low
+                if candle['close'] < zone_low:
+                    return True
+        
+        return False
+    
+    def calculate_invalidation_point(self, formation_candle, next_candles, zone_type):
+        """Calculate the invalidation point based on next 2 candles"""
+        if len(next_candles) < 2:
+            if zone_type == 'supply':
+                return formation_candle['high']
+            else:
+                return formation_candle['low']
+        
+        # Get the highest high of next 2 candles for supply zone
+        # Get the lowest low of next 2 candles for demand zone
+        next_two = next_candles.head(2)
+        
+        if zone_type == 'supply':
+            return max(next_two['high'].max(), formation_candle['high'])
+        else:  # demand
+            return min(next_two['low'].min(), formation_candle['low'])
+    
+    def scan_timeframe(self, data, timeframe, asset):
+        """Scan for supply and demand zones in a timeframe"""
+        if data is None or len(data) < 10:
+            return []
+        
+        # Use only closed candles
+        if 'complete' in data.columns:
+            data = data[data['complete'] == True].copy()
+        
+        if len(data) < 10:
+            logger.warning(f"⚠️ Not enough closed candles for {asset} {timeframe}: {len(data)}")
+            return []
+        
+        zones = []
+        
+        # Look back up to 100 candles
+        lookback = min(100, len(data))
+        
+        for i in range(3, lookback - 5):  # Need at least 5 candles after
+            formation_candle = data.iloc[i]
+            next_candles = data.iloc[i+1:i+6]  # Check next 5 candles
+            
+            # Check for supply zone
+            if self.is_supply_zone(formation_candle, next_candles):
+                # Calculate wick percentage
+                wick_pct = self.calculate_wick_percentage(formation_candle)
+                
+                # Determine zone boundaries
+                if wick_pct > 60:  # Large upper wick
+                    # Zone from open to invalidation point
+                    zone_low = formation_candle['open']
+                    invalidation_point = self.calculate_invalidation_point(formation_candle, next_candles, 'supply')
+                    zone_high = invalidation_point
+                else:
+                    # Zone from low to high
+                    zone_low = formation_candle['low']
+                    zone_high = formation_candle['high']
+                
+                # Calculate zone size
+                zone_size = zone_high - zone_low
+                zone_size_pct = (zone_size / formation_candle['close']) * 100
+                
+                if zone_size_pct >= self.min_zone_pct * 100:
+                    zone = {
+                        'type': 'supply',
+                        'zone_low': zone_low,
+                        'zone_high': zone_high,
+                        'formation_candle': formation_candle,
+                        'formation_time': formation_candle['time'],
+                        'timeframe': timeframe,
+                        'asset': asset,
+                        'wick_percentage': wick_pct,
+                        'zone_name': f"{asset}_{timeframe}_SUPPLY_{formation_candle['time'].strftime('%m%d%H%M')}",
+                        'original_high': formation_candle['high'],
+                        'original_low': formation_candle['low']
+                    }
+                    
+                    # Check if zone is still valid
+                    subsequent_candles = data.iloc[i+1:]
+                    if not self.check_zone_invalidation(zone, subsequent_candles, 'supply'):
+                        zones.append(zone)
+            
+            # Check for demand zone
+            elif self.is_demand_zone(formation_candle, next_candles):
+                # Calculate wick percentage
+                wick_pct = self.calculate_wick_percentage(formation_candle)
+                
+                # Determine zone boundaries
+                if wick_pct > 60:  # Large lower wick
+                    # Zone from open to invalidation point
+                    zone_high = formation_candle['open']
+                    invalidation_point = self.calculate_invalidation_point(formation_candle, next_candles, 'demand')
+                    zone_low = invalidation_point
+                else:
+                    # Zone from low to high
+                    zone_low = formation_candle['low']
+                    zone_high = formation_candle['high']
+                
+                # Calculate zone size
+                zone_size = zone_high - zone_low
+                zone_size_pct = (zone_size / formation_candle['close']) * 100
+                
+                if zone_size_pct >= self.min_zone_pct * 100:
+                    zone = {
+                        'type': 'demand',
+                        'zone_low': zone_low,
+                        'zone_high': zone_high,
+                        'formation_candle': formation_candle,
+                        'formation_time': formation_candle['time'],
+                        'timeframe': timeframe,
+                        'asset': asset,
+                        'wick_percentage': wick_pct,
+                        'zone_name': f"{asset}_{timeframe}_DEMAND_{formation_candle['time'].strftime('%m%d%H%M')}",
+                        'original_high': formation_candle['high'],
+                        'original_low': formation_candle['low']
+                    }
+                    
+                    # Check if zone is still valid
+                    subsequent_candles = data.iloc[i+1:]
+                    if not self.check_zone_invalidation(zone, subsequent_candles, 'demand'):
+                        zones.append(zone)
+        
+        logger.info(f"🔍 Supply/Demand Scan {asset} {timeframe}: Found {len(zones)} zones")
+        return zones
+    
+    def scan_all_timeframes(self, market_data, instruments, timeframes=['M15', 'H1', 'H4']):
+        """Scan all instruments and timeframes for zones"""
+        all_zones = []
+        
+        for instrument in instruments:
+            for timeframe in timeframes:
+                data = market_data.get(instrument, {}).get(timeframe)
+                if data is not None and not data.empty:
+                    zones = self.scan_timeframe(data, timeframe, instrument)
+                    all_zones.extend(zones)
+        
+        # Sort by timeframe importance (H4 > H1 > M15)
+        timeframe_order = {'H4': 3, 'H1': 2, 'M15': 1}
+        all_zones.sort(key=lambda x: timeframe_order.get(x['timeframe'], 0), reverse=True)
+        
+        return all_zones
+
+
 
 # ================================
 # ULTIMATE TRADING SYSTEM WITH TRIPLE CONFLUENCE
@@ -3132,6 +3358,7 @@ class UltimateTradingSystem:
         # Store the parameters as instance variables
         self.pair_group = pair_group
         self.pair_config = pair_config
+        self.sd_detector = SupplyDemandDetector(min_zone_pct=0.005)  # 0.5% minimum zone
         
         # Handle Telegram credentials
         self.telegram_token = telegram_token
@@ -3170,6 +3397,8 @@ class UltimateTradingSystem:
         self.fvg_detector = FVGDetector(min_gap_pct=0.20)
         self.fvg_smt_tap_sent = {}  # Track FVG+SMT tap signals sent
         self.crt_smt_ideas_sent = {}
+        self.sd_zone_sent = {}  # For Supply/Demand zone signals
+        self.sd_hp_sent = {}    # For High Probability SD zone signals    
         self.fvg_ideas_sent = {}
         self.double_smt_sent = {}
         self.smart_timing = SmartTimingSystem()
@@ -3931,6 +4160,251 @@ class UltimateTradingSystem:
         except Exception as e:
             logger.error(f"❌ Error checking SMT-FVG tap: {e}")
             return False
+
+    def _scan_sd_with_smt_tap(self):
+        """Find Supply/Demand zones where SMT's SECOND SWING traded in the zone - PSP REQUIRED"""
+        logger.info(f"🔍 SCANNING: Supply/Demand + SMT Tap - PSP REQUIRED")
+        
+        # Timeframe mapping: SD Zone -> allowed SMT cycles
+        sd_to_smt_cycles = {
+            'H4': ['weekly', 'daily'],      # H4 Zone → Weekly (H1) or Daily (M15) SMT
+            'H1': ['weekly', 'daily'],      # H1 Zone → Weekly (H1) or Daily (M15) SMT  
+            'M15': ['daily'],               # M15 Zone → Daily (M15) SMT
+            'M5': ['90min']                 # M5 Zone → 90min (M5) SMT
+        }
+        
+        # Scan for all Supply/Demand zones
+        all_zones = self.sd_detector.scan_all_timeframes(
+            self.market_data, 
+            self.instruments, 
+            timeframes=['M15', 'H1', 'H4']
+        )
+        
+        logger.info(f"🔍 Found {len(all_zones)} Supply/Demand zones to check")
+        
+        for zone in all_zones:
+            zone_type = zone['type']  # 'supply' or 'demand'
+            zone_direction = 'bearish' if zone_type == 'supply' else 'bullish'
+            zone_timeframe = zone['timeframe']
+            zone_asset = zone['asset']
+            zone_low = zone['zone_low']
+            zone_high = zone['zone_high']
+            zone_formation_time = zone['formation_time']
+            
+            # Get which SMT cycles can tap this zone timeframe
+            relevant_cycles = sd_to_smt_cycles.get(zone_timeframe, [])
+            
+            logger.info(f"🔍 Checking {zone_type.upper()} zone {zone['zone_name']} - Can be tapped by: {relevant_cycles}")
+            
+            # Check all active SMTs
+            for smt_key, smt_feature in self.feature_box.active_features['smt'].items():
+                if self.feature_box._is_feature_expired(smt_feature):
+                    continue
+                    
+                smt_data = smt_feature['smt_data']
+                smt_cycle = smt_data['cycle']
+                
+                # Check if this SMT cycle is allowed
+                if smt_cycle not in relevant_cycles:
+                    continue
+                    
+                # Check direction match
+                if smt_data['direction'] != zone_direction:
+                    continue
+                
+                # Check PSP requirement
+                has_psp = smt_feature['psp_data'] is not None
+                if not has_psp:
+                    logger.info(f"⏳ Skipping SD+SMT: {smt_cycle} SMT has no PSP")
+                    continue
+                
+                # Check temporal relationship
+                swing_times = smt_data.get('swing_times', {})
+                
+                # Determine which asset key to use
+                if zone_asset == self.instruments[0]:
+                    asset_key = 'asset1_curr'
+                else:
+                    asset_key = 'asset2_curr'
+                
+                asset_curr = swing_times.get(asset_key, {})
+                if not asset_curr:
+                    continue
+                
+                # Extract second swing time
+                if isinstance(asset_curr, dict):
+                    second_swing_time = asset_curr.get('time')
+                else:
+                    second_swing_time = asset_curr
+                
+                if not second_swing_time:
+                    continue
+                
+                # REJECT if SMT second swing is BEFORE zone formation
+                if second_swing_time <= zone_formation_time:
+                    logger.info(f"❌ SD+SMT REJECTED: SMT {smt_cycle} second swing is BEFORE zone formation")
+                    continue
+                
+                # Check if SMT's second swing traded in the zone
+                tapped = self._check_smt_tap_in_sd_zone(
+                    smt_data, zone_asset, zone_low, zone_high, zone_direction, 
+                    zone_timeframe, smt_cycle, zone_formation_time
+                )
+                
+                if tapped:
+                    # Check for High Probability: Zone within higher TF zone of same direction
+                    is_hp_zone = self._check_hp_sd_zone(zone, zone_direction)
+                    
+                    logger.info(f"✅ SD+SMT TAP CONFIRMED: {smt_cycle} {smt_data['direction']} "
+                               f"tapped {zone_timeframe} {zone_type} on {zone_asset}, HP: {is_hp_zone}")
+                    
+                    # Send the signal
+                    return self._send_sd_smt_tap_signal(
+                        zone, smt_data, has_psp, is_hp_zone
+                    )
+        
+        logger.info(f"🔍 No SD+SMT setups with PSP found")
+        return False
+
+    def _check_smt_tap_in_sd_zone(self, smt_data, asset, zone_low, zone_high, zone_direction, zone_tf, smt_cycle, zone_formation_time):
+        """Check if SMT's second swing traded in Supply/Demand zone"""
+        try:
+            # Get SMT's timeframe from config
+            smt_tf = self.pair_config['timeframe_mapping'][smt_cycle]
+            
+            # Get price data for SMT timeframe
+            smt_price_data = self.market_data[asset].get(smt_tf)
+            if smt_price_data is None or smt_price_data.empty:
+                return False
+            
+            # Get SMT formation time
+            smt_formation_time = smt_data.get('formation_time')
+            if not smt_formation_time:
+                return False
+            
+            # Get second swing time
+            second_swing_time = smt_data.get('second_swing_time', smt_formation_time)
+            
+            # Look for candles around second swing time
+            time_diffs = abs(smt_price_data['time'] - second_swing_time)
+            closest_idx = time_diffs.idxmin()
+            
+            # Check 5 candles before and after
+            start_idx = max(0, closest_idx - 5)
+            end_idx = min(len(smt_price_data) - 1, closest_idx + 5)
+            
+            logger.info(f"🔍 SD Zone Tap: {smt_cycle}({smt_tf}) → {zone_tf} {zone_direction.upper()} zone at {zone_low:.4f}-{zone_high:.4f}")
+            
+            for idx in range(start_idx, end_idx + 1):
+                candle = smt_price_data.iloc[idx]
+                
+                # Check if candle entered the zone
+                if zone_direction == 'bearish':  # Supply zone
+                    # Price enters from above, zone tapped if candle's high >= zone_low AND candle's low <= zone_high
+                    if candle['high'] >= zone_low and candle['low'] <= zone_high:
+                        logger.info(f"✅ SD ZONE TAP: {smt_tf} candle entered supply zone (high: {candle['high']:.4f} >= {zone_low:.4f})")
+                        return True
+                else:  # Demand zone (bullish)
+                    # Price enters from below, zone tapped if candle's low <= zone_high AND candle's high >= zone_low
+                    if candle['low'] <= zone_high and candle['high'] >= zone_low:
+                        logger.info(f"✅ SD ZONE TAP: {smt_tf} candle entered demand zone (low: {candle['low']:.4f} <= {zone_high:.4f})")
+                        return True
+            
+            logger.info(f"❌ No {smt_tf} candle entered SD zone around second swing")
+            return False
+            
+        except Exception as e:
+            logger.error(f"❌ SD zone tap check error: {e}")
+            return False
+    
+    def _check_hp_sd_zone(self, zone, zone_direction):
+        """Check if SD zone is High Probability (zone within higher TF zone)"""
+        try:
+            zone_tf = zone['timeframe']
+            zone_asset = zone['asset']
+            zone_low = zone['zone_low']
+            zone_high = zone['zone_high']
+            
+            # Map to higher timeframe
+            higher_tf_map = {
+                'M15': 'H1',
+                'H1': 'H4',
+                'H4': 'D'
+            }
+            
+            higher_tf = higher_tf_map.get(zone_tf)
+            if not higher_tf:
+                return False
+            
+            # Get higher timeframe data
+            higher_data = self.market_data[zone_asset].get(higher_tf)
+            if higher_data is None or higher_data.empty:
+                return False
+            
+            # Find higher TF zones that contain this zone
+            higher_zones = self.sd_detector.scan_timeframe(higher_data, higher_tf, zone_asset)
+            
+            for higher_zone in higher_zones:
+                higher_direction = 'bearish' if higher_zone['type'] == 'supply' else 'bullish'
+                
+                # Check if same direction and contains our zone
+                if higher_direction == zone_direction:
+                    if (zone_low >= higher_zone['zone_low'] and 
+                        zone_high <= higher_zone['zone_high']):
+                        logger.info(f"🎯 HP SD ZONE: {zone_tf} zone is within {higher_tf} zone of same direction")
+                        return True
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"❌ HP SD zone check error: {e}")
+            return False
+
+    def _send_sd_smt_tap_signal(self, zone, smt_data, has_psp, is_hp_zone):
+        """Send Supply/Demand + SMT tap signal"""
+        zone_type = zone['type']
+        zone_direction = 'bearish' if zone_type == 'supply' else 'bullish'
+        zone_tf = zone['timeframe']
+        smt_cycle = smt_data['cycle']
+        
+        # Create unique signal ID
+        signal_id = f"SD_SMT_TAP_{self.pair_group}_{zone['asset']}_{zone_tf}_{smt_data.get('signal_key', '')}"
+        
+        # Check cooldown (1 hour)
+        if signal_id in self.sd_zone_sent:
+            last_sent = self.sd_zone_sent[signal_id]
+            if (datetime.now(NY_TZ) - last_sent).total_seconds() < 3600:
+                logger.info(f"⏳ SD+SMT recently sent: {signal_id}")
+                return False
+        
+        idea = {
+            'type': 'SD_SMT_TAP',
+            'pair_group': self.pair_group,
+            'direction': zone_direction,
+            'zone_type': zone_type,
+            'asset': zone['asset'],
+            'zone_timeframe': zone_tf,
+            'zone_levels': f"{zone['zone_low']:.4f} - {zone['zone_high']:.4f}",
+            'zone_formation_time': zone['formation_time'],
+            'zone_name': zone['zone_name'],
+            'wick_percentage': zone.get('wick_percentage', 0),
+            'smt_cycle': smt_cycle,
+            'smt_direction': smt_data['direction'],
+            'smt_data': smt_data,
+            'has_psp': has_psp,
+            'is_hp_zone': is_hp_zone,
+            'timestamp': datetime.now(NY_TZ),
+            'idea_key': signal_id
+        }
+        
+        # Format and send
+        message = self._format_sd_smt_tap_message(idea)
+        
+        if self._send_telegram_message(message):
+            self.sd_zone_sent[signal_id] = datetime.now(NY_TZ)
+            logger.info(f"🚀 SD+SMT SIGNAL SENT: {zone['asset']} {zone_tf} {zone_type} + {smt_cycle} SMT")
+            return True
+        return False
     
     def _debug_market_data(self):
         """Debug market data for FVG analysis"""
@@ -3946,6 +4420,59 @@ class UltimateTradingSystem:
                     logger.info(f"🔧   {tf}: {status}")
                 else:
                     logger.warning(f"🔧   {tf}: INVALID DATA - {type(data)}")
+
+    def _format_sd_smt_tap_message(self, idea):
+        """Format Supply/Demand + SMT tap message"""
+        direction_emoji = "🔴" if idea['direction'] == 'bearish' else "🟢"
+        zone_type_emoji = "📈" if idea['zone_type'] == 'demand' else "📉"
+        zone_formation_time = idea['zone_formation_time'].strftime('%m/%d %H:%M')
+        
+        # SMT details
+        smt_data = idea.get('smt_data', {})
+        quarters = smt_data.get('quarters', '')
+        if quarters:
+            quarters_display = quarters.replace('_', '→')
+        else:
+            quarters_display = ''
+        
+        asset1_action = smt_data.get('asset1_action', '')
+        asset2_action = smt_data.get('asset2_action', '')
+        
+        hp_emoji = "🎯" if idea['is_hp_zone'] else ""
+        psp_emoji = "✅" if idea['has_psp'] else "❌"
+        
+        # Zone details based on wick percentage
+        wick_pct = idea.get('wick_percentage', 0)
+        zone_note = ""
+        if wick_pct > 60:
+            zone_note = f"\n*Note:* Zone adjusted due to large wick ({wick_pct:.1f}%)"
+        
+        message = f"""
+            {zone_type_emoji} *{idea['zone_type'].upper()} ZONE + SMT TAP* {zone_type_emoji}
+            
+            *Pair Group:* {idea['pair_group'].replace('_', ' ').title()}
+            *Direction:* {idea['direction'].upper()} {direction_emoji}
+            *Asset:* {idea['asset']}
+            *Strength:* {'ULTRA STRONG' if idea['is_hp_zone'] and idea['has_psp'] else 'STRONG'}
+            
+            *Zone Details:*
+            • Type: {idea['zone_type'].upper()}
+            • Timeframe: {idea['zone_timeframe']} at {zone_formation_time}
+            • Levels: {idea['zone_levels']}
+            • HP Zone: {hp_emoji} {'YES' if idea['is_hp_zone'] else 'NO'}
+            {zone_note}
+            
+            *SMT Confluence:*
+            • Cycle: {idea['smt_cycle']} {quarters_display}
+              - {asset1_action}
+              - {asset2_action}
+            • PSP: {psp_emoji} {'Confirmed' if idea['has_psp'] else 'Not Confirmed'}
+            
+            *Detection Time:* {idea['timestamp'].strftime('%Y-%m-%d %H:%M:%S')}
+            
+            #{idea['pair_group']} #{idea['zone_type'].upper()}Zone #{idea['direction']} #{idea['zone_timeframe']}
+            """
+        return message
     
     def _send_fvg_trade_idea(self, trade_idea):
         """Send formatted FVG-SMT confluence trade idea"""
