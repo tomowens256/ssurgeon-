@@ -3189,9 +3189,13 @@ class SmartTimingSystem:
         return next_time
 
 
+
 class SupplyDemandDetector:
-    def __init__(self):
-        logger.info(f"✅ SupplyDemandDetector initialized")
+    def __init__(self, min_zone_pct=0):  # Default to 0 to disable filtering
+        self.min_zone_pct = min_zone_pct
+        if min_zone_pct != 0:
+            logger.warning(f"⚠️ min_zone_pct={min_zone_pct} is set but zone size filtering is disabled")
+        logger.info(f"✅ SupplyDemandDetector initialized with min_zone_pct: {min_zone_pct}")
     
     def check_zone_still_valid(self, zone, current_data, other_asset_data=None):
         """Check if a zone is still valid - with DUAL ASSET validation"""
