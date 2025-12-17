@@ -3403,7 +3403,7 @@ class SupplyDemandDetector:
             return min(next_two['low'].min(), formation_candle['low'])
     
     def scan_timeframe(self, data, timeframe, asset):
-        """Scan for supply and demand zones in a timeframe - FIXED"""
+        """Scan for supply and demand zones with enhanced criteria - UPDATED"""
         if data is None or len(data) < 10:
             logger.warning(f"⚠️ Not enough data for SD zone scan: {asset} {timeframe}")
             return []
@@ -3422,182 +3422,217 @@ class SupplyDemandDetector:
         
         zones = []
         
-        # Scan the ENTIRE dataset (500 candles)
-        for i in range(3, len(closed_data) - 6):  # Need at least 6 candles after
+        # Scan the dataset
+        for i in range(3, len(closed_data) - 10):  # Need at least 10 candles after for validation
             formation_candle = closed_data.iloc[i]
             
-            # Get next 6 candles for validation
-            if i + 6 >= len(closed_data):
+            # Get next 10 candles for validation
+            if i + 10 >= len(closed_data):
                 continue
                 
-            next_candles = closed_data.iloc[i+1:i+7]
+            next_candles = closed_data.iloc[i+1:i+11]
             
             # ---------- SUPPLY ZONE DETECTION ----------
-            # Supply: Bullish candle followed by bearish movement
-            if formation_candle['close'] > formation_candle['open']:  # Bullish candle
-                # Check if price moves down after
-                bearish_movement = False
+            # Supply: Bullish candle followed by bearish next candle
+            if formation_candle['close'] > formation_candle['open']:  # Bullish formation
+                # NEXT CANDLE MUST BE BEARISH (close < open)
+                next_candle = next_candles.iloc[0] if len(next_candles) > 0 else None
+                if next_candle is None or next_candle['close'] >= next_candle['open']:
+                    continue  # Next candle not bearish
                 
-                # Look at next 3 candles
-                for j in range(min(3, len(next_candles))):
+                # Check if price moves down after (at least 3 of next 5 candles close lower)
+                down_candles = 0
+                for j in range(min(5, len(next_candles))):
+                    if next_candles.iloc[j]['close'] < formation_candle['close']:
+                        down_candles += 1
+                
+                if down_candles < 3:
+                    continue  # Not enough downward movement
+                
+                # Calculate wick percentage
+                total_range = formation_candle['high'] - formation_candle['low']
+                if total_range > 0:
+                    upper_wick = formation_candle['high'] - formation_candle['close']
+                    wick_pct = (upper_wick / total_range) * 100
+                else:
+                    wick_pct = 0
+                
+                # Determine zone boundaries based on wick percentage
+                if wick_pct > 40:  # Large upper wick (>40%) - use upper half
+                    mid_point = (formation_candle['high'] + formation_candle['low']) / 2
+                    zone_low = max(formation_candle['open'], mid_point)
+                    # Get highest of next 2 candles for invalidation
+                    if len(next_candles) >= 2:
+                        next_two = next_candles.head(2)
+                        zone_high = max(next_two['high'].max(), formation_candle['high'])
+                    else:
+                        zone_high = formation_candle['high']
+                else:
+                    zone_low = formation_candle['low']
+                    zone_high = formation_candle['high']
+                
+                # Check for DULL ZONE: next 4 candles trading within zone
+                dull_zone = True
+                for j in range(min(4, len(next_candles))):
                     candle = next_candles.iloc[j]
-                    if candle['close'] < formation_candle['close']:  # Closing lower
-                        bearish_movement = True
+                    if candle['high'] > zone_high or candle['low'] < zone_low:
+                        dull_zone = False  # Price broke out of zone
                         break
                 
-                if bearish_movement:
-                    # Calculate wick percentage
-                    total_range = formation_candle['high'] - formation_candle['low']
-                    if total_range > 0:
-                        upper_wick = formation_candle['high'] - formation_candle['close']
-                        wick_pct = (upper_wick / total_range) * 100
-                    else:
-                        wick_pct = 0
+                if dull_zone:
+                    logger.debug(f"❌ DULL SUPPLY ZONE skipped: {asset} {timeframe} - next 4 candles within zone")
+                    continue
+                
+                # Check if zone is not immediately invalidated (original logic)
+                valid_zone = True
+                
+                # Check next 2 candles for tolerance
+                if len(next_candles) >= 2:
+                    for j in range(2):
+                        candle = next_candles.iloc[j]
+                        # Can wick above but can't CLOSE above zone_high
+                        if candle['close'] > zone_high:
+                            valid_zone = False
+                            logger.debug(f"❌ Supply zone immediately invalidated: Close {candle['close']} > {zone_high}")
+                            break
+                
+                # Check all subsequent candles
+                if valid_zone and len(next_candles) > 2:
+                    subsequent = next_candles.iloc[2:]
+                    for _, candle in subsequent.iterrows():
+                        # After 2 candles: ANY breach invalidates
+                        if candle['high'] > zone_high:
+                            valid_zone = False
+                            logger.debug(f"❌ Supply zone invalidated after 2: High {candle['high']} > {zone_high}")
+                            break
+                
+                if valid_zone:
+                    # Add zone if it's a meaningful size
+                    zone_size = zone_high - zone_low
+                    zone_size_pct = (zone_size / formation_candle['close']) * 100
                     
-                    # Determine zone boundaries
-                    if wick_pct > 60:  # Large upper wick
-                        zone_low = formation_candle['open']
-                        # Get highest of next 2 candles for invalidation
-                        if len(next_candles) >= 2:
-                            next_two = next_candles.head(2)
-                            zone_high = max(next_two['high'].max(), formation_candle['high'])
-                        else:
-                            zone_high = formation_candle['high']
-                    else:
-                        zone_low = formation_candle['low']
-                        zone_high = formation_candle['high']
-                    
-                    # Check if zone is not immediately invalidated
-                    valid_zone = True
-                    
-                    # Check next 2 candles for tolerance
-                    if len(next_candles) >= 2:
-                        for j in range(2):
-                            candle = next_candles.iloc[j]
-                            # Can wick above but can't CLOSE above zone_high
-                            if candle['close'] > zone_high:
-                                valid_zone = False
-                                logger.debug(f"❌ Supply zone immediately invalidated: Close {candle['close']} > {zone_high}")
-                                break
-                    
-                    # Check all subsequent candles
-                    if valid_zone and len(next_candles) > 2:
-                        subsequent = next_candles.iloc[2:]
-                        for _, candle in subsequent.iterrows():
-                            # After 2 candles: ANY breach invalidates
-                            if candle['high'] > zone_high:
-                                valid_zone = False
-                                logger.debug(f"❌ Supply zone invalidated after 2: High {candle['high']} > {zone_high}")
-                                break
-                    
-                    if valid_zone:
-                        # Add zone if it's a meaningful size
-                        zone_size = zone_high - zone_low
-                        zone_size_pct = (zone_size / formation_candle['close']) * 100
-                        
-                        if zone_size_pct >= self.min_zone_pct * 100:
-                            zone = {
-                                'type': 'supply',
-                                'zone_low': zone_low,
-                                'zone_high': zone_high,
-                                'formation_candle': formation_candle.to_dict(),
-                                'formation_time': formation_candle['time'],
-                                'timeframe': timeframe,
-                                'asset': asset,
-                                'wick_percentage': wick_pct,
-                                'zone_name': f"{asset}_{timeframe}_SUPPLY_{formation_candle['time'].strftime('%m%d%H%M')}",
-                                'direction': 'bearish'  # Supply zones are for bearish moves
-                            }
-                            zones.append(zone)
-                            logger.debug(f"✅ Found SUPPLY zone: {zone['zone_name']} at {zone_low:.4f}-{zone_high:.4f}")
+                    if zone_size_pct >= self.min_zone_pct * 100:
+                        zone = {
+                            'type': 'supply',
+                            'zone_low': zone_low,
+                            'zone_high': zone_high,
+                            'formation_candle': formation_candle.to_dict(),
+                            'formation_time': formation_candle['time'],
+                            'timeframe': timeframe,
+                            'asset': asset,
+                            'wick_percentage': wick_pct,
+                            'zone_name': f"{asset}_{timeframe}_SUPPLY_{formation_candle['time'].strftime('%m%d%H%M')}",
+                            'direction': 'bearish',
+                            'wick_adjusted': wick_pct > 40
+                        }
+                        zones.append(zone)
+                        logger.debug(f"✅ Found SUPPLY zone: {zone['zone_name']} at {zone_low:.4f}-{zone_high:.4f}")
             
             # ---------- DEMAND ZONE DETECTION ----------
-            # Demand: Bearish candle followed by bullish movement
-            elif formation_candle['close'] < formation_candle['open']:  # Bearish candle
-                # Check if price moves up after
-                bullish_movement = False
+            # Demand: Bearish candle followed by bullish next candle
+            elif formation_candle['close'] < formation_candle['open']:  # Bearish formation
+                # NEXT CANDLE MUST BE BULLISH (close > open)
+                next_candle = next_candles.iloc[0] if len(next_candles) > 0 else None
+                if next_candle is None or next_candle['close'] <= next_candle['open']:
+                    continue  # Next candle not bullish
                 
-                # Look at next 3 candles
-                for j in range(min(3, len(next_candles))):
-                    candle = next_candles.iloc[j]
-                    if candle['close'] > formation_candle['close']:  # Closing higher
-                        bullish_movement = True
-                        break
+                # Check if price moves up after (at least 3 of next 5 candles close higher)
+                up_candles = 0
+                for j in range(min(5, len(next_candles))):
+                    if next_candles.iloc[j]['close'] > formation_candle['close']:
+                        up_candles += 1
                 
-                if bullish_movement:
-                    # Calculate wick percentage
-                    total_range = formation_candle['high'] - formation_candle['low']
-                    if total_range > 0:
-                        lower_wick = formation_candle['open'] - formation_candle['low']
-                        wick_pct = (lower_wick / total_range) * 100
-                    else:
-                        wick_pct = 0
-                    
-                    # Determine zone boundaries
-                    if wick_pct > 60:  # Large lower wick
-                        zone_high = formation_candle['open']
-                        # Get lowest of next 2 candles for invalidation
-                        if len(next_candles) >= 2:
-                            next_two = next_candles.head(2)
-                            zone_low = min(next_two['low'].min(), formation_candle['low'])
-                        else:
-                            zone_low = formation_candle['low']
+                if up_candles < 3:
+                    continue  # Not enough upward movement
+                
+                # Calculate wick percentage
+                total_range = formation_candle['high'] - formation_candle['low']
+                if total_range > 0:
+                    lower_wick = formation_candle['open'] - formation_candle['low']
+                    wick_pct = (lower_wick / total_range) * 100
+                else:
+                    wick_pct = 0
+                
+                # Determine zone boundaries based on wick percentage
+                if wick_pct > 40:  # Large lower wick (>40%) - use lower half
+                    mid_point = (formation_candle['high'] + formation_candle['low']) / 2
+                    zone_high = min(formation_candle['open'], mid_point)
+                    # Get lowest of next 2 candles for invalidation
+                    if len(next_candles) >= 2:
+                        next_two = next_candles.head(2)
+                        zone_low = min(next_two['low'].min(), formation_candle['low'])
                     else:
                         zone_low = formation_candle['low']
-                        zone_high = formation_candle['high']
+                else:
+                    zone_low = formation_candle['low']
+                    zone_high = formation_candle['high']
+                
+                # Check for DULL ZONE: next 4 candles trading within zone
+                dull_zone = True
+                for j in range(min(4, len(next_candles))):
+                    candle = next_candles.iloc[j]
+                    if candle['high'] > zone_high or candle['low'] < zone_low:
+                        dull_zone = False  # Price broke out of zone
+                        break
+                
+                if dull_zone:
+                    logger.debug(f"❌ DULL DEMAND ZONE skipped: {asset} {timeframe} - next 4 candles within zone")
+                    continue
+                
+                # Check if zone is not immediately invalidated
+                valid_zone = True
+                
+                # Check next 2 candles for tolerance
+                if len(next_candles) >= 2:
+                    for j in range(2):
+                        candle = next_candles.iloc[j]
+                        # Can wick below but can't CLOSE below zone_low
+                        if candle['close'] < zone_low:
+                            valid_zone = False
+                            logger.debug(f"❌ Demand zone immediately invalidated: Close {candle['close']} < {zone_low}")
+                            break
+                
+                # Check all subsequent candles
+                if valid_zone and len(next_candles) > 2:
+                    subsequent = next_candles.iloc[2:]
+                    for _, candle in subsequent.iterrows():
+                        # After 2 candles: ANY breach invalidates
+                        if candle['low'] < zone_low:
+                            valid_zone = False
+                            logger.debug(f"❌ Demand zone invalidated after 2: Low {candle['low']} < {zone_low}")
+                            break
+                
+                if valid_zone:
+                    # Add zone if it's a meaningful size
+                    zone_size = zone_high - zone_low
+                    zone_size_pct = (zone_size / formation_candle['close']) * 100
                     
-                    # Check if zone is not immediately invalidated
-                    valid_zone = True
-                    
-                    # Check next 2 candles for tolerance
-                    if len(next_candles) >= 2:
-                        for j in range(2):
-                            candle = next_candles.iloc[j]
-                            # Can wick below but can't CLOSE below zone_low
-                            if candle['close'] < zone_low:
-                                valid_zone = False
-                                logger.debug(f"❌ Demand zone immediately invalidated: Close {candle['close']} < {zone_low}")
-                                break
-                    
-                    # Check all subsequent candles
-                    if valid_zone and len(next_candles) > 2:
-                        subsequent = next_candles.iloc[2:]
-                        for _, candle in subsequent.iterrows():
-                            # After 2 candles: ANY breach invalidates
-                            if candle['low'] < zone_low:
-                                valid_zone = False
-                                logger.debug(f"❌ Demand zone invalidated after 2: Low {candle['low']} < {zone_low}")
-                                break
-                    
-                    if valid_zone:
-                        # Add zone if it's a meaningful size
-                        zone_size = zone_high - zone_low
-                        zone_size_pct = (zone_size / formation_candle['close']) * 100
-                        
-                        if zone_size_pct >= self.min_zone_pct * 100:
-                            zone = {
-                                'type': 'demand',
-                                'zone_low': zone_low,
-                                'zone_high': zone_high,
-                                'formation_candle': formation_candle.to_dict(),
-                                'formation_time': formation_candle['time'],
-                                'timeframe': timeframe,
-                                'asset': asset,
-                                'wick_percentage': wick_pct,
-                                'zone_name': f"{asset}_{timeframe}_DEMAND_{formation_candle['time'].strftime('%m%d%H%M')}",
-                                'direction': 'bullish'  # Demand zones are for bullish moves
-                            }
-                            zones.append(zone)
-                            logger.debug(f"✅ Found DEMAND zone: {zone['zone_name']} at {zone_low:.4f}-{zone_high:.4f}")
+                    if zone_size_pct >= self.min_zone_pct * 100:
+                        zone = {
+                            'type': 'demand',
+                            'zone_low': zone_low,
+                            'zone_high': zone_high,
+                            'formation_candle': formation_candle.to_dict(),
+                            'formation_time': formation_candle['time'],
+                            'timeframe': timeframe,
+                            'asset': asset,
+                            'wick_percentage': wick_pct,
+                            'zone_name': f"{asset}_{timeframe}_DEMAND_{formation_candle['time'].strftime('%m%d%H%M')}",
+                            'direction': 'bullish',
+                            'wick_adjusted': wick_pct > 40
+                        }
+                        zones.append(zone)
+                        logger.debug(f"✅ Found DEMAND zone: {zone['zone_name']} at {zone_low:.4f}-{zone_high:.4f}")
         
         logger.info(f"🔍 Supply/Demand Scan {asset} {timeframe}: Found {len(zones)} zones")
         
         # Debug: Log first few zones found
         if zones and len(zones) > 0:
-            for i, zone in enumerate(zones[:3]):  # Show first 3 zones
-                logger.info(f"   Zone {i+1}: {zone['zone_name']} - {zone['zone_low']:.4f} to {zone['zone_high']:.4f}")
-                logger.info(f"      Type: {zone['type']}, Wick: {zone.get('wick_percentage', 0):.1f}%, "
-                          f"Formed: {zone['formation_time'].strftime('%m/%d %H:%M')}")
+            for i, zone in enumerate(zones[:3]):
+                wick_note = f"(wick-adjusted)" if zone['wick_adjusted'] else ""
+                logger.info(f"   Zone {i+1}: {zone['zone_name']} {wick_note}")
+                logger.info(f"      {zone['type']}: {zone['zone_low']:.4f} to {zone['zone_high']:.4f}")
+                logger.info(f"      Wick: {zone.get('wick_percentage', 0):.1f}%, Formed: {zone['formation_time'].strftime('%m/%d %H:%M')}")
         else:
             logger.info(f"   No zones found for {asset} {timeframe}")
         
