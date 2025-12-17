@@ -3196,7 +3196,6 @@ class SupplyDemandDetector:
         if min_zone_pct != 0:
             logger.warning(f"⚠️ min_zone_pct={min_zone_pct} is set but zone size filtering is disabled")
         logger.info(f"✅ SupplyDemandDetector initialized with min_zone_pct: {min_zone_pct}")
-    
     def check_zone_still_valid(self, zone, current_data, other_asset_data=None):
         """Check if a zone is still valid - with DUAL ASSET validation"""
         try:
@@ -3208,6 +3207,14 @@ class SupplyDemandDetector:
             zone_low = zone['zone_low']
             zone_high = zone['zone_high']
             formation_time = zone['formation_time']
+            
+            # 🔥 FIX: Handle timezone comparison issue
+            # If current_data has timezone-aware timestamps, make formation_time timezone-aware too
+            if hasattr(current_data['time'].iloc[0], 'tz') and current_data['time'].iloc[0].tz is not None:
+                # Convert formation_time to same timezone as current_data
+                if hasattr(formation_time, 'tz') and formation_time.tz is None:
+                    # formation_time is naive, localize it
+                    formation_time = formation_time.tz_localize('UTC').tz_convert(current_data['time'].iloc[0].tz)
             
             # Get candles AFTER formation for THIS asset
             subsequent_candles = current_data[current_data['time'] > formation_time]
