@@ -3894,7 +3894,7 @@ class UltimateTradingSystem:
             for tf in required_timeframes:
                 # Use different counts for different purposes
                 if tf in ['M5','M15', 'H1', 'H4']:  # Timeframes for Supply/Demand zones
-                    count = 200  # Get 200 candles for Supply/Demand
+                    count = 40  # Get 40 candles for Supply/Demand
                 else:
                     count = self._get_proven_count(tf)  # Use normal count for others
                 
