@@ -3197,7 +3197,7 @@ class SupplyDemandDetector:
             logger.warning(f"⚠️ min_zone_pct={min_zone_pct} is set but zone size filtering is disabled")
         logger.info(f"✅ SupplyDemandDetector initialized with min_zone_pct: {min_zone_pct}")
     def check_zone_still_valid(self, zone, current_data, other_asset_data=None):
-        """Check if a zone is still valid - with DUAL ASSET validation"""
+        """Check if a zone is still valid - with DUAL ASSET validation and TIMEZONE FIX"""
         try:
             if current_data is None or current_data.empty:
                 logger.debug(f"📭 No current data for zone validation: {zone.get('zone_name', 'Unknown')}")
@@ -3208,13 +3208,28 @@ class SupplyDemandDetector:
             zone_high = zone['zone_high']
             formation_time = zone['formation_time']
             
-            # 🔥 FIX: Handle timezone comparison issue
-            # If current_data has timezone-aware timestamps, make formation_time timezone-aware too
+            # 🔥 CRITICAL FIX: Handle timezone conversion properly
+            # If formation_time is a string (from to_dict()), convert to datetime
+            if isinstance(formation_time, str):
+                # Parse the string to datetime (naive)
+                formation_time = pd.to_datetime(formation_time, errors='coerce')
+                if pd.isna(formation_time):
+                    logger.error(f"❌ Could not parse formation_time: {zone.get('zone_name')}")
+                    return False
+            
+            # If current_data has timezone-aware timestamps, ensure formation_time matches
             if hasattr(current_data['time'].iloc[0], 'tz') and current_data['time'].iloc[0].tz is not None:
-                # Convert formation_time to same timezone as current_data
-                if hasattr(formation_time, 'tz') and formation_time.tz is None:
-                    # formation_time is naive, localize it
+                # current_data is timezone-aware
+                if formation_time.tz is None:
+                    # formation_time is naive, assume it's in UTC and convert to current_data timezone
                     formation_time = formation_time.tz_localize('UTC').tz_convert(current_data['time'].iloc[0].tz)
+                else:
+                    # formation_time has timezone, convert to current_data timezone
+                    formation_time = formation_time.tz_convert(current_data['time'].iloc[0].tz)
+            else:
+                # current_data is naive, ensure formation_time is naive too
+                if formation_time.tz is not None:
+                    formation_time = formation_time.tz_convert(None)
             
             # Get candles AFTER formation for THIS asset
             subsequent_candles = current_data[current_data['time'] > formation_time]
@@ -3222,15 +3237,18 @@ class SupplyDemandDetector:
             if len(subsequent_candles) == 0:
                 return True  # No candles after formation
             
-            # OPTIMIZATION: Use vectorized operations for faster validation
+            # Check THIS asset for invalidation
+            asset_invalidated = False
+            
             if zone_type == 'supply':
                 # Supply zone: invalid if price TRADES ABOVE (high > zone_high)
                 breach_mask = subsequent_candles['high'] > zone_high
                 if breach_mask.any():
                     breach_idx = breach_mask.idxmax()
                     breach_candle = subsequent_candles.loc[breach_idx]
-                    logger.info(f"🔴 {zone['asset']} INVALIDATED SUPPLY: {zone['zone_name']}")
+                    logger.info(f"🔴 {zone['asset']} INVALIDATED SUPPLY: {zone.get('zone_name', 'Unknown')}")
                     logger.info(f"   High {breach_candle['high']:.4f} > Zone high {zone_high:.4f}")
+                    logger.info(f"   Breached at {breach_candle['time'].strftime('%Y-%m-%d %H:%M')}")
                     asset_invalidated = True
                 else:
                     asset_invalidated = False
@@ -3240,14 +3258,16 @@ class SupplyDemandDetector:
                 if breach_mask.any():
                     breach_idx = breach_mask.idxmax()
                     breach_candle = subsequent_candles.loc[breach_idx]
-                    logger.info(f"🔴 {zone['asset']} INVALIDATED DEMAND: {zone['zone_name']}")
+                    logger.info(f"🔴 {zone['asset']} INVALIDATED DEMAND: {zone.get('zone_name', 'Unknown')}")
                     logger.info(f"   Low {breach_candle['low']:.4f} < Zone low {zone_low:.4f}")
+                    logger.info(f"   Breached at {breach_candle['time'].strftime('%Y-%m-%d %H:%M')}")
                     asset_invalidated = True
                 else:
                     asset_invalidated = False
             
             # If we have other asset data, check for DUAL asset invalidation
             if other_asset_data is not None and not other_asset_data.empty:
+                # Handle timezone for other_asset_data too
                 other_subsequent = other_asset_data[other_asset_data['time'] > formation_time]
                 
                 if len(other_subsequent) > 0:
@@ -3260,26 +3280,31 @@ class SupplyDemandDetector:
                 
                 # DUAL ASSET LOGIC: Zone remains valid UNLESS BOTH assets have invalidated it
                 if asset_invalidated and other_breach:
-                    logger.info(f"❌ ZONE FULLY INVALIDATED: Both assets traded through {zone['zone_name']}")
+                    logger.info(f"❌ ZONE FULLY INVALIDATED: Both assets traded through {zone.get('zone_name', 'Unknown')}")
+                    logger.info(f"   Formation: {formation_time.strftime('%Y-%m-%d %H:%M')}")
                     return False
                 elif asset_invalidated or other_breach:
-                    logger.info(f"⚠️ ZONE PARTIALLY INVALIDATED: Only one asset traded through {zone['zone_name']}")
+                    logger.info(f"⚠️ ZONE PARTIALLY INVALIDATED: Only one asset traded through {zone.get('zone_name', 'Unknown')}")
                     logger.info(f"   Zone remains valid (waiting for other asset)")
                     return True  # Zone still valid (partial invalidation)
                 else:
-                    logger.info(f"✅ ZONE VALID: Neither asset traded through {zone['zone_name']}")
+                    logger.info(f"✅ ZONE VALID: Neither asset traded through {zone.get('zone_name', 'Unknown')}")
+                    logger.info(f"   Formation: {formation_time.strftime('%Y-%m-%d %H:%M')}, {len(subsequent_candles)} candles since")
                     return True
             else:
                 # No other asset data - use single asset logic
                 if asset_invalidated:
-                    logger.info(f"❌ ZONE INVALIDATED: Single asset traded through {zone['zone_name']}")
+                    logger.info(f"❌ ZONE INVALIDATED: Single asset traded through {zone.get('zone_name', 'Unknown')}")
                     return False
                 else:
-                    logger.info(f"✅ ZONE VALID: Asset has not traded through {zone['zone_name']}")
+                    logger.info(f"✅ ZONE VALID: Asset has not traded through {zone.get('zone_name', 'Unknown')}")
+                    logger.info(f"   Formation: {formation_time.strftime('%Y-%m-%d %H:%M')}, {len(subsequent_candles)} candles since")
                     return True
             
         except Exception as e:
             logger.error(f"❌ Error checking zone validity for {zone.get('zone_name', 'Unknown')}: {str(e)}")
+            import traceback
+            logger.error(f"❌ Traceback: {traceback.format_exc()}")
             return False  # Be safe - assume invalid on error
     
     def calculate_wick_percentage(self, candle):
