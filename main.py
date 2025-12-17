@@ -3808,10 +3808,9 @@ class UltimateTradingSystem:
             logger.debug(f"🧹 Cleaned up {len(signals_to_remove)} old Double SMT signals")
 
     def _scan_and_add_sd_zones(self):
-        """Scan for Supply/Demand zones and add them to FeatureBox - WITH DEBUG"""
-        logger.info(f"🔍 SCANNING: Supply/Demand Zones")
+        """Scan for Supply/Demand zones with DUAL ASSET validation"""
+        logger.info(f"🔍 SCANNING: Supply/Demand Zones (Dual-Asset)")
         
-        # Determine timeframes to scan
         timeframes_to_scan = ['M15', 'H1', 'H4']
         if 'XAU_USD' in self.instruments:
             timeframes_to_scan.append('M5')
@@ -3823,13 +3822,17 @@ class UltimateTradingSystem:
             for timeframe in timeframes_to_scan:
                 data = self.market_data[instrument].get(timeframe)
                 if data is not None and not data.empty:
+                    # Get OTHER instrument's data for dual validation
+                    other_instrument = [inst for inst in self.instruments if inst != instrument][0]
+                    other_data = self.market_data[other_instrument].get(timeframe)
+                    
                     # Scan for zones
                     zones = self.sd_detector.scan_timeframe(data, timeframe, instrument)
                     logger.info(f"📊 {instrument} {timeframe}: Found {len(zones)} zones")
                     
                     for zone in zones:
-                        # Check if zone is still valid
-                        is_valid = self.sd_detector.check_zone_still_valid(zone, data)
+                        # Check if zone is still valid WITH DUAL ASSET VALIDATION
+                        is_valid = self.sd_detector.check_zone_still_valid(zone, data, other_data)
                         
                         if is_valid:
                             # Add to FeatureBox
@@ -3837,6 +3840,10 @@ class UltimateTradingSystem:
                                 zones_added += 1
                                 logger.info(f"📦 Added {zone['type']} zone: {zone['zone_name']} "
                                            f"({zone['zone_low']:.4f}-{zone['zone_high']:.4f})")
+                                
+                                # Check if wick-adjusted
+                                if zone.get('wick_adjusted', False):
+                                    logger.info(f"   ↳ Wick-adjusted zone ({zone.get('wick_percentage', 0):.1f}% wick)")
                             else:
                                 logger.info(f"📦 Zone already in FeatureBox: {zone['zone_name']}")
                         else:
@@ -3850,7 +3857,8 @@ class UltimateTradingSystem:
         logger.info(f"📦 FeatureBox now has {len(active_zones)} active SD zones")
         
         for zone in active_zones:
-            logger.info(f"📦   {zone['zone_name']}: {zone['type']} at {zone['zone_low']:.4f}-{zone['zone_high']:.4f}")
+            wick_note = f"(wick-adjusted)" if zone.get('wick_adjusted', False) else ""
+            logger.info(f"📦   {zone['zone_name']} {wick_note}: {zone['type']} at {zone['zone_low']:.4f}-{zone['zone_high']:.4f}")
         
         return zones_added
 
