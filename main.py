@@ -3396,7 +3396,7 @@ class SupplyDemandDetector:
             return min(next_two['low'].min(), formation_candle['low'])
     
     def scan_timeframe(self, data, timeframe, asset):
-        """Scan for supply and demand zones with enhanced criteria - UPDATED"""
+        """Scan for supply and demand zones with enhanced criteria - CORRECTED"""
         if data is None or len(data) < 10:
             logger.warning(f"⚠️ Not enough data for SD zone scan: {asset} {timeframe}")
             return []
@@ -3425,9 +3425,28 @@ class SupplyDemandDetector:
                 
             next_candles = closed_data.iloc[i+1:i+11]
             
+            # ---------- CALCULATE WICK PERCENTAGE FIRST ----------
+            total_range = formation_candle['high'] - formation_candle['low']
+            if total_range == 0:
+                continue  # Zero range candle, skip
+                
+            if formation_candle['close'] > formation_candle['open']:  # Bullish candle
+                upper_wick = formation_candle['high'] - formation_candle['close']
+                wick_pct = (upper_wick / total_range) * 100
+                is_bullish = True
+            else:  # Bearish candle
+                lower_wick = formation_candle['open'] - formation_candle['low']
+                wick_pct = (lower_wick / total_range) * 100
+                is_bullish = False
+            
+            # SKIP CANDLES WITH TOO SMALL WICKS (<10%)
+            if wick_pct < 10:
+                logger.debug(f"⏭️ Skipping candle with small wick ({wick_pct:.1f}%) at {formation_candle['time']}")
+                continue
+            
             # ---------- SUPPLY ZONE DETECTION ----------
             # Supply: Bullish candle followed by bearish next candle
-            if formation_candle['close'] > formation_candle['open']:  # Bullish formation
+            if is_bullish:  # Bullish formation candle
                 # NEXT CANDLE MUST BE BEARISH (close < open)
                 next_candle = next_candles.iloc[0] if len(next_candles) > 0 else None
                 if next_candle is None or next_candle['close'] >= next_candle['open']:
@@ -3442,14 +3461,6 @@ class SupplyDemandDetector:
                 if down_candles < 3:
                     continue  # Not enough downward movement
                 
-                # Calculate wick percentage
-                total_range = formation_candle['high'] - formation_candle['low']
-                if total_range > 0:
-                    upper_wick = formation_candle['high'] - formation_candle['close']
-                    wick_pct = (upper_wick / total_range) * 100
-                else:
-                    wick_pct = 0
-                
                 # Determine zone boundaries based on wick percentage
                 if wick_pct > 40:  # Large upper wick (>40%) - use upper half
                     mid_point = (formation_candle['high'] + formation_candle['low']) / 2
@@ -3460,9 +3471,12 @@ class SupplyDemandDetector:
                         zone_high = max(next_two['high'].max(), formation_candle['high'])
                     else:
                         zone_high = formation_candle['high']
+                    wick_adjusted = True
+                    logger.debug(f"📏 Supply zone wick-adjusted: {wick_pct:.1f}% wick, using upper half")
                 else:
                     zone_low = formation_candle['low']
                     zone_high = formation_candle['high']
+                    wick_adjusted = False
                 
                 # Check for DULL ZONE: next 4 candles trading within zone
                 dull_zone = True
@@ -3516,14 +3530,15 @@ class SupplyDemandDetector:
                             'wick_percentage': wick_pct,
                             'zone_name': f"{asset}_{timeframe}_SUPPLY_{formation_candle['time'].strftime('%m%d%H%M')}",
                             'direction': 'bearish',
-                            'wick_adjusted': wick_pct > 40
+                            'wick_adjusted': wick_adjusted,
+                            'wick_category': 'large' if wick_pct > 40 else 'normal'
                         }
                         zones.append(zone)
                         logger.debug(f"✅ Found SUPPLY zone: {zone['zone_name']} at {zone_low:.4f}-{zone_high:.4f}")
             
             # ---------- DEMAND ZONE DETECTION ----------
             # Demand: Bearish candle followed by bullish next candle
-            elif formation_candle['close'] < formation_candle['open']:  # Bearish formation
+            elif not is_bullish:  # Bearish formation candle
                 # NEXT CANDLE MUST BE BULLISH (close > open)
                 next_candle = next_candles.iloc[0] if len(next_candles) > 0 else None
                 if next_candle is None or next_candle['close'] <= next_candle['open']:
@@ -3538,14 +3553,6 @@ class SupplyDemandDetector:
                 if up_candles < 3:
                     continue  # Not enough upward movement
                 
-                # Calculate wick percentage
-                total_range = formation_candle['high'] - formation_candle['low']
-                if total_range > 0:
-                    lower_wick = formation_candle['open'] - formation_candle['low']
-                    wick_pct = (lower_wick / total_range) * 100
-                else:
-                    wick_pct = 0
-                
                 # Determine zone boundaries based on wick percentage
                 if wick_pct > 40:  # Large lower wick (>40%) - use lower half
                     mid_point = (formation_candle['high'] + formation_candle['low']) / 2
@@ -3556,9 +3563,12 @@ class SupplyDemandDetector:
                         zone_low = min(next_two['low'].min(), formation_candle['low'])
                     else:
                         zone_low = formation_candle['low']
+                    wick_adjusted = True
+                    logger.debug(f"📏 Demand zone wick-adjusted: {wick_pct:.1f}% wick, using lower half")
                 else:
                     zone_low = formation_candle['low']
                     zone_high = formation_candle['high']
+                    wick_adjusted = False
                 
                 # Check for DULL ZONE: next 4 candles trading within zone
                 dull_zone = True
@@ -3612,7 +3622,8 @@ class SupplyDemandDetector:
                             'wick_percentage': wick_pct,
                             'zone_name': f"{asset}_{timeframe}_DEMAND_{formation_candle['time'].strftime('%m%d%H%M')}",
                             'direction': 'bullish',
-                            'wick_adjusted': wick_pct > 40
+                            'wick_adjusted': wick_adjusted,
+                            'wick_category': 'large' if wick_pct > 40 else 'normal'
                         }
                         zones.append(zone)
                         logger.debug(f"✅ Found DEMAND zone: {zone['zone_name']} at {zone_low:.4f}-{zone_high:.4f}")
@@ -3622,10 +3633,17 @@ class SupplyDemandDetector:
         # Debug: Log first few zones found
         if zones and len(zones) > 0:
             for i, zone in enumerate(zones[:3]):
-                wick_note = f"(wick-adjusted)" if zone['wick_adjusted'] else ""
-                logger.info(f"   Zone {i+1}: {zone['zone_name']} {wick_note}")
+                wick_status = ""
+                if zone['wick_category'] == 'large':
+                    wick_status = f" (LARGE WICK: {zone['wick_percentage']:.1f}% - wick-adjusted)"
+                elif zone['wick_percentage'] < 10:
+                    wick_status = f" (SMALL WICK: {zone['wick_percentage']:.1f}% - filtered out)"
+                else:
+                    wick_status = f" (normal wick: {zone['wick_percentage']:.1f}%)"
+                
+                logger.info(f"   Zone {i+1}: {zone['zone_name']}{wick_status}")
                 logger.info(f"      {zone['type']}: {zone['zone_low']:.4f} to {zone['zone_high']:.4f}")
-                logger.info(f"      Wick: {zone.get('wick_percentage', 0):.1f}%, Formed: {zone['formation_time'].strftime('%m/%d %H:%M')}")
+                logger.info(f"      Formed: {zone['formation_time'].strftime('%m/%d %H:%M')}")
         else:
             logger.info(f"   No zones found for {asset} {timeframe}")
         
