@@ -3693,7 +3693,7 @@ class UltimateTradingSystem:
         # Store the parameters as instance variables
         self.pair_group = pair_group
         self.pair_config = pair_config
-        self.sd_detector = SupplyDemandDetector(min_zone_pct=0.005)  # 0.5% minimum zone
+        self.sd_detector = SupplyDemandDetector(min_zone_pct=0)  # 0.5% minimum zone
         self.volatile_pairs = ['XAU_USD']
         
         
