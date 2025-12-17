@@ -3194,88 +3194,81 @@ class SupplyDemandDetector:
         self.min_zone_pct = min_zone_pct
         logger.info(f"✅ SupplyDemandDetector initialized with min_zone_pct: {min_zone_pct*100}%")
     
-    def check_zone_still_valid(self, zone, current_data):
-        """Check if a zone is still valid given current market data - FIXED WITH CORRECT LOGIC"""
+    def check_zone_still_valid(self, zone, current_data, other_asset_data=None):
+        """Check if a zone is still valid - with DUAL ASSET validation"""
         try:
             if current_data is None or current_data.empty:
                 logger.debug(f"📭 No current data for zone validation: {zone.get('zone_name', 'Unknown')}")
                 return True  # Assume valid if no data
             
-            zone_type = zone['type']  # 'supply' or 'demand'
+            zone_type = zone['type']
             zone_low = zone['zone_low']
             zone_high = zone['zone_high']
             formation_time = zone['formation_time']
             
-            # Get candles AFTER formation
+            # Get candles AFTER formation for THIS asset
             subsequent_candles = current_data[current_data['time'] > formation_time]
             
             if len(subsequent_candles) == 0:
-                logger.debug(f"📭 No candles after formation for zone: {zone['zone_name']}")
                 return True  # No candles after formation
             
-            logger.info(f"🔍 VALIDITY CHECK for {zone['zone_name']}: {zone_type.upper()} {zone_low:.4f}-{zone_high:.4f}")
-            logger.info(f"   Formation: {formation_time.strftime('%Y-%m-%d %H:%M')}")
-            logger.info(f"   Checking {len(subsequent_candles)} subsequent candles")
-            
-            # CORRECT LOGIC:
-            # Supply (bearish) zone: Invalid if price trades ABOVE zone_high
-            # Demand (bullish) zone: Invalid if price trades BELOW zone_low
-            
-            invalid_count = 0
-            for idx, candle in subsequent_candles.iterrows():
+            # Check THIS asset for invalidation
+            asset_invalidated = False
+            for _, candle in subsequent_candles.iterrows():
                 if zone_type == 'supply':
-                    # Supply zone: invalid if candle's HIGH > zone_high
+                    # Supply zone: invalid if price TRADES ABOVE (high > zone_high)
                     if candle['high'] > zone_high:
-                        logger.info(f"❌ SUPPLY ZONE INVALIDATED: {zone['zone_name']}")
-                        logger.info(f"   Candle at {candle['time'].strftime('%Y-%m-%d %H:%M')}:")
+                        logger.info(f"🔴 {zone['asset']} INVALIDATED SUPPLY: {zone['zone_name']}")
                         logger.info(f"   High {candle['high']:.4f} > Zone high {zone_high:.4f}")
-                        logger.info(f"   (Current price must stay BELOW supply zone)")
-                        return False
-                    else:
-                        # DEBUG: Log that candle didn't invalidate
-                        if idx < 3:  # Log first few candles
-                            logger.debug(f"   ✓ Candle {candle['time'].strftime('%H:%M')}: High {candle['high']:.4f} <= Zone high {zone_high:.4f}")
-                
-                else:  # demand zone
-                    # Demand zone: invalid if candle's LOW < zone_low
+                        asset_invalidated = True
+                        break
+                else:  # demand
+                    # Demand zone: invalid if price TRADES BELOW (low < zone_low)
                     if candle['low'] < zone_low:
-                        logger.info(f"❌ DEMAND ZONE INVALIDATED: {zone['zone_name']}")
-                        logger.info(f"   Candle at {candle['time'].strftime('%Y-%m-%d %H:%M')}:")
+                        logger.info(f"🔴 {zone['asset']} INVALIDATED DEMAND: {zone['zone_name']}")
                         logger.info(f"   Low {candle['low']:.4f} < Zone low {zone_low:.4f}")
-                        logger.info(f"   (Current price must stay ABOVE demand zone)")
-                        return False
-                    else:
-                        # DEBUG: Log that candle didn't invalidate
-                        if idx < 3:  # Log first few candles
-                            logger.debug(f"   ✓ Candle {candle['time'].strftime('%H:%M')}: Low {candle['low']:.4f} >= Zone low {zone_low:.4f}")
+                        asset_invalidated = True
+                        break
             
-            # Zone is still valid
-            logger.info(f"✅ ZONE STILL VALID: {zone['zone_name']}")
-            logger.info(f"   {len(subsequent_candles)} candles checked, none invalidated")
-            
-            # Check if price is currently near the zone (for info)
-            last_candle = subsequent_candles.iloc[-1]
-            current_price = last_candle['close']
-            
-            if zone_type == 'supply':
-                if current_price < zone_low:
-                    logger.info(f"   Current price {current_price:.4f} is BELOW supply zone (zone low: {zone_low:.4f})")
-                elif current_price <= zone_high:
-                    logger.info(f"   Current price {current_price:.4f} is INSIDE supply zone")
+            # If we have other asset data, check for DUAL asset invalidation
+            if other_asset_data is not None and not other_asset_data.empty:
+                other_subsequent = other_asset_data[other_asset_data['time'] > formation_time]
+                
+                other_invalidated = False
+                for _, candle in other_subsequent.iterrows():
+                    if zone_type == 'supply':
+                        if candle['high'] > zone_high:
+                            logger.info(f"🔴 OTHER ASSET INVALIDATED SUPPLY: {zone['zone_name']}")
+                            other_invalidated = True
+                            break
+                    else:  # demand
+                        if candle['low'] < zone_low:
+                            logger.info(f"🔴 OTHER ASSET INVALIDATED DEMAND: {zone['zone_name']}")
+                            other_invalidated = True
+                            break
+                
+                # DUAL ASSET LOGIC: Zone remains valid UNLESS BOTH assets have invalidated it
+                if asset_invalidated and other_invalidated:
+                    logger.info(f"❌ ZONE FULLY INVALIDATED: Both assets traded through {zone['zone_name']}")
+                    return False
+                elif asset_invalidated or other_invalidated:
+                    logger.info(f"⚠️ ZONE PARTIALLY INVALIDATED: Only one asset traded through {zone['zone_name']}")
+                    logger.info(f"   Zone remains valid (waiting for other asset)")
+                    return True  # Zone still valid (partial invalidation)
                 else:
-                    logger.warning(f"   ⚠️ Current price {current_price:.4f} is ABOVE supply zone but zone not invalidated?")
-            else:  # demand
-                if current_price > zone_high:
-                    logger.info(f"   Current price {current_price:.4f} is ABOVE demand zone (zone high: {zone_high:.4f})")
-                elif current_price >= zone_low:
-                    logger.info(f"   Current price {current_price:.4f} is INSIDE demand zone")
+                    logger.info(f"✅ ZONE VALID: Neither asset traded through {zone['zone_name']}")
+                    return True
+            else:
+                # No other asset data - use single asset logic
+                if asset_invalidated:
+                    logger.info(f"❌ ZONE INVALIDATED: Single asset traded through {zone['zone_name']}")
+                    return False
                 else:
-                    logger.warning(f"   ⚠️ Current price {current_price:.4f} is BELOW demand zone but zone not invalidated?")
-            
-            return True
+                    logger.info(f"✅ ZONE VALID: Asset has not traded through {zone['zone_name']}")
+                    return True
             
         except Exception as e:
-            logger.error(f"❌ Error checking zone validity for {zone.get('zone_name', 'Unknown')}: {str(e)}", exc_info=True)
+            logger.error(f"❌ Error checking zone validity for {zone.get('zone_name', 'Unknown')}: {str(e)}")
             return False  # Be safe - assume invalid on error
     
     def calculate_wick_percentage(self, candle):
