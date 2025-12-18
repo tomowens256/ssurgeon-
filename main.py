@@ -3191,7 +3191,7 @@ class SmartTimingSystem:
 
 
 class SupplyDemandDetector:
-    def __init__(self, min_zone_pct=0):  # Default to 0 to disable filtering
+    def __init__(self, min_zone_pct=0):  # Default to 0 to disable filterin
         self.min_zone_pct = min_zone_pct
         if min_zone_pct != 0:
             logger.warning(f"⚠️ min_zone_pct={min_zone_pct} is set but zone size filtering is disabled")
