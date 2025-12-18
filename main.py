@@ -5643,11 +5643,11 @@ class UltimateTradingSystem:
                 # Create unique signal ID
                 signal_id = f"DOUBLE_SMT_{self.pair_group}_{primary['cycle']}_{secondary['cycle']}_bullish"
                 
-                # Check cooldown (1 hour)
+                # Check cooldown (24 hours)
                 if hasattr(self, 'double_smt_sent') and signal_id in self.double_smt_sent:
                     last_sent = self.double_smt_sent[signal_id]
-                    if (datetime.now(NY_TZ) - last_sent).total_seconds() < 3600:
-                        logger.info(f"⏳ Double SMT recently sent: {signal_id}")
+                    if (datetime.now(NY_TZ) - last_sent).total_seconds() < self.COOLDOWN_HOURS:
+                        logger.info(f"⏳ Double SMT 24H COOLDOWN ACTIVE: {signal_id}")
                         return False
                 
                 # Calculate span
