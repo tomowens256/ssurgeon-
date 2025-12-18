@@ -5897,20 +5897,22 @@ class UltimateTradingSystem:
             return True
         return False
     def _cleanup_old_fvg_smt_signals(self):
-        """Remove old FVG+SMT signals from tracking"""
+        """Remove old FVG+SMT signals from tracking (7-day cleanup)"""
+        if not hasattr(self, 'fvg_smt_tap_sent') or not self.fvg_smt_tap_sent:
+            return
+        
         current_time = datetime.now(NY_TZ)
         signals_to_remove = []
         
         for signal_id, sent_time in self.fvg_smt_tap_sent.items():
-            hours_since_sent = (current_time - sent_time).total_seconds() / 3600
-            if hours_since_sent > 24:  # Remove entries older than 24 hours
+            if (current_time - sent_time).total_seconds() > self.CLEANUP_DAYS:  # 7 days
                 signals_to_remove.append(signal_id)
         
         for signal_id in signals_to_remove:
             del self.fvg_smt_tap_sent[signal_id]
         
         if signals_to_remove:
-            logger.debug(f"🧹 Cleaned up {len(signals_to_remove)} old FVG+SMT signals")
+            logger.debug(f"🧹 Cleaned up {len(signals_to_remove)} old FVG+SMT signals (7+ days)")
     
     def _format_fvg_smt_tap_message(self, idea):
         """Format FVG+SMT tap message with SMT quarter details"""
