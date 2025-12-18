@@ -4078,7 +4078,7 @@ class UltimateTradingSystem:
             
             # THEN: Fetch LONG data for SD Zones (separate calls)
             for tf in sd_timeframes:
-                count = 200  # 200 candles for SD zones
+                count = 100  # 100 candles for SD zones
                 task = asyncio.create_task(
                     self._fetch_single_instrument_data(instrument, tf, count, api_key)
                 )
