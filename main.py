@@ -3679,7 +3679,7 @@ class SupplyDemandDetector:
                 
                 logger.info(f"   Zone {i+1}: {zone['zone_name']}{wick_status}")
                 logger.info(f"      {zone['type']}: {zone['zone_low']:.4f} to {zone['zone_high']:.4f}")
-                logger.info(f"      Formed: {zone['formation_time']} ({zone['formation_time'].tz})")
+                logger.info(f"      Formed: {zone['formation_time']}")
         else:
             logger.info(f"   No zones found for {asset} {timeframe}")
         
