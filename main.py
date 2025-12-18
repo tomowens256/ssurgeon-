@@ -3448,18 +3448,19 @@ class SupplyDemandDetector:
             closed_data['time'] = closed_data['time'].dt.tz_convert(NY_TZ)
         
         # OPTIMIZATION: Convert to numpy arrays for faster access
+        # OPTIMIZATION: Convert to numpy arrays for faster access (except time)
         highs = closed_data['high'].values
         lows = closed_data['low'].values
         closes = closed_data['close'].values
         opens = closed_data['open'].values
-        times = closed_data['time'].values
+        times = closed_data['time']  # Keep as pandas Series to preserve timezone
         wick_pcts = closed_data['wick_pct'].values
         is_bullish_arr = closed_data['is_bullish'].values
         
         # Scan the dataset
         for i in range(3, len(closed_data) - 10):
             formation_idx = i
-            formation_time = times[formation_idx]  # Already in NY_TZ
+            formation_time = times.iloc[formation_idx]  # This preserves timezone
             
             # ---------- GET ALL NEEDED DATA AT ONCE ----------
             formation_high = highs[formation_idx]
@@ -3552,6 +3553,9 @@ class SupplyDemandDetector:
                             break
                 
                 if valid_zone:
+                    # Convert numpy datetime64 to timezone-aware pandas Timestamp
+                    formation_time_ts = pd.Timestamp(formation_time).tz_localize('UTC').tz_convert(NY_TZ)
+                    
                     zone = {
                         'type': 'supply',
                         'zone_low': zone_low,
@@ -3561,13 +3565,13 @@ class SupplyDemandDetector:
                             'low': formation_low,
                             'close': formation_close,
                             'open': formation_open,
-                            'time': formation_time
+                            'time': formation_time_ts
                         },
-                        'formation_time': formation_time,
+                        'formation_time': formation_time_ts,  # Store as timezone-aware Timestamp
                         'timeframe': timeframe,
                         'asset': asset,
                         'wick_percentage': wick_pct,
-                        'zone_name': f"{asset}_{timeframe}_SUPPLY_{pd.Timestamp(formation_time).strftime('%Y%m%d%H%M')}",
+                        'zone_name': f"{asset}_{timeframe}_SUPPLY_{formation_time_ts.strftime('%Y%m%d%H%M')}",
                         'direction': 'bearish',
                         'wick_adjusted': wick_adjusted,
                         'wick_category': 'large' if wick_pct > 40 else 'normal'
@@ -3641,6 +3645,9 @@ class SupplyDemandDetector:
                             break
                 
                 if valid_zone:
+                    # Convert numpy datetime64 to timezone-aware pandas Timestamp
+                    formation_time_ts = pd.Timestamp(formation_time).tz_localize('UTC').tz_convert(NY_TZ)
+                    
                     zone = {
                         'type': 'demand',
                         'zone_low': zone_low,
@@ -3650,13 +3657,13 @@ class SupplyDemandDetector:
                             'low': formation_low,
                             'close': formation_close,
                             'open': formation_open,
-                            'time': formation_time
+                            'time': formation_time_ts
                         },
-                        'formation_time': formation_time,
+                        'formation_time': formation_time_ts,  # Store as timezone-aware Timestamp
                         'timeframe': timeframe,
                         'asset': asset,
                         'wick_percentage': wick_pct,
-                        'zone_name': f"{asset}_{timeframe}_DEMAND_{pd.Timestamp(formation_time).strftime('%Y%m%d%H%M')}",
+                        'zone_name': f"{asset}_{timeframe}_DEMAND_{formation_time_ts.strftime('%Y%m%d%H%M')}",
                         'direction': 'bullish',
                         'wick_adjusted': wick_adjusted,
                         'wick_category': 'large' if wick_pct > 40 else 'normal'
