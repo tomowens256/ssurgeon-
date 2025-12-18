@@ -3762,6 +3762,9 @@ class UltimateTradingSystem:
         self.double_smt_sent = {}
         self.smart_timing = SmartTimingSystem()
         self.last_candle_scan = {}
+        # Cooldown periods (in seconds)
+        self.COOLDOWN_HOURS = 24 * 3600  # 24 hours
+        self.CLEANUP_DAYS = 7 * 24 * 3600  # Clean up after 7 days
         self.timeframe_cycle_map = {
                 'H4': ['weekly', 'daily'],   # Monthly removed
                 'H1': ['daily'], 
