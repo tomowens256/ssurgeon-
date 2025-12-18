@@ -3412,10 +3412,14 @@ class SupplyDemandDetector:
             return min(next_two['low'].min(), formation_candle['low'])
     
     def scan_timeframe(self, data, timeframe, asset):
-        """Scan for supply and demand zones with enhanced criteria - OPTIMIZED"""
+        """Scan for supply and demand zones with enhanced criteria - FIXED TIMEZONE"""
         if data is None or len(data) < 10:
             logger.warning(f"⚠️ Not enough data for SD zone scan: {asset} {timeframe}")
             return []
+        
+        # Import NY_TZ
+        from pytz import timezone
+        NY_TZ = timezone('America/New_York')
         
         # Use only closed candles
         if 'complete' in data.columns:
@@ -3437,6 +3441,15 @@ class SupplyDemandDetector:
         # OPTIMIZATION: Pre-calculate candle types
         closed_data['is_bullish'] = closed_data['close'] > closed_data['open']
         
+        # 🔥 FIX: Ensure all timestamps are in NY_TZ
+        # Convert 'time' column to NY_TZ
+        if closed_data['time'].dt.tz is None:
+            # Assume UTC and convert to NY_TZ
+            closed_data['time'] = closed_data['time'].dt.tz_localize('UTC').dt.tz_convert(NY_TZ)
+        elif str(closed_data['time'].dt.tz) != str(NY_TZ):
+            # Convert from current timezone to NY_TZ
+            closed_data['time'] = closed_data['time'].dt.tz_convert(NY_TZ)
+        
         # OPTIMIZATION: Convert to numpy arrays for faster access
         highs = closed_data['high'].values
         lows = closed_data['low'].values
@@ -3447,9 +3460,9 @@ class SupplyDemandDetector:
         is_bullish_arr = closed_data['is_bullish'].values
         
         # Scan the dataset
-        for i in range(3, len(closed_data) - 10):  # Need at least 10 candles after for validation
+        for i in range(3, len(closed_data) - 10):
             formation_idx = i
-            formation_time = times[formation_idx]
+            formation_time = times[formation_idx]  # Already in NY_TZ
             
             # ---------- GET ALL NEEDED DATA AT ONCE ----------
             formation_high = highs[formation_idx]
@@ -3557,7 +3570,7 @@ class SupplyDemandDetector:
                         'timeframe': timeframe,
                         'asset': asset,
                         'wick_percentage': wick_pct,
-                        'zone_name': f"{asset}_{timeframe}_SUPPLY_{formation_time.strftime('%m%d%H%M') if hasattr(formation_time, 'strftime') else formation_time}",
+                        'zone_name': f"{asset}_{timeframe}_SUPPLY_{pd.Timestamp(formation_time).strftime('%Y%m%d%H%M')}",
                         'direction': 'bearish',
                         'wick_adjusted': wick_adjusted,
                         'wick_category': 'large' if wick_pct > 40 else 'normal'
@@ -3646,7 +3659,7 @@ class SupplyDemandDetector:
                         'timeframe': timeframe,
                         'asset': asset,
                         'wick_percentage': wick_pct,
-                        'zone_name': f"{asset}_{timeframe}_DEMAND_{formation_time.strftime('%m%d%H%M') if hasattr(formation_time, 'strftime') else formation_time}",
+                        'zone_name': f"{asset}_{timeframe}_DEMAND_{pd.Timestamp(formation_time).strftime('%Y%m%d%H%M')}",
                         'direction': 'bullish',
                         'wick_adjusted': wick_adjusted,
                         'wick_category': 'large' if wick_pct > 40 else 'normal'
@@ -3669,7 +3682,7 @@ class SupplyDemandDetector:
                 
                 logger.info(f"   Zone {i+1}: {zone['zone_name']}{wick_status}")
                 logger.info(f"      {zone['type']}: {zone['zone_low']:.4f} to {zone['zone_high']:.4f}")
-                logger.info(f"      Formed: {zone['formation_time']}")
+                logger.info(f"      Formed: {zone['formation_time']} ({zone['formation_time'].tz})")
         else:
             logger.info(f"   No zones found for {asset} {timeframe}")
         
