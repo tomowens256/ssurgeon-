@@ -4323,11 +4323,11 @@ class UltimateTradingSystem:
         # Create unique signal ID
         signal_id = f"CRT_SMT_{self.pair_group}_{crt_tf}_{smt_cycle}_{instrument}_{crt_signal['timestamp'].strftime('%H%M')}"
         
-        # Check cooldown (1 hour)
+        # Check cooldown (24 hours)
         if hasattr(self, 'crt_smt_ideas_sent') and signal_id in self.crt_smt_ideas_sent:
             last_sent = self.crt_smt_ideas_sent[signal_id]
-            if (datetime.now(NY_TZ) - last_sent).total_seconds() < 3600:
-                logger.info(f"⏳ CRT+SMT recently sent: {signal_id}")
+            if (datetime.now(NY_TZ) - last_sent).total_seconds() < self.COOLDOWN_HOURS:
+                logger.info(f"⏳ CRT+SMT 24H COOLDOWN ACTIVE: {signal_id}")
                 return False
         
         idea = {
