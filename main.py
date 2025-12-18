@@ -3197,7 +3197,7 @@ class SupplyDemandDetector:
             logger.warning(f"⚠️ min_zone_pct={min_zone_pct} is set but zone size filtering is disabled")
         logger.info(f"✅ SupplyDemandDetector initialized with min_zone_pct: {min_zone_pct}")
     def check_zone_still_valid(self, zone, current_data, other_asset_data=None):
-        """Check if a zone is still valid - WITH PROPER TIMEZONE HANDLING"""
+        """Check if a zone is still valid - FIXED TIMEZONE"""
         try:
             if current_data is None or current_data.empty:
                 logger.debug(f"📭 No current data for zone validation: {zone.get('zone_name', 'Unknown')}")
@@ -3208,31 +3208,39 @@ class SupplyDemandDetector:
             zone_high = zone['zone_high']
             formation_time = zone['formation_time']
             
-            # 🔥 FIX: Convert everything to NY_TZ for proper comparison
-            # Import NY_TZ if not already imported
+            # Import NY_TZ
             from pytz import timezone
             NY_TZ = timezone('America/New_York')
             
-            # Convert formation_time to NY_TZ (handle numpy, string, etc.)
+            # Convert formation_time to pandas Timestamp in NY_TZ
             try:
+                # If formation_time is already pandas Timestamp
+                if isinstance(formation_time, pd.Timestamp):
+                    formation_ts = formation_time
                 # If formation_time is numpy.datetime64
-                if isinstance(formation_time, np.datetime64):
-                    formation_time = pd.Timestamp(formation_time).tz_localize('UTC').tz_convert(NY_TZ)
-                # If formation_time is string (like '2025-12-17T16:15:00.000000000')
+                elif isinstance(formation_time, np.datetime64):
+                    formation_ts = pd.Timestamp(formation_time)
+                # If formation_time is string
                 elif isinstance(formation_time, str):
-                    # Parse string to datetime (assume UTC if no timezone)
-                    formation_time = pd.to_datetime(formation_time, utc=True).tz_convert(NY_TZ)
-                # If formation_time is datetime or pandas Timestamp
-                elif isinstance(formation_time, (datetime, pd.Timestamp)):
-                    if formation_time.tz is None:
-                        # Assume UTC if naive
-                        formation_time = formation_time.tz_localize('UTC').tz_convert(NY_TZ)
-                    else:
-                        # Convert to NY_TZ
-                        formation_time = formation_time.tz_convert(NY_TZ)
+                    formation_ts = pd.to_datetime(formation_time, errors='coerce')
+                    if pd.isna(formation_ts):
+                        logger.error(f"❌ Could not parse formation_time: {formation_time}")
+                        return False
+                # If formation_time is datetime
+                elif isinstance(formation_time, datetime):
+                    formation_ts = pd.Timestamp(formation_time)
                 else:
                     logger.error(f"❌ Unknown formation_time type: {type(formation_time)}")
                     return False
+                
+                # Ensure formation_time is in NY_TZ
+                if formation_ts.tz is None:
+                    # Assume UTC and convert to NY_TZ
+                    formation_ts = formation_ts.tz_localize('UTC').tz_convert(NY_TZ)
+                elif str(formation_ts.tz) != str(NY_TZ):
+                    # Convert to NY_TZ
+                    formation_ts = formation_ts.tz_convert(NY_TZ)
+                    
             except Exception as e:
                 logger.error(f"❌ Error converting formation_time: {e}")
                 return False
@@ -3247,17 +3255,11 @@ class SupplyDemandDetector:
                 current_data_copy['time'] = current_data_copy['time'].dt.tz_convert(NY_TZ)
             
             # Get candles AFTER formation (using NY_TZ)
-            subsequent_candles = current_data_copy[current_data_copy['time'] > formation_time]
+            subsequent_candles = current_data_copy[current_data_copy['time'] > formation_ts]
             
             if len(subsequent_candles) == 0:
                 logger.debug(f"📭 No candles after formation for: {zone.get('zone_name', 'Unknown')}")
-                logger.debug(f"   Formation time: {formation_time.strftime('%Y-%m-%d %H:%M %Z')}")
-                logger.debug(f"   Latest data: {current_data_copy['time'].iloc[-1].strftime('%Y-%m-%d %H:%M %Z')}")
                 return True
-            
-            logger.info(f"🔍 Checking zone: {zone.get('zone_name', 'Unknown')}")
-            logger.info(f"   Formation: {formation_time.strftime('%Y-%m-%d %H:%M %Z')}")
-            logger.info(f"   Checking {len(subsequent_candles)} candles after formation")
             
             # Check for breaches
             if zone_type == 'supply':
@@ -3266,9 +3268,8 @@ class SupplyDemandDetector:
                 if breach_mask.any():
                     breach_idx = breach_mask.idxmax()
                     breach_candle = subsequent_candles.loc[breach_idx]
-                    logger.info(f"🔴 SUPPLY ZONE INVALIDATED: {zone.get('zone_name', 'Unknown')}")
+                    logger.info(f"❌ SUPPLY ZONE INVALIDATED: {zone.get('zone_name', 'Unknown')}")
                     logger.info(f"   High {breach_candle['high']:.4f} > Zone high {zone_high:.4f}")
-                    logger.info(f"   Breached at {breach_candle['time'].strftime('%Y-%m-%d %H:%M %Z')}")
                     return False
             else:  # demand
                 # Demand zone: invalid if price TRADES BELOW (low < zone_low)
@@ -3276,23 +3277,19 @@ class SupplyDemandDetector:
                 if breach_mask.any():
                     breach_idx = breach_mask.idxmax()
                     breach_candle = subsequent_candles.loc[breach_idx]
-                    logger.info(f"🔴 DEMAND ZONE INVALIDATED: {zone.get('zone_name', 'Unknown')}")
+                    logger.info(f"❌ DEMAND ZONE INVALIDATED: {zone.get('zone_name', 'Unknown')}")
                     logger.info(f"   Low {breach_candle['low']:.4f} < Zone low {zone_low:.4f}")
-                    logger.info(f"   Breached at {breach_candle['time'].strftime('%Y-%m-%d %H:%M %Z')}")
                     return False
             
             # Zone is valid
             logger.info(f"✅ ZONE VALID: {zone.get('zone_name', 'Unknown')}")
-            logger.info(f"   {len(subsequent_candles)} candles checked, no breaches")
-            logger.info(f"   Zone range: {zone_low:.4f} - {zone_high:.4f}")
-            logger.info(f"   Current price range: {subsequent_candles['low'].min():.4f} - {subsequent_candles['high'].max():.4f}")
             return True
             
         except Exception as e:
             logger.error(f"❌ Error checking zone validity for {zone.get('zone_name', 'Unknown')}: {str(e)}")
             import traceback
             logger.error(f"❌ Traceback: {traceback.format_exc()}")
-            return False  # Assume invalid on error
+            return False
     
     def calculate_wick_percentage(self, candle):
         """Calculate wick percentage for a candle"""
