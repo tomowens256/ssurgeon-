@@ -3447,7 +3447,6 @@ class SupplyDemandDetector:
             # Convert from current timezone to NY_TZ
             closed_data['time'] = closed_data['time'].dt.tz_convert(NY_TZ)
         
-        # OPTIMIZATION: Convert to numpy arrays for faster access
         # OPTIMIZATION: Convert to numpy arrays for faster access (except time)
         highs = closed_data['high'].values
         lows = closed_data['low'].values
@@ -3482,7 +3481,6 @@ class SupplyDemandDetector:
             next_lows = lows[next_start:next_end]
             next_closes = closes[next_start:next_end]
             next_opens = opens[next_start:next_end]
-            next_times = times[next_start:next_end]
             
             if len(next_highs) < 10:
                 continue  # Not enough next candles
@@ -3553,9 +3551,6 @@ class SupplyDemandDetector:
                             break
                 
                 if valid_zone:
-                    # Convert numpy datetime64 to timezone-aware pandas Timestamp
-                    formation_time_ts = pd.Timestamp(formation_time).tz_localize('UTC').tz_convert(NY_TZ)
-                    
                     zone = {
                         'type': 'supply',
                         'zone_low': zone_low,
@@ -3565,13 +3560,13 @@ class SupplyDemandDetector:
                             'low': formation_low,
                             'close': formation_close,
                             'open': formation_open,
-                            'time': formation_time_ts
+                            'time': formation_time
                         },
-                        'formation_time': formation_time_ts,  # Store as timezone-aware Timestamp
+                        'formation_time': formation_time,
                         'timeframe': timeframe,
                         'asset': asset,
                         'wick_percentage': wick_pct,
-                        'zone_name': f"{asset}_{timeframe}_SUPPLY_{formation_time_ts.strftime('%Y%m%d%H%M')}",
+                        'zone_name': f"{asset}_{timeframe}_SUPPLY_{formation_time.strftime('%Y%m%d%H%M')}",
                         'direction': 'bearish',
                         'wick_adjusted': wick_adjusted,
                         'wick_category': 'large' if wick_pct > 40 else 'normal'
@@ -3645,9 +3640,6 @@ class SupplyDemandDetector:
                             break
                 
                 if valid_zone:
-                    # Convert numpy datetime64 to timezone-aware pandas Timestamp
-                    formation_time_ts = pd.Timestamp(formation_time).tz_localize('UTC').tz_convert(NY_TZ)
-                    
                     zone = {
                         'type': 'demand',
                         'zone_low': zone_low,
@@ -3657,13 +3649,13 @@ class SupplyDemandDetector:
                             'low': formation_low,
                             'close': formation_close,
                             'open': formation_open,
-                            'time': formation_time_ts
+                            'time': formation_time
                         },
-                        'formation_time': formation_time_ts,  # Store as timezone-aware Timestamp
+                        'formation_time': formation_time,
                         'timeframe': timeframe,
                         'asset': asset,
                         'wick_percentage': wick_pct,
-                        'zone_name': f"{asset}_{timeframe}_DEMAND_{formation_time_ts.strftime('%Y%m%d%H%M')}",
+                        'zone_name': f"{asset}_{timeframe}_DEMAND_{formation_time.strftime('%Y%m%d%H%M')}",
                         'direction': 'bullish',
                         'wick_adjusted': wick_adjusted,
                         'wick_category': 'large' if wick_pct > 40 else 'normal'
