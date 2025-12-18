@@ -3915,7 +3915,7 @@ class UltimateTradingSystem:
                                 zones_added += 1
                                 logger.info(f"📦 Added {zone['type']} zone: {zone['zone_name']}")
                                 logger.info(f"   Range: {zone['zone_low']:.4f}-{zone['zone_high']:.4f}")
-                                logger.info(f"   Formed: {zone['formation_time']} ({zone['formation_time'].tz})")
+                                logger.info(f"   Formed: {zone['formation_time']}")
                         else:
                             zones_invalidated += 1
                             logger.info(f"❌ Zone invalidated: {zone['zone_name']}")
