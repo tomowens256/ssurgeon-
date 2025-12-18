@@ -4424,23 +4424,22 @@ class UltimateTradingSystem:
         """
 
     def _cleanup_old_crt_smt_signals(self):
-        """Remove old CRT+SMT signals from tracking"""
-        if not hasattr(self, 'crt_smt_ideas_sent'):
+        """Remove old CRT+SMT signals from tracking (7-day cleanup)"""
+        if not hasattr(self, 'crt_smt_ideas_sent') or not self.crt_smt_ideas_sent:
             return
         
         current_time = datetime.now(NY_TZ)
         signals_to_remove = []
         
         for signal_id, sent_time in self.crt_smt_ideas_sent.items():
-            hours_since_sent = (current_time - sent_time).total_seconds() / 3600
-            if hours_since_sent > 24:  # Remove entries older than 24 hours
+            if (current_time - sent_time).total_seconds() > self.CLEANUP_DAYS:  # 7 days
                 signals_to_remove.append(signal_id)
         
         for signal_id in signals_to_remove:
             del self.crt_smt_ideas_sent[signal_id]
         
         if signals_to_remove:
-            logger.debug(f"🧹 Cleaned up {len(signals_to_remove)} old CRT+SMT signals")
+            logger.debug(f"🧹 Cleaned up {len(signals_to_remove)} old CRT+SMT signals (7+ days)")
     
     
     def debug_smt_detection(self):
