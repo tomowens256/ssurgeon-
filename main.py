@@ -4027,40 +4027,67 @@ class UltimateTradingSystem:
         return new_candles
     
     async def _fetch_all_data_parallel(self, api_key):
-        """Fetch data in parallel for maximum speed when new candles form"""
+        """Fetch data in parallel with PROVEN candle counts that WORKED"""
         tasks = []
-        required_timeframes = list(self.pair_config['timeframe_mapping'].values()) + ['D']
         
-        # Add CRT timeframes
+        # PROVEN CANDLE COUNTS FROM WORKING VERSION
+        proven_counts = {
+            # For SMT/CRT detection (keep these SHORT)
+            'H4': 40,   # Monthly timeframe - 40 candles (was working)
+            'H1': 40,   # Weekly timeframe - 40 candles (was working)  
+            'M15': 40,   # Daily timeframe - 40 candles (was working)
+            'M5': 40,    # 90min timeframe - 40 candles (was working)
+            
+            # For CRT only
+            'H2': 10, 'H3': 10, 'H6': 10, 'H8': 10, 'H12': 10,
+            
+            # For SD Zones ONLY - use MORE candles
+            'SD_H4': 100,  # For SD zones on H4
+            'SD_H1': 100,  # For SD zones on H1  
+            'SD_M15': 100, # For SD zones on M15
+            'SD_M5': 100,  # For SD zones on M5
+        }
+        
+        # Combine all required timeframes
+        required_timeframes = []
+        
+        # 1. Add SMT/CRT timeframes (SHORT lookback)
+        for cycle in self.pair_config['timeframe_mapping'].values():
+            if cycle not in required_timeframes:
+                required_timeframes.append(cycle)
+        
+        # 2. Add CRT timeframes
         for tf in CRT_TIMEFRAMES:
             if tf not in required_timeframes:
                 required_timeframes.append(tf)
         
-        # ADD FVG Timeframes:
-        fvg_timeframes = ['M15', 'H1', 'H2', 'H3', 'H4', 'D']
-        for tf in fvg_timeframes:
-            if tf not in required_timeframes:
-                required_timeframes.append(tf)
+        # 3. ADD SD Zone timeframes (LONG lookback - separate calls)
+        sd_timeframes = ['M15', 'H1', 'H4']
+        if 'XAU_USD' in self.instruments:
+            sd_timeframes.append('M5')
         
-        # ✅ ADD MORE CANDLES FOR SUPPLY/DEMAND ZONES
-        # Create all fetch tasks
+        # Create fetch tasks
         for instrument in self.instruments:
+            # FIRST: Fetch SHORT data for SMT/CRT
             for tf in required_timeframes:
-                # Use different counts for different purposes
-                if tf in ['M5','M15', 'H1', 'H4']:  # Timeframes for Supply/Demand zones
-                    count = 40  # Get 40 candles for Supply/Demand
-                else:
-                    count = self._get_proven_count(tf)  # Use normal count for others
-                
+                count = proven_counts.get(tf, 40)  # Default to 40
+                task = asyncio.create_task(
+                    self._fetch_single_instrument_data(instrument, tf, count, api_key)
+                )
+                tasks.append(task)
+            
+            # THEN: Fetch LONG data for SD Zones (separate calls)
+            for tf in sd_timeframes:
+                count = 200  # 200 candles for SD zones
                 task = asyncio.create_task(
                     self._fetch_single_instrument_data(instrument, tf, count, api_key)
                 )
                 tasks.append(task)
         
-        # Wait for ALL data with timeout
+        # Wait for ALL data
         try:
-            await asyncio.wait_for(asyncio.gather(*tasks), timeout=45.0)  # Increased timeout
-            logger.info(f"✅ Parallel data fetch completed for {self.pair_group} (SD zones: 500 candles)")
+            await asyncio.wait_for(asyncio.gather(*tasks), timeout=45.0)
+            logger.info(f"✅ Parallel fetch: SHORT data for SMT/CRT, LONG data for SD zones")
         except asyncio.TimeoutError:
             logger.warning(f"⚠️ Parallel data fetch timeout for {self.pair_group}")
     
