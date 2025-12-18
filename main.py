@@ -3935,6 +3935,60 @@ class UltimateTradingSystem:
         
         return zones_added
 
+    def _cleanup_old_sd_zone_signals(self):
+        """Remove old SD zone signals from tracking (7-day cleanup)"""
+        if not hasattr(self, 'sd_zone_sent') or not self.sd_zone_sent:
+            return
+        
+        current_time = datetime.now(NY_TZ)
+        signals_to_remove = []
+        
+        for signal_id, sent_time in self.sd_zone_sent.items():
+            if (current_time - sent_time).total_seconds() > self.CLEANUP_DAYS:
+                signals_to_remove.append(signal_id)
+        
+        for signal_id in signals_to_remove:
+            del self.sd_zone_sent[signal_id]
+        
+        if signals_to_remove:
+            logger.debug(f"🧹 Cleaned up {len(signals_to_remove)} old SD zone signals (7+ days)")
+    
+    def _cleanup_old_sd_hp_signals(self):
+        """Remove old SD HP zone signals from tracking (7-day cleanup)"""
+        if not hasattr(self, 'sd_hp_sent') or not self.sd_hp_sent:
+            return
+        
+        current_time = datetime.now(NY_TZ)
+        signals_to_remove = []
+        
+        for signal_id, sent_time in self.sd_hp_sent.items():
+            if (current_time - sent_time).total_seconds() > self.CLEANUP_DAYS:
+                signals_to_remove.append(signal_id)
+        
+        for signal_id in signals_to_remove:
+            del self.sd_hp_sent[signal_id]
+        
+        if signals_to_remove:
+            logger.debug(f"🧹 Cleaned up {len(signals_to_remove)} old SD HP zone signals (7+ days)")
+    
+    def _cleanup_old_fvg_ideas_signals(self):
+        """Remove old FVG ideas signals from tracking (7-day cleanup)"""
+        if not hasattr(self, 'fvg_ideas_sent') or not self.fvg_ideas_sent:
+            return
+        
+        current_time = datetime.now(NY_TZ)
+        signals_to_remove = []
+        
+        for signal_id, sent_time in self.fvg_ideas_sent.items():
+            if (current_time - sent_time).total_seconds() > self.CLEANUP_DAYS:
+                signals_to_remove.append(signal_id)
+        
+        for signal_id in signals_to_remove:
+            del self.fvg_ideas_sent[signal_id]
+        
+        if signals_to_remove:
+            logger.debug(f"🧹 Cleaned up {len(signals_to_remove)} old FVG idea signals (7+ days)")
+
     def cleanup_old_signals(self):
         """Cleanup old signals from all tracking dictionaries"""
         self._cleanup_old_fvg_smt_signals()
