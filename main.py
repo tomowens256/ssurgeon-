@@ -4985,10 +4985,11 @@ class UltimateTradingSystem:
         """Send formatted FVG-SMT confluence trade idea"""
         idea_key = trade_idea['idea_key']
         
-        # Check cooldown
+        # Check cooldown (24 hours)
         if idea_key in self.fvg_ideas_sent:
             last_sent = self.fvg_ideas_sent[idea_key]
-            if (datetime.now(NY_TZ) - last_sent).total_seconds() < 3600:
+            if (datetime.now(NY_TZ) - last_sent).total_seconds() < self.COOLDOWN_HOURS:
+                logger.debug(f"⏳ FVG idea 24H COOLDOWN ACTIVE: {idea_key}")
                 return False
         
         # Format and send message
