@@ -3929,7 +3929,7 @@ class UltimateTradingSystem:
         for zone in active_zones:
             wick_note = f"(wick-adjusted)" if zone.get('wick_adjusted', False) else ""
             logger.info(f"📦   {zone['zone_name']} {wick_note}: {zone['type']} at {zone['zone_low']:.4f}-{zone['zone_high']:.4f}")
-            logger.info(f"     Formed: {zone['formation_time']} ({zone['formation_time'].tz})")
+            logger.info(f"     Formed: {zone['formation_time']}")
         
         return zones_added
 
