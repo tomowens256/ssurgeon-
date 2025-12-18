@@ -3990,24 +3990,16 @@ class UltimateTradingSystem:
             logger.debug(f"🧹 Cleaned up {len(signals_to_remove)} old FVG idea signals (7+ days)")
 
     def cleanup_old_signals(self):
-        """Cleanup old signals from all tracking dictionaries"""
+        """Cleanup old signals from all tracking dictionaries (7-day cleanup)"""
+        # Call all individual cleanup methods
         self._cleanup_old_fvg_smt_signals()
         self._cleanup_old_crt_smt_signals()
         self._cleanup_old_double_smt_signals()
+        self._cleanup_old_sd_zone_signals()      # NEW
+        self._cleanup_old_sd_hp_signals()        # NEW
+        self._cleanup_old_fvg_ideas_signals()    # NEW
         
-        # Also cleanup old FVG ideas if needed
-        if hasattr(self, 'fvg_ideas_sent'):
-            current_time = datetime.now(NY_TZ)
-            keys_to_remove = []
-            for key, sent_time in self.fvg_ideas_sent.items():
-                if (current_time - sent_time).total_seconds() > 86400:  # 24 hours
-                    keys_to_remove.append(key)
-            
-            for key in keys_to_remove:
-                del self.fvg_ideas_sent[key]
-            
-            if keys_to_remove:
-                logger.debug(f"🧹 Cleaned up {len(keys_to_remove)} old FVG ideas")
+        logger.debug("✅ All old signal cleanups completed (7-day threshold)")
     
     def _check_new_candles(self):
         """Check if we have new candles that warrant immediate scanning"""
