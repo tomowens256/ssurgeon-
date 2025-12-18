@@ -4018,13 +4018,22 @@ class UltimateTradingSystem:
             logger.warning(f"⚠️ Parallel data fetch timeout for {self.pair_group}")
     
     async def _fetch_single_instrument_data(self, instrument, timeframe, count, api_key):
-        """Fetch data for single instrument (used in parallel)"""
+        """Fetch data for single instrument and convert to NY_TZ"""
         try:
+            from pytz import timezone
+            NY_TZ = timezone('America/New_York')
+            
             df = await asyncio.get_event_loop().run_in_executor(
                 None, fetch_candles, instrument, timeframe, count, api_key
             )
             
             if df is not None and isinstance(df, pd.DataFrame) and not df.empty:
+                # Convert timestamps to NY_TZ
+                if df['time'].dt.tz is None:
+                    # Assume UTC and convert to NY_TZ
+                    df['time'] = df['time'].dt.tz_localize('UTC').dt.tz_convert(NY_TZ)
+                    logger.debug(f"📅 Converted {instrument} {timeframe} to NY_TZ")
+                
                 self.market_data[instrument][timeframe] = df
                 return True
             return False
