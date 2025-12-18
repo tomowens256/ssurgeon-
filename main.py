@@ -4809,7 +4809,7 @@ class UltimateTradingSystem:
             return False
 
     def _send_sd_smt_tap_signal(self, zone, smt_data, has_psp, is_hp_zone):
-        """Send Supply/Demand + SMT tap signal"""
+        """Send Supply/Demand + SMT tap signal with 24-hour cooldown"""
         zone_type = zone['type']
         zone_direction = 'bearish' if zone_type == 'supply' else 'bullish'
         zone_tf = zone['timeframe']
@@ -4818,11 +4818,21 @@ class UltimateTradingSystem:
         # Create unique signal ID
         signal_id = f"SD_SMT_TAP_{self.pair_group}_{zone['asset']}_{zone_tf}_{smt_data.get('signal_key', '')}"
         
-        # Check cooldown (1 hour)
+        # CRITICAL FIX: Check both dictionaries for 24-hour cooldown
+        current_time = datetime.now(NY_TZ)
+        
+        # Check sd_zone_sent
         if signal_id in self.sd_zone_sent:
             last_sent = self.sd_zone_sent[signal_id]
-            if (datetime.now(NY_TZ) - last_sent).total_seconds() < 3600:
-                logger.info(f"⏳ SD+SMT recently sent: {signal_id}")
+            if (current_time - last_sent).total_seconds() < self.COOLDOWN_HOURS:
+                logger.info(f"⏳ SD+SMT 24H COOLDOWN ACTIVE: {signal_id}")
+                return False
+        
+        # Check sd_hp_sent (if it's an HP zone)
+        if is_hp_zone and signal_id in self.sd_hp_sent:
+            last_sent = self.sd_hp_sent[signal_id]
+            if (current_time - last_sent).total_seconds() < self.COOLDOWN_HOURS:
+                logger.info(f"⏳ SD HP ZONE 24H COOLDOWN ACTIVE: {signal_id}")
                 return False
         
         idea = {
@@ -4849,7 +4859,10 @@ class UltimateTradingSystem:
         message = self._format_sd_smt_tap_message(idea)
         
         if self._send_telegram_message(message):
+            # Store in BOTH dictionaries based on type
             self.sd_zone_sent[signal_id] = datetime.now(NY_TZ)
+            if is_hp_zone:
+                self.sd_hp_sent[signal_id] = datetime.now(NY_TZ)
             logger.info(f"🚀 SD+SMT SIGNAL SENT: {zone['asset']} {zone_tf} {zone_type} + {smt_cycle} SMT")
             return True
         return False
