@@ -5862,13 +5862,13 @@ class UltimateTradingSystem:
         # Create a unique identifier for this signal
         signal_id = f"FVG_SMT_TAP_{self.pair_group}_{fvg_idea['asset']}_{fvg_tf}_{smt_data.get('signal_key', '')}"
         
-        # Check cooldown (1 hour cooldown)
+        # Check cooldown (24 hours cooldown)
         if hasattr(self, 'fvg_smt_tap_sent') and signal_id in self.fvg_smt_tap_sent:
             last_sent = self.fvg_smt_tap_sent[signal_id]
-            if (datetime.now(NY_TZ) - last_sent).total_seconds() < 3600:  # 1 hour
-                logger.info(f"⏳ FVG+SMT tap recently sent: {signal_id}")
+            if (datetime.now(NY_TZ) - last_sent).total_seconds() < self.COOLDOWN_HOURS:  # 24 hours
+                logger.info(f"⏳ FVG+SMT 24H COOLDOWN ACTIVE: {signal_id}")
                 return False
-        
+                
         idea = {
             'type': 'FVG_SMT_TAP',
             'pair_group': self.pair_group,
