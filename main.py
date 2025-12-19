@@ -4640,7 +4640,7 @@ class UltimateTradingSystem:
         
         # Map timeframe to relevant SMT cycles
         timeframe_cycle_map = {
-            'H4': ['monthly', 'weekly'],
+            'H4': ['monthly', 'weekly','daily'],
             'H1': ['weekly', 'daily'],  
             'M15': ['daily', '90min']
         }
@@ -4756,8 +4756,8 @@ class UltimateTradingSystem:
         sd_to_smt_cycles = {
             'H4': ['weekly', 'daily'],      # H4 Zone → Weekly (H1) or Daily (M15) SMT
             'H1': ['weekly', 'daily'],      # H1 Zone → Weekly (H1) or Daily (M15) SMT  
-            'M15': ['daily'],               # M15 Zone → Daily (M15) SMT
-            'M5': ['90min']                 # M5 Zone → 90min (M5) SMT
+            'M15': ['daily','90min'],               # M15 Zone → Daily (M15) SMT
+            'M5': ['daily','90min']                 # M5 Zone → 90min (M5) SMT
         }
         
         # Get all active SD zones from FeatureBox
