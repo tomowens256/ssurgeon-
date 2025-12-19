@@ -82,7 +82,7 @@ TRADING_PAIRS = {
     }
 }
 
-CRT_TIMEFRAMES = [ 'H1','H2','H4', 'H6', 'H12']
+CRT_TIMEFRAMES = [ 'H1','H2','H4']
 CRT_SMT_MAPPING = {
     'H4': ['weekly', 'daily'],    # 4hr CRT can use weekly OR daily SMT
     'H1': ['daily', '90min'],
