@@ -3503,7 +3503,7 @@ class SupplyDemandDetector:
                 
                 # Determine zone boundaries based on wick percentage
                 if wick_pct > 40:  # Large upper wick (>40%) - use upper half
-                    mid_point = (formation_high + formation_low) / 2
+                    mid_point = (formation_high + formation_low) / 1.4
                     zone_low = max(formation_open, mid_point)
                     # Get highest of next 2 candles for invalidation
                     if len(next_highs) >= 2:
