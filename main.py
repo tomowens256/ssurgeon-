@@ -3191,13 +3191,183 @@ class SmartTimingSystem:
 
 
 class SupplyDemandDetector:
-    def __init__(self, min_zone_pct=0):  # Default to 0 to disable filterin
+    def __init__(self, min_zone_pct=0):  # Default to 0 to disable filtering
         self.min_zone_pct = min_zone_pct
         if min_zone_pct != 0:
             logger.warning(f"⚠️ min_zone_pct={min_zone_pct} is set but zone size filtering is disabled")
         logger.info(f"✅ SupplyDemandDetector initialized with min_zone_pct: {min_zone_pct}")
+    
+    def detect_swing_highs_lows(self, data, lookback=10):
+        """
+        Detect swing highs and lows using SMC concept of legs
+        """
+        if len(data) < lookback * 2:
+            return [], []
+        
+        highs = data['high'].values
+        lows = data['low'].values
+        
+        swing_highs = []
+        swing_lows = []
+        
+        # Scan for swing highs and lows
+        for i in range(lookback, len(data) - lookback):
+            # Check for swing high (high > all highs in lookback window)
+            current_high = highs[i]
+            if (current_high == max(highs[i-lookback:i+lookback+1]) and 
+                current_high != highs[i-1] and current_high != highs[i+1]):
+                swing_highs.append({
+                    'index': i,
+                    'price': current_high,
+                    'time': data.iloc[i]['time'],
+                    'candle': {
+                        'high': highs[i],
+                        'low': lows[i],
+                        'close': data.iloc[i]['close'],
+                        'open': data.iloc[i]['open']
+                    }
+                })
+            
+            # Check for swing low (low < all lows in lookback window)
+            current_low = lows[i]
+            if (current_low == min(lows[i-lookback:i+lookback+1]) and 
+                current_low != lows[i-1] and current_low != lows[i+1]):
+                swing_lows.append({
+                    'index': i,
+                    'price': current_low,
+                    'time': data.iloc[i]['time'],
+                    'candle': {
+                        'high': highs[i],
+                        'low': lows[i],
+                        'close': data.iloc[i]['close'],
+                        'open': data.iloc[i]['open']
+                    }
+                })
+        
+        # Sort by index
+        swing_highs.sort(key=lambda x: x['index'])
+        swing_lows.sort(key=lambda x: x['index'])
+        
+        return swing_highs, swing_lows
+    
+    def detect_structure_breaks(self, data, swing_highs, swing_lows):
+        """
+        Detect Break of Structure (BOS) and Change of Character (CHoCH)
+        Returns list of breaks with their type and relevant info
+        """
+        breaks = []
+        
+        # Combine and sort all swings by time
+        all_swings = []
+        for sh in swing_highs:
+            sh['type'] = 'high'
+            all_swings.append(sh)
+        for sl in swing_lows:
+            sl['type'] = 'low'
+            all_swings.append(sl)
+        
+        all_swings.sort(key=lambda x: x['index'])
+        
+        if len(all_swings) < 2:
+            return breaks
+        
+        # Track current trend (1 for bullish, -1 for bearish, 0 for neutral)
+        current_trend = 0
+        trend_history = []
+        
+        for i in range(1, len(all_swings)):
+            prev_swing = all_swings[i-1]
+            curr_swing = all_swings[i]
+            
+            # Check if there's a break of structure
+            if prev_swing['type'] == 'high' and curr_swing['type'] == 'low':
+                # Price broke below previous swing low (bearish BOS or bullish CHoCH)
+                # Look for close below the swing low between these swings
+                start_idx = prev_swing['index'] + 1
+                end_idx = curr_swing['index']
+                
+                for j in range(start_idx, end_idx):
+                    if data.iloc[j]['close'] < prev_swing['price']:
+                        # Determine if BOS or CHoCH based on previous trend
+                        break_type = 'BOS' if current_trend == -1 else 'CHoCH'
+                        current_trend = -1  # Bearish trend
+                        
+                        breaks.append({
+                            'break_type': break_type,
+                            'swing_broken': prev_swing,
+                            'breaking_point': {
+                                'index': j,
+                                'price': data.iloc[j]['close'],
+                                'time': data.iloc[j]['time']
+                            },
+                            'leg_start': prev_swing['index'],
+                            'leg_end': j,
+                            'trend': 'bearish',
+                            'broken_swing_type': 'high'
+                        })
+                        break
+            
+            elif prev_swing['type'] == 'low' and curr_swing['type'] == 'high':
+                # Price broke above previous swing high (bullish BOS or bearish CHoCH)
+                start_idx = prev_swing['index'] + 1
+                end_idx = curr_swing['index']
+                
+                for j in range(start_idx, end_idx):
+                    if data.iloc[j]['close'] > prev_swing['price']:
+                        break_type = 'BOS' if current_trend == 1 else 'CHoCH'
+                        current_trend = 1  # Bullish trend
+                        
+                        breaks.append({
+                            'break_type': break_type,
+                            'swing_broken': prev_swing,
+                            'breaking_point': {
+                                'index': j,
+                                'price': data.iloc[j]['close'],
+                                'time': data.iloc[j]['time']
+                            },
+                            'leg_start': prev_swing['index'],
+                            'leg_end': j,
+                            'trend': 'bullish',
+                            'broken_swing_type': 'low'
+                        })
+                        break
+            
+            trend_history.append(current_trend)
+        
+        return breaks
+    
+    def find_extreme_candle_in_leg(self, data, leg_start, leg_end, trend):
+        """
+        Find the extreme candle in the broken leg (SMC Order Block)
+        For bearish leg: highest high
+        For bullish leg: lowest low
+        """
+        if leg_end <= leg_start:
+            return None
+        
+        leg_data = data.iloc[leg_start:leg_end]
+        
+        if trend == 'bearish':
+            # Find candle with highest high in bearish leg
+            extreme_idx = leg_data['high'].idxmax()
+        else:  # bullish
+            # Find candle with lowest low in bullish leg
+            extreme_idx = leg_data['low'].idxmin()
+        
+        extreme_candle = data.iloc[extreme_idx]
+        
+        return {
+            'index': extreme_idx,
+            'time': extreme_candle['time'],
+            'high': extreme_candle['high'],
+            'low': extreme_candle['low'],
+            'close': extreme_candle['close'],
+            'open': extreme_candle['open'],
+            'is_bullish': extreme_candle['close'] > extreme_candle['open']
+        }
+    
     def check_zone_still_valid(self, zone, current_data, other_asset_data=None):
-        """Check if a zone is still valid - FIXED TIMEZONE"""
+        """Check if a zone is still valid using SMC mitigation rules"""
         try:
             if current_data is None or current_data.empty:
                 logger.debug(f"📭 No current data for zone validation: {zone.get('zone_name', 'Unknown')}")
@@ -3261,28 +3431,30 @@ class SupplyDemandDetector:
                 logger.debug(f"📭 No candles after formation for: {zone.get('zone_name', 'Unknown')}")
                 return True
             
-            # Check for breaches
+            # SMC MITIGATION RULES: Price CLOSING beyond the zone invalidates it
             if zone_type == 'supply':
-                # Supply zone: invalid if price TRADES ABOVE (high > zone_high)
-                breach_mask = subsequent_candles['high'] > zone_high
+                # Supply zone: invalidated if price CLOSES above zone_high (not just wicks)
+                breach_mask = subsequent_candles['close'] > zone_high
                 if breach_mask.any():
                     breach_idx = breach_mask.idxmax()
                     breach_candle = subsequent_candles.loc[breach_idx]
-                    logger.info(f"❌ SUPPLY ZONE INVALIDATED: {zone.get('zone_name', 'Unknown')}")
-                    logger.info(f"   High {breach_candle['high']:.4f} > Zone high {zone_high:.4f}")
+                    logger.info(f"❌ SUPPLY ZONE MITIGATED (SMC): {zone.get('zone_name', 'Unknown')}")
+                    logger.info(f"   Close {breach_candle['close']:.4f} > Zone high {zone_high:.4f}")
+                    logger.info(f"   (SMC: Close beyond zone, not just wick)")
                     return False
             else:  # demand
-                # Demand zone: invalid if price TRADES BELOW (low < zone_low)
-                breach_mask = subsequent_candles['low'] < zone_low
+                # Demand zone: invalidated if price CLOSES below zone_low (not just wicks)
+                breach_mask = subsequent_candles['close'] < zone_low
                 if breach_mask.any():
                     breach_idx = breach_mask.idxmax()
                     breach_candle = subsequent_candles.loc[breach_idx]
-                    logger.info(f"❌ DEMAND ZONE INVALIDATED: {zone.get('zone_name', 'Unknown')}")
-                    logger.info(f"   Low {breach_candle['low']:.4f} < Zone low {zone_low:.4f}")
+                    logger.info(f"❌ DEMAND ZONE MITIGATED (SMC): {zone.get('zone_name', 'Unknown')}")
+                    logger.info(f"   Close {breach_candle['close']:.4f} < Zone low {zone_low:.4f}")
+                    logger.info(f"   (SMC: Close beyond zone, not just wick)")
                     return False
             
             # Zone is valid
-            logger.info(f"✅ ZONE VALID: {zone.get('zone_name', 'Unknown')}")
+            logger.info(f"✅ ZONE VALID (SMC): {zone.get('zone_name', 'Unknown')}")
             return True
             
         except Exception as e:
@@ -3309,109 +3481,48 @@ class SupplyDemandDetector:
         return wick_percentage
     
     def is_supply_zone(self, formation_candle, next_candles):
-        """Check if a bullish candle forms a valid supply zone"""
-        # Check if formation candle is bullish
-        if formation_candle['close'] <= formation_candle['open']:
-            return False
-        
-        # Check if price moves down after formation
-        # The next candle should have lower close than formation candle's close
-        if len(next_candles) < 1:
-            return False
-        
-        # Check downward movement (at least 2 of next 3 candles should close lower)
-        down_candles = 0
-        for i in range(min(3, len(next_candles))):
-            if next_candles.iloc[i]['close'] < formation_candle['close']:
-                down_candles += 1
-        
-        if down_candles < 2:
-            return False
-        
-        return True
+        """Check if a bullish candle forms a valid supply zone - DEPRECATED for SMC"""
+        # Keeping for compatibility but not used in SMC approach
+        return False
     
     def is_demand_zone(self, formation_candle, next_candles):
-        """Check if a bearish candle forms a valid demand zone"""
-        # Check if formation candle is bearish
-        if formation_candle['close'] >= formation_candle['open']:
-            return False
-        
-        # Check if price moves up after formation
-        # The next candle should have higher close than formation candle's close
-        if len(next_candles) < 1:
-            return False
-        
-        # Check upward movement (at least 2 of next 3 candles should close higher)
-        up_candles = 0
-        for i in range(min(3, len(next_candles))):
-            if next_candles.iloc[i]['close'] > formation_candle['close']:
-                up_candles += 1
-        
-        if up_candles < 2:
-            return False
-        
-        return True
+        """Check if a bearish candle forms a valid demand zone - DEPRECATED for SMC"""
+        # Keeping for compatibility but not used in SMC approach
+        return False
     
     def check_zone_invalidation(self, zone, subsequent_candles, zone_type, asset, other_asset_data=None):
-        """Check if zone is invalidated - NEW LOGIC: 
-           Next 2 candles can wick above/below but can't close there
-           After 2 candles, ANY breach invalidates"""
+        """Check if zone is invalidated using SMC rules - NOW USES MITIGATION"""
         zone_low = zone['zone_low']
         zone_high = zone['zone_high']
         
-        # OPTIMIZATION: Use vectorized operations
-        if len(subsequent_candles) >= 2:
-            first_two = subsequent_candles.head(2)
-            
-            if zone_type == 'supply':
-                # For supply zone: invalidated if CLOSE above zone high in first 2 candles
-                if (first_two['close'] > zone_high).any():
-                    logger.debug(f"❌ Supply zone invalidated (first 2): Close > zone_high {zone_high}")
-                    return True
-            else:  # demand zone
-                # For demand zone: invalidated if CLOSE below zone low in first 2 candles
-                if (first_two['close'] < zone_low).any():
-                    logger.debug(f"❌ Demand zone invalidated (first 2): Close < zone_low {zone_low}")
-                    return True
+        # SMC RULE: ANY candle CLOSING beyond the zone invalidates it immediately
+        # No special rules for first 2 candles
         
-        # Check remaining candles (after first 2)
-        if len(subsequent_candles) > 2:
-            remaining = subsequent_candles.iloc[2:]
-            
-            if zone_type == 'supply':
-                # After 2 candles: ANY breach above invalidates
-                if (remaining['high'] > zone_high).any():  # ANY breach, not just close
-                    logger.debug(f"❌ Supply zone invalidated (after 2): High > zone_high {zone_high}")
-                    return True
-            else:  # demand zone
-                # After 2 candles: ANY breach below invalidates
-                if (remaining['low'] < zone_low).any():  # ANY breach, not just close
-                    logger.debug(f"❌ Demand zone invalidated (after 2): Low < zone_low {zone_low}")
-                    return True
+        if zone_type == 'supply':
+            # Supply zone invalidated if ANY candle CLOSES above zone_high
+            if (subsequent_candles['close'] > zone_high).any():
+                logger.debug(f"❌ Supply zone invalidated (SMC): Close > zone_high {zone_high}")
+                return True
+        else:  # demand zone
+            # Demand zone invalidated if ANY candle CLOSES below zone_low
+            if (subsequent_candles['close'] < zone_low).any():
+                logger.debug(f"❌ Demand zone invalidated (SMC): Close < zone_low {zone_low}")
+                return True
         
         return False
     
     def calculate_invalidation_point(self, formation_candle, next_candles, zone_type):
-        """Calculate the invalidation point based on next 2 candles"""
-        if len(next_candles) < 2:
-            if zone_type == 'supply':
-                return formation_candle['high']
-            else:
-                return formation_candle['low']
-        
-        # Get the highest high of next 2 candles for supply zone
-        # Get the lowest low of next 2 candles for demand zone
-        next_two = next_candles.head(2)
-        
+        """Calculate the invalidation point - SIMPLIFIED for SMC"""
+        # SMC uses the zone boundaries themselves as invalidation points
         if zone_type == 'supply':
-            return max(next_two['high'].max(), formation_candle['high'])
-        else:  # demand
-            return min(next_two['low'].min(), formation_candle['low'])
+            return formation_candle['high']
+        else:
+            return formation_candle['low']
     
     def scan_timeframe(self, data, timeframe, asset):
-        """Scan for supply and demand zones with enhanced criteria - FIXED TIMEZONE"""
-        if data is None or len(data) < 10:
-            logger.warning(f"⚠️ Not enough data for SD zone scan: {asset} {timeframe}")
+        """Scan for supply and demand zones using SMC Order Block detection"""
+        if data is None or len(data) < 50:  # Need enough data for swing detection
+            logger.warning(f"⚠️ Not enough data for SMC zone scan: {asset} {timeframe}")
             return []
         
         # Import NY_TZ
@@ -3421,25 +3532,18 @@ class SupplyDemandDetector:
         # Use only closed candles
         if 'complete' in data.columns:
             closed_data = data[data['complete'] == True].copy()
-            logger.info(f"📊 {asset} {timeframe}: Using {len(closed_data)} closed candles for SD zones")
+            logger.info(f"📊 {asset} {timeframe}: Using {len(closed_data)} closed candles for SMC zones")
         else:
             closed_data = data.copy()
             logger.info(f"📊 {asset} {timeframe}: Using {len(closed_data)} candles (no 'complete' column)")
         
-        if len(closed_data) < 10:
-            logger.warning(f"⚠️ Not enough closed candles for {asset} {timeframe}: {len(closed_data)}")
+        if len(closed_data) < 50:
+            logger.warning(f"⚠️ Not enough closed candles for SMC {asset} {timeframe}: {len(closed_data)}")
             return []
         
         zones = []
         
-        # OPTIMIZATION: Pre-calculate wick percentages for ALL candles once
-        closed_data['wick_pct'] = closed_data.apply(self.calculate_wick_percentage, axis=1)
-        
-        # OPTIMIZATION: Pre-calculate candle types
-        closed_data['is_bullish'] = closed_data['close'] > closed_data['open']
-        
         # 🔥 FIX: Ensure all timestamps are in NY_TZ
-        # Convert 'time' column to NY_TZ
         if closed_data['time'].dt.tz is None:
             # Assume UTC and convert to NY_TZ
             closed_data['time'] = closed_data['time'].dt.tz_localize('UTC').dt.tz_convert(NY_TZ)
@@ -3447,236 +3551,219 @@ class SupplyDemandDetector:
             # Convert from current timezone to NY_TZ
             closed_data['time'] = closed_data['time'].dt.tz_convert(NY_TZ)
         
-        # OPTIMIZATION: Convert to numpy arrays for faster access (except time)
-        highs = closed_data['high'].values
-        lows = closed_data['low'].values
-        closes = closed_data['close'].values
-        opens = closed_data['open'].values
-        times = closed_data['time']  # Keep as pandas Series to preserve timezone
-        wick_pcts = closed_data['wick_pct'].values
-        is_bullish_arr = closed_data['is_bullish'].values
+        # ==================== SMC ORDER BLOCK DETECTION ====================
         
-        # Scan the dataset
-        for i in range(3, len(closed_data) - 10):
-            formation_idx = i
-            formation_time = times.iloc[formation_idx]  # This preserves timezone
+        # 1. Detect swing highs and lows
+        logger.info(f"🔄 SMC: Detecting swing highs/lows for {asset} {timeframe}")
+        swing_highs, swing_lows = self.detect_swing_highs_lows(closed_data, lookback=8)
+        logger.info(f"📈 SMC: Found {len(swing_highs)} swing highs, {len(swing_lows)} swing lows")
+        
+        # 2. Detect structure breaks (BOS/CHoCH)
+        breaks = self.detect_structure_breaks(closed_data, swing_highs, swing_lows)
+        logger.info(f"⚡ SMC: Found {len(breaks)} structure breaks")
+        
+        # 3. Create zones from structure breaks (Order Blocks)
+        for brk in breaks:
+            # Find the extreme candle in the broken leg (Order Block)
+            extreme_candle = self.find_extreme_candle_in_leg(
+                closed_data, 
+                brk['leg_start'], 
+                brk['leg_end'],
+                brk['trend']
+            )
             
-            # ---------- GET ALL NEEDED DATA AT ONCE ----------
-            formation_high = highs[formation_idx]
-            formation_low = lows[formation_idx]
-            formation_close = closes[formation_idx]
-            formation_open = opens[formation_idx]
-            wick_pct = wick_pcts[formation_idx]
-            is_bullish = is_bullish_arr[formation_idx]
-            
-            # SKIP CANDLES WITH TOO SMALL WICKS (<10%)
-            if wick_pct < 10:
-                logger.debug(f"⏭️ Skipping candle with small wick ({wick_pct:.1f}%) at {formation_time}")
+            if extreme_candle is None:
                 continue
             
-            # Get next 10 candles for validation
-            next_start = formation_idx + 1
-            next_end = formation_idx + 11
-            next_highs = highs[next_start:next_end]
-            next_lows = lows[next_start:next_end]
-            next_closes = closes[next_start:next_end]
-            next_opens = opens[next_start:next_end]
+            # Determine zone type based on trend
+            zone_type = 'supply' if brk['trend'] == 'bearish' else 'demand'
             
-            if len(next_highs) < 10:
-                continue  # Not enough next candles
-                
-            # ---------- SUPPLY ZONE DETECTION ----------
-            if is_bullish:  # Bullish formation candle
-                # NEXT CANDLE MUST BE BEARISH (close < open)
-                next_candle_idx = 0
-                if next_closes[next_candle_idx] >= next_opens[next_candle_idx]:
-                    continue  # Next candle not bearish
-                
-                # Check if price moves down after (at least 3 of next 5 candles close lower)
-                down_candles = 0
-                for j in range(min(5, len(next_closes))):
-                    if next_closes[j] < formation_close:
-                        down_candles += 1
-                
-                if down_candles < 3:
-                    continue  # Not enough downward movement
-                
-                # Determine zone boundaries based on wick percentage
-                if wick_pct > 40:  # Large upper wick (>40%) - use upper half
-                    mid_point = (formation_high + formation_low) / 1.4
-                    zone_low = max(formation_open, mid_point)
-                    # Get highest of next 2 candles for invalidation
-                    if len(next_highs) >= 2:
-                        next_two_highs = next_highs[:2]
-                        zone_high = max(next_two_highs.max(), formation_high)
-                    else:
-                        zone_high = formation_high
-                    wick_adjusted = True
-                    logger.debug(f"📏 Supply zone wick-adjusted: {wick_pct:.1f}% wick, using upper half")
-                else:
-                    zone_low = formation_low
-                    zone_high = formation_high
-                    wick_adjusted = False
-                
-                # Check for DULL ZONE: next 4 candles trading within zone
+            # Use the extreme candle as the formation candle
+            zone_low = extreme_candle['low']
+            zone_high = extreme_candle['high']
+            formation_time = extreme_candle['time']
+            
+            # Calculate wick percentage for the extreme candle
+            wick_pct = self.calculate_wick_percentage(extreme_candle)
+            
+            # Check if zone is immediately invalidated (mitigated)
+            # Get subsequent candles
+            subsequent_mask = closed_data['time'] > formation_time
+            subsequent_candles = closed_data[subsequent_mask]
+            
+            # Skip if already mitigated
+            if self.check_zone_invalidation(
+                {'zone_low': zone_low, 'zone_high': zone_high, 'type': zone_type},
+                subsequent_candles,
+                zone_type,
+                asset
+            ):
+                logger.debug(f"⏭️ Skipping immediately mitigated {zone_type} zone at {formation_time}")
+                continue
+            
+            # Check for DULL ZONE: next 4 candles trading within zone
+            if len(subsequent_candles) >= 4:
+                next_four = subsequent_candles.head(4)
                 dull_zone = True
-                for j in range(min(4, len(next_highs))):
-                    if next_highs[j] > zone_high or next_lows[j] < zone_low:
-                        dull_zone = False  # Price broke out of zone
+                for idx, candle in next_four.iterrows():
+                    if candle['high'] > zone_high or candle['low'] < zone_low:
+                        dull_zone = False
                         break
                 
                 if dull_zone:
-                    logger.debug(f"❌ DULL SUPPLY ZONE skipped: {asset} {timeframe} - next 4 candles within zone")
+                    logger.debug(f"❌ DULL {zone_type.upper()} ZONE skipped: {asset} {timeframe}")
                     continue
-                
-                # Check if zone is not immediately invalidated (OPTIMIZED)
-                valid_zone = True
-                
-                # Check next 2 candles for tolerance
-                if len(next_closes) >= 2:
-                    for j in range(2):
-                        # Can wick above but can't CLOSE above zone_high
-                        if next_closes[j] > zone_high:
-                            valid_zone = False
-                            logger.debug(f"❌ Supply zone immediately invalidated: Close {next_closes[j]:.4f} > {zone_high:.4f}")
-                            break
-                
-                # Check all subsequent candles
-                if valid_zone and len(next_highs) > 2:
-                    for j in range(2, len(next_highs)):
-                        # After 2 candles: ANY breach invalidates
-                        if next_highs[j] > zone_high:
-                            valid_zone = False
-                            logger.debug(f"❌ Supply zone invalidated after 2: High {next_highs[j]:.4f} > {zone_high:.4f}")
-                            break
-                
-                if valid_zone:
-                    zone = {
-                        'type': 'supply',
-                        'zone_low': zone_low,
-                        'zone_high': zone_high,
-                        'formation_candle': {
-                            'high': formation_high,
-                            'low': formation_low,
-                            'close': formation_close,
-                            'open': formation_open,
-                            'time': formation_time
-                        },
-                        'formation_time': formation_time,
-                        'timeframe': timeframe,
-                        'asset': asset,
-                        'wick_percentage': wick_pct,
-                        'zone_name': f"{asset}_{timeframe}_SUPPLY_{formation_time.strftime('%Y%m%d%H%M')}",
-                        'direction': 'bearish',
-                        'wick_adjusted': wick_adjusted,
-                        'wick_category': 'large' if wick_pct > 40 else 'normal'
-                    }
-                    zones.append(zone)
-                    logger.debug(f"✅ Found SUPPLY zone: {zone['zone_name']} at {zone_low:.4f}-{zone_high:.4f}")
             
-            # ---------- DEMAND ZONE DETECTION ----------
-            else:  # Bearish formation candle
-                # NEXT CANDLE MUST BE BULLISH (close > open)
-                next_candle_idx = 0
-                if next_closes[next_candle_idx] <= next_opens[next_candle_idx]:
-                    continue  # Next candle not bullish
-                
-                # Check if price moves up after (at least 3 of next 5 candles close higher)
-                up_candles = 0
-                for j in range(min(5, len(next_closes))):
-                    if next_closes[j] > formation_close:
-                        up_candles += 1
-                
-                if up_candles < 3:
-                    continue  # Not enough upward movement
-                
-                # Determine zone boundaries based on wick percentage
-                if wick_pct > 40:  # Large lower wick (>40%) - use lower half
-                    mid_point = (formation_high + formation_low) / 2
-                    zone_high = min(formation_open, mid_point)
-                    # Get lowest of next 2 candles for invalidation
-                    if len(next_lows) >= 2:
-                        next_two_lows = next_lows[:2]
-                        zone_low = min(next_two_lows.min(), formation_low)
-                    else:
-                        zone_low = formation_low
-                    wick_adjusted = True
-                    logger.debug(f"📏 Demand zone wick-adjusted: {wick_pct:.1f}% wick, using lower half")
-                else:
-                    zone_low = formation_low
-                    zone_high = formation_high
-                    wick_adjusted = False
-                
-                # Check for DULL ZONE: next 4 candles trading within zone
-                dull_zone = True
-                for j in range(min(4, len(next_highs))):
-                    if next_highs[j] > zone_high or next_lows[j] < zone_low:
-                        dull_zone = False  # Price broke out of zone
-                        break
-                
-                if dull_zone:
-                    logger.debug(f"❌ DULL DEMAND ZONE skipped: {asset} {timeframe} - next 4 candles within zone")
-                    continue
-                
-                # Check if zone is not immediately invalidated
-                valid_zone = True
-                
-                # Check next 2 candles for tolerance
-                if len(next_closes) >= 2:
-                    for j in range(2):
-                        # Can wick below but can't CLOSE below zone_low
-                        if next_closes[j] < zone_low:
-                            valid_zone = False
-                            logger.debug(f"❌ Demand zone immediately invalidated: Close {next_closes[j]:.4f} < {zone_low:.4f}")
-                            break
-                
-                # Check all subsequent candles
-                if valid_zone and len(next_lows) > 2:
-                    for j in range(2, len(next_lows)):
-                        # After 2 candles: ANY breach invalidates
-                        if next_lows[j] < zone_low:
-                            valid_zone = False
-                            logger.debug(f"❌ Demand zone invalidated after 2: Low {next_lows[j]:.4f} < {zone_low:.4f}")
-                            break
-                
-                if valid_zone:
-                    zone = {
-                        'type': 'demand',
-                        'zone_low': zone_low,
-                        'zone_high': zone_high,
-                        'formation_candle': {
-                            'high': formation_high,
-                            'low': formation_low,
-                            'close': formation_close,
-                            'open': formation_open,
-                            'time': formation_time
-                        },
-                        'formation_time': formation_time,
-                        'timeframe': timeframe,
-                        'asset': asset,
-                        'wick_percentage': wick_pct,
-                        'zone_name': f"{asset}_{timeframe}_DEMAND_{formation_time.strftime('%Y%m%d%H%M')}",
-                        'direction': 'bullish',
-                        'wick_adjusted': wick_adjusted,
-                        'wick_category': 'large' if wick_pct > 40 else 'normal'
-                    }
-                    zones.append(zone)
-                    logger.debug(f"✅ Found DEMAND zone: {zone['zone_name']} at {zone_low:.4f}-{zone_high:.4f}")
+            # Create zone
+            zone = {
+                'type': zone_type,
+                'zone_low': zone_low,
+                'zone_high': zone_high,
+                'formation_candle': {
+                    'high': extreme_candle['high'],
+                    'low': extreme_candle['low'],
+                    'close': extreme_candle['close'],
+                    'open': extreme_candle['open'],
+                    'time': formation_time
+                },
+                'formation_time': formation_time,
+                'timeframe': timeframe,
+                'asset': asset,
+                'wick_percentage': wick_pct,
+                'zone_name': f"{asset}_{timeframe}_{zone_type.upper()}_SMC_{formation_time.strftime('%Y%m%d%H%M')}",
+                'direction': 'bearish' if zone_type == 'supply' else 'bullish',
+                'wick_adjusted': False,
+                'wick_category': 'large' if wick_pct > 40 else 'normal',
+                'smc_data': {
+                    'break_type': brk['break_type'],
+                    'trend': brk['trend'],
+                    'broken_swing_price': brk['swing_broken']['price'],
+                    'broken_swing_type': brk['broken_swing_type']
+                }
+            }
+            zones.append(zone)
+            logger.debug(f"✅ Found SMC {zone_type.upper()} zone: {zone['zone_name']} at {zone_low:.4f}-{zone_high:.4f}")
+            logger.debug(f"   Break type: {brk['break_type']}, Trend: {brk['trend']}")
         
-        logger.info(f"🔍 Supply/Demand Scan {asset} {timeframe}: Found {len(zones)} zones")
+        # ==================== FALLBACK: Original detection for BOS zones ====================
+        # If no SMC zones found, use original method but only for clear BOS patterns
+        if len(zones) == 0:
+            logger.info(f"🔍 No SMC zones found, using fallback detection for {asset} {timeframe}")
+            
+            # OPTIMIZATION: Pre-calculate wick percentages for ALL candles once
+            closed_data['wick_pct'] = closed_data.apply(self.calculate_wick_percentage, axis=1)
+            
+            # OPTIMIZATION: Pre-calculate candle types
+            closed_data['is_bullish'] = closed_data['close'] > closed_data['open']
+            
+            # Convert to numpy arrays for faster access (except time)
+            highs = closed_data['high'].values
+            lows = closed_data['low'].values
+            closes = closed_data['close'].values
+            opens = closed_data['open'].values
+            times = closed_data['time']  # Keep as pandas Series to preserve timezone
+            wick_pcts = closed_data['wick_pct'].values
+            is_bullish_arr = closed_data['is_bullish'].values
+            
+            # Simple BOS detection (price breaking recent high/low)
+            for i in range(20, len(closed_data) - 10):
+                current_high = highs[i]
+                current_low = lows[i]
+                
+                # Check for bullish BOS (break above recent high)
+                if i > 10:
+                    recent_highs = highs[i-10:i]
+                    if current_high > max(recent_highs) and closes[i] > opens[i]:
+                        # This could be a demand zone formation
+                        formation_time = times.iloc[i]
+                        
+                        # Check next candles for confirmation
+                        if i + 5 < len(closed_data):
+                            next_highs = highs[i+1:i+6]
+                            next_lows = lows[i+1:i+6]
+                            next_closes = closes[i+1:i+6]
+                            
+                            # Price should stay above the formation low
+                            if min(next_lows) > current_low:
+                                zone = {
+                                    'type': 'demand',
+                                    'zone_low': current_low,
+                                    'zone_high': current_high,
+                                    'formation_candle': {
+                                        'high': current_high,
+                                        'low': current_low,
+                                        'close': closes[i],
+                                        'open': opens[i],
+                                        'time': formation_time
+                                    },
+                                    'formation_time': formation_time,
+                                    'timeframe': timeframe,
+                                    'asset': asset,
+                                    'wick_percentage': wick_pcts[i],
+                                    'zone_name': f"{asset}_{timeframe}_DEMAND_FB_{formation_time.strftime('%Y%m%d%H%M')}",
+                                    'direction': 'bullish',
+                                    'wick_adjusted': False,
+                                    'wick_category': 'normal',
+                                    'smc_data': {'break_type': 'BOS_FALLBACK', 'trend': 'bullish'}
+                                }
+                                zones.append(zone)
+                
+                # Check for bearish BOS (break below recent low)
+                if i > 10:
+                    recent_lows = lows[i-10:i]
+                    if current_low < min(recent_lows) and closes[i] < opens[i]:
+                        # This could be a supply zone formation
+                        formation_time = times.iloc[i]
+                        
+                        # Check next candles for confirmation
+                        if i + 5 < len(closed_data):
+                            next_highs = highs[i+1:i+6]
+                            next_lows = lows[i+1:i+6]
+                            next_closes = closes[i+1:i+6]
+                            
+                            # Price should stay below the formation high
+                            if max(next_highs) < current_high:
+                                zone = {
+                                    'type': 'supply',
+                                    'zone_low': current_low,
+                                    'zone_high': current_high,
+                                    'formation_candle': {
+                                        'high': current_high,
+                                        'low': current_low,
+                                        'close': closes[i],
+                                        'open': opens[i],
+                                        'time': formation_time
+                                    },
+                                    'formation_time': formation_time,
+                                    'timeframe': timeframe,
+                                    'asset': asset,
+                                    'wick_percentage': wick_pcts[i],
+                                    'zone_name': f"{asset}_{timeframe}_SUPPLY_FB_{formation_time.strftime('%Y%m%d%H%M')}",
+                                    'direction': 'bearish',
+                                    'wick_adjusted': False,
+                                    'wick_category': 'normal',
+                                    'smc_data': {'break_type': 'BOS_FALLBACK', 'trend': 'bearish'}
+                                }
+                                zones.append(zone)
+        
+        logger.info(f"🔍 SMC Scan {asset} {timeframe}: Found {len(zones)} zones")
         
         # Debug: Log first few zones found
         if zones and len(zones) > 0:
             for i, zone in enumerate(zones[:3]):
+                smc_info = ""
+                if 'smc_data' in zone:
+                    smc_info = f" | SMC: {zone['smc_data']['break_type']} ({zone['smc_data']['trend']})"
+                
                 wick_status = ""
                 if zone['wick_category'] == 'large':
-                    wick_status = f" (LARGE WICK: {zone['wick_percentage']:.1f}% - wick-adjusted)"
+                    wick_status = f" (LARGE WICK: {zone['wick_percentage']:.1f}%)"
                 elif zone['wick_percentage'] < 10:
-                    wick_status = f" (SMALL WICK: {zone['wick_percentage']:.1f}% - filtered out)"
+                    wick_status = f" (SMALL WICK: {zone['wick_percentage']:.1f}%)"
                 else:
-                    wick_status = f" (normal wick: {zone['wick_percentage']:.1f}%)"
+                    wick_status = f" (wick: {zone['wick_percentage']:.1f}%)"
                 
-                logger.info(f"   Zone {i+1}: {zone['zone_name']}{wick_status}")
+                logger.info(f"   Zone {i+1}: {zone['zone_name']}{wick_status}{smc_info}")
                 logger.info(f"      {zone['type']}: {zone['zone_low']:.4f} to {zone['zone_high']:.4f}")
                 logger.info(f"      Formed: {zone['formation_time']}")
         else:
@@ -3700,7 +3787,6 @@ class SupplyDemandDetector:
         all_zones.sort(key=lambda x: timeframe_order.get(x['timeframe'], 0), reverse=True)
         
         return all_zones
-
 
 
 # ================================
