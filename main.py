@@ -2086,8 +2086,9 @@ class RealTimeFeatureBox:
         self.active_features = {
             'smt': {},      # key: signal_key, value: {smt_data, psp_data, timestamp, expiration}
             'crt': {},      # key: signal_key, value: {crt_data, psp_data, timestamp, expiration}  
-            'psp': {},       # key: signal_key, value: {psp_data, timestamp, expiration}
-            'sd_zone': {}
+            'psp': {},      # key: signal_key, value: {psp_data, timestamp, expiration}
+            'sd_zone': {},  # key: signal_key, value: {zone_data, timestamp, expiration}
+            'tpd': {},      # NEW: key: signal_key, value: {tpd_data, timestamp, expiration}
         }
         
         # Signal cooldown to prevent duplicates
@@ -2098,10 +2099,11 @@ class RealTimeFeatureBox:
         
         # Feature expiration times (minutes)
         self.expiration_times = {
-            'smt': 1200,    # 4 hours for SMT
-            'crt': 120,    # 2 hours for CRT  
-            'psp': 60 ,     # 1 hour for PSP
-            'sd_zone': 288000000
+            'smt': 1200,    # 20 hours for SMT
+            'crt': 120,     # 2 hours for CRT  
+            'psp': 60,      # 1 hour for PSP
+            'sd_zone': 2880,
+            'tpd': 120,     # NEW: 2 hours for TPD (same as CRT)
         }
         
         logger.info(f"🎯 RealTimeFeatureBox initialized for {pair_group}")
@@ -2276,33 +2278,62 @@ class RealTimeFeatureBox:
         else:
             # Check all possible confluences
             return self._check_immediate_confluence(signal_key, 'psp')
+
+        def add_tpd(self, tpd_data):
+            """Add TPD feature to tracking - triggers immediate signal"""
+            if not tpd_data:
+                return False
+                
+            signal_key = tpd_data['signal_key']
+            
+            # Check if already exists and is still valid
+            if signal_key in self.active_features['tpd']:
+                if not self._is_feature_expired(self.active_features['tpd'][signal_key]):
+                    logger.debug(f"🔄 TPD already active: {signal_key}")
+                    return False
+            
+            # Store TPD feature
+            self.active_features['tpd'][signal_key] = {
+                'tpd_data': tpd_data,
+                'timestamp': datetime.now(NY_TZ),
+                'expiration': datetime.now(NY_TZ) + timedelta(minutes=self.expiration_times['tpd'])
+            }
+            
+            logger.info(f"📥 TPD ADDED to FeatureBox: {tpd_data['timeframe']} {tpd_data['direction']}")
+            
+            # Immediate TPD signal (no confluence needed)
+            return self._check_tpd_signal(signal_key)
     
-    def _check_immediate_confluence(self, new_feature_key, feature_type):
-        """
-        IMMEDIATE confluence check when new feature is added
-        Returns True if signal was sent
-        """
-        logger.info(f"🔍 IMMEDIATE CONFLUENCE CHECK for {feature_type}: {new_feature_key}")
-        
-        # Check all possible confluence combinations
-        signals_sent = []
-        
-        # 1. Check SMT + PSP confluence
-        signals_sent.append(self._check_smt_psp_confluence_global())
-        
-        # 2. Check CRT + SMT confluence  
-        signals_sent.append(self._check_crt_smt_confluence())
-        
-        # 3. Check CRT + PSP confluence
-        signals_sent.append(self._check_crt_psp_confluence())
-        
-        # 4. Check Multiple SMTs confluence
-        signals_sent.append(self._check_multiple_smts_confluence())
-        
-        # 5. Check Triple Confluence (CRT + PSP + SMT)
-        signals_sent.append(self._check_triple_confluence())
-        
-        return any(signals_sent)
+        def _check_immediate_confluence(self, new_feature_key, feature_type):
+            """
+            IMMEDIATE confluence check when new feature is added
+            Returns True if signal was sent
+            """
+            logger.info(f"🔍 IMMEDIATE CONFLUENCE CHECK for {feature_type}: {new_feature_key}")
+            
+            # Check all possible confluence combinations
+            signals_sent = []
+            
+            # 1. Check SMT + PSP confluence
+            signals_sent.append(self._check_smt_psp_confluence_global())
+            
+            # 2. Check CRT + SMT confluence  
+            signals_sent.append(self._check_crt_smt_confluence())
+            
+            # 3. Check CRT + PSP confluence
+            signals_sent.append(self._check_crt_psp_confluence())
+            
+            # 4. Check Multiple SMTs confluence
+            signals_sent.append(self._check_multiple_smts_confluence())
+            
+            # 5. Check Triple Confluence (CRT + PSP + SMT)
+            signals_sent.append(self._check_triple_confluence())
+            
+            # 6. NEW: Check TPD signals
+            if feature_type == 'tpd':
+                signals_sent.append(self._check_tpd_signal(new_feature_key))
+            
+            return any(signals_sent)
     
     def _check_smt_psp_confluence(self, smt_key, psp_key):
         """Check specific SMT + PSP confluence"""
@@ -2609,6 +2640,37 @@ class RealTimeFeatureBox:
                         return True
         
         return False
+
+        def _check_tpd_signal(self, tpd_key):
+            """Check and send TPD signal immediately"""
+            if tpd_key not in self.active_features['tpd']:
+                return False
+                
+            tpd_feature = self.active_features['tpd'][tpd_key]
+            
+            if self._is_feature_expired(tpd_feature):
+                return False
+            
+            tpd_data = tpd_feature['tpd_data']
+            
+            # Create signal data
+            signal_data = {
+                'pair_group': self.pair_group,
+                'direction': tpd_data['direction'],
+                'confluence_type': 'TPD_IMMEDIATE',
+                'tpd': tpd_data,
+                'timestamp': datetime.now(NY_TZ),
+                'signal_key': tpd_data['signal_key'],
+                'description': f"TPD: {tpd_data['timeframe']} {tpd_data['direction']} - Two-Pair Divergence with PSP"
+            }
+            
+            # Send immediate signal
+            if self._send_immediate_signal(signal_data):
+                # Optionally remove after sending, or keep for tracking
+                # self._remove_feature('tpd', tpd_key)
+                return True
+            
+            return False
     
     def _send_immediate_signal(self, signal_data):
         """Send signal with content validation"""
@@ -2802,6 +2864,21 @@ class RealTimeFeatureBox:
         message += f"*Detection Time:* {signal_data['timestamp'].strftime('%Y-%m-%d %H:%M:%S')}\n"
         message += f"*Latency:* IMMEDIATE\n\n"
         message += f"#ImmediateSignal #{self.pair_group} #{direction}"
+
+                # TPD details
+        if 'tpd' in signal_data and signal_data['tpd']:
+            tpd = signal_data['tpd']
+            message += f"*TPD Details:*\n"
+            message += f"• Timeframe: {tpd.get('timeframe', 'Unknown')}\n"
+            message += f"• Direction: {tpd.get('direction', 'Unknown')}\n"
+            if tpd.get('tpd_details'):
+                details = tpd['tpd_details']
+                message += f"• Asset1: C3 open {details.get('asset1_c3_open', 'N/A'):.4f} vs C1 close {details.get('asset1_c1_close', 'N/A'):.4f}\n"
+                message += f"• Asset2: C3 open {details.get('asset2_c3_open', 'N/A'):.4f} vs C1 close {details.get('asset2_c1_close', 'N/A'):.4f}\n"
+            if tpd.get('timestamp'):
+                message += f"• Time: {tpd['timestamp'].strftime('%H:%M')}\n"
+            message += f"• Setup: TPD (No SMT Required)\n"
+            message += f"\n"
         
         return message
 
@@ -2835,6 +2912,14 @@ class RealTimeFeatureBox:
             associated = f"→ {feature['associated_smt']}" if feature['associated_smt'] else "→ STANDALONE"
             expires_in = (feature['expiration'] - datetime.now(NY_TZ)).total_seconds() / 60
             logger.info(f"    - {psp_data['timeframe']} {psp_data['asset1_color']}/{psp_data['asset2_color']} {associated} (expires in {expires_in:.1f}m)")
+
+        # Log active TPDs - NEW
+        tpd_count = len(self.active_features['tpd'])
+        logger.info(f"  Active TPDs ({tpd_count}):")
+        for key, feature in self.active_features['tpd'].items():
+            tpd_data = feature['tpd_data']
+            expires_in = (feature['expiration'] - datetime.now(NY_TZ)).total_seconds() / 60
+            logger.info(f"    - {tpd_data['timeframe']} {tpd_data['direction']} (expires in {expires_in:.1f}m)")
         
         # Log recent signals - FIXED SYNTAX
         signal_count = len(self.sent_signals)
@@ -2892,6 +2977,16 @@ class RealTimeFeatureBox:
                     'timeframe': crt_data['timeframe'],
                     'direction': crt_data['direction'],
                     'has_psp': crt_feature['psp_data'] is not None
+                })
+
+        # TPD summary
+        for tpd_key, tpd_feature in self.active_features['tpd'].items():
+            if not self._is_feature_expired(tpd_feature):
+                tpd_data = tpd_feature['tpd_data']
+                summary['active_tpds'].append({
+                    'timeframe': tpd_data['timeframe'],
+                    'direction': tpd_data['direction'],
+                    'has_psp': tpd_data.get('psp_signal') is not None
                 })
         
         return summary
