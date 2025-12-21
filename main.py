@@ -4054,7 +4054,7 @@ class UltimateTradingSystem:
                 # Get current feature summary
                 summary = self.feature_box.get_active_features_summary()
                 sd_count = len(self.feature_box.active_features['sd_zone'])
-                logger.info(f"📊 {self.pair_group} Feature Summary: {summary['smt_count']} SMTs, {sd_count} SD zones, {summary['crt_count']} CRTs, {summary['psp_count']} PSPs")
+                logger.info(f"📊 {self.pair_group} Feature Summary: {summary['smt_count']} SMTs, {sd_count} SD zones, {summary['crt_count']} CRTs, {summary['psp_count']} PSPs, {summary.get('tpd_count', 0)} TPDs")
             else:
                 logger.info(f"⏸️ No new candles - skipping analysis")
             
