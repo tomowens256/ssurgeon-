@@ -3759,7 +3759,7 @@ class SupplyDemandDetector:
                     all_zones.extend(zones)
         
         # Sort by timeframe importance (H4 > H1 > M15 > M5)
-        timeframe_order = {'W1': 6, 'D1' : 5 'H4': 4, 'H1': 3, 'M15': 2, 'M5': 1}
+        timeframe_order = {'W1': 6, 'D1' : 5 ,'H4': 4, 'H1': 3, 'M15': 2, 'M5': 1}
         all_zones.sort(key=lambda x: timeframe_order.get(x['timeframe'], 0), reverse=True)
         
         return all_zones
