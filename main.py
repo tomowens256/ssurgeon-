@@ -3296,6 +3296,188 @@ class FVGDetector:
                     break
 
 
+class HybridTimingSystem:
+    """
+    Hybrid timing system that combines intelligent timeframe scheduling
+    with duplicate prevention and time validation
+    """
+    def __init__(self, pair_group):
+        self.pair_group = pair_group
+        self.ny_tz = pytz.timezone('America/New_York')
+        
+        # Timeframe scanning configurations
+        self.timeframe_configs = {
+            # For quick SMT/PSP/TPD detection
+            'M5': {
+                'interval': 5,  # minutes
+                'scan_type': 'quick',
+                'next_scan': None,
+                'last_scan': None,
+                'needs_data': True
+            },
+            'M15': {
+                'interval': 15,
+                'scan_type': 'quick', 
+                'next_scan': None,
+                'last_scan': None,
+                'needs_data': True
+            },
+            'H1': {
+                'interval': 60,
+                'scan_type': 'normal',
+                'next_scan': None,
+                'last_scan': None,
+                'needs_data': True
+            },
+            # For higher timeframe analysis (less frequent)
+            'H4': {
+                'interval': 240,
+                'scan_type': 'deep',
+                'next_scan': None,
+                'last_scan': None,
+                'needs_data': True,
+                'cooldown_minutes': 15  # Only scan every 15 min even if data available
+            },
+            'D': {
+                'interval': 1440,
+                'scan_type': 'deep',
+                'next_scan': None,
+                'last_scan': None,
+                'needs_data': True,
+                'cooldown_minutes': 30  # Only scan every 30 min
+            },
+            'W': {
+                'interval': 10080,
+                'scan_type': 'deep',
+                'next_scan': None,
+                'last_scan': None,
+                'needs_data': True,
+                'cooldown_minutes': 120  # Only scan every 2 hours
+            }
+        }
+        
+        # Initialize next scan times
+        self._calculate_initial_scan_times()
+        
+        # For duplicate prevention (compatible with RobustTimingManager)
+        self.sent_signals = {}
+    
+    def _calculate_initial_scan_times(self):
+        """Calculate when to first scan each timeframe"""
+        now = datetime.now(self.ny_tz)
+        
+        for tf, config in self.timeframe_configs.items():
+            # For first run, scan immediately for quick timeframes
+            if config['scan_type'] == 'quick':
+                config['next_scan'] = now
+            else:
+                # For deep scans, schedule in the near future
+                config['next_scan'] = now + timedelta(minutes=config.get('cooldown_minutes', 5))
+    
+    def should_scan_timeframe(self, timeframe):
+        """Check if we should scan this timeframe now"""
+        if timeframe not in self.timeframe_configs:
+            return False
+        
+        config = self.timeframe_configs[timeframe]
+        now = datetime.now(self.ny_tz)
+        
+        # Check if it's time to scan
+        if now >= config['next_scan']:
+            # Update last scan time
+            config['last_scan'] = now
+            
+            # Calculate next scan time
+            if config['scan_type'] == 'quick':
+                # Quick scans: scan at next candle + buffer
+                next_candle = self._get_next_candle_close_time(timeframe)
+                buffer = timedelta(seconds=10 if timeframe in ['M5', 'M15'] else 30)
+                config['next_scan'] = next_candle + buffer
+            else:
+                # Deep scans: use cooldown
+                cooldown = timedelta(minutes=config.get('cooldown_minutes', 15))
+                config['next_scan'] = now + cooldown
+            
+            return True
+        
+        return False
+    
+    def _get_next_candle_close_time(self, timeframe):
+        """Calculate when the next candle will close"""
+        now = datetime.now(self.ny_tz)
+        
+        if timeframe == 'M5':
+            minutes_to_add = 5 - (now.minute % 5)
+            if minutes_to_add == 0:
+                minutes_to_add = 5
+            return now.replace(second=0, microsecond=0) + timedelta(minutes=minutes_to_add)
+        
+        elif timeframe == 'M15':
+            minutes_to_add = 15 - (now.minute % 15)
+            if minutes_to_add == 0:
+                minutes_to_add = 15
+            return now.replace(second=0, microsecond=0) + timedelta(minutes=minutes_to_add)
+        
+        elif timeframe == 'H1':
+            next_hour = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+            return next_hour
+        
+        elif timeframe == 'H4':
+            current_hour = now.hour
+            next_h4_hour = ((current_hour // 4) + 1) * 4
+            if next_h4_hour >= 24:
+                next_day = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+                return next_day
+            else:
+                return now.replace(hour=next_h4_hour, minute=0, second=0, microsecond=0)
+        
+        elif timeframe == 'D':
+            next_day = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+            return next_day
+        
+        elif timeframe == 'W':
+            # Next Sunday at 00:00 (assuming week starts Sunday)
+            days_ahead = 6 - now.weekday()  # 0=Monday, 6=Sunday
+            if days_ahead <= 0:
+                days_ahead += 7
+            next_sunday = now + timedelta(days=days_ahead)
+            return next_sunday.replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        return now + timedelta(minutes=5)  # Default
+    
+    def get_timeframes_to_scan(self):
+        """Get list of timeframes that should be scanned now"""
+        to_scan = []
+        
+        for tf in self.timeframe_configs.keys():
+            if self.should_scan_timeframe(tf):
+                to_scan.append(tf)
+        
+        return to_scan
+    
+    def get_sleep_time(self):
+        """Calculate optimal sleep time until next scan"""
+        now = datetime.now(self.ny_tz)
+        next_scan_times = []
+        
+        for tf, config in self.timeframe_configs.items():
+            if config['next_scan']:
+                time_until = (config['next_scan'] - now).total_seconds()
+                if time_until > 0:
+                    next_scan_times.append(time_until)
+        
+        if not next_scan_times:
+            return 60  # Default 1 minute
+        
+        # Return the shortest time until next scan
+        min_sleep = min(next_scan_times)
+        return max(5, min(min_sleep, 300))  # Between 5 and 300 seconds
+    
+    def mark_scanned(self, timeframe):
+        """Mark a timeframe as scanned (for manual updates)"""
+        if timeframe in self.timeframe_configs:
+            self.timeframe_configs[timeframe]['last_scan'] = datetime.now(self.ny_tz)
+
 class SmartTimingSystem:
     def __init__(self):
         self.candle_watch_times = {
