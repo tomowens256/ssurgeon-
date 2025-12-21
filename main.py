@@ -913,7 +913,7 @@ class RobustCRTDetector:
                        float(c2['close']) < float(c1['high']) and 
                        float(c3['open']) < c2_mid)
             
-                        if buy_crt or sell_crt:
+            if buy_crt or sell_crt:
                 direction = 'bullish' if buy_crt else 'bearish'
                 
                 # CHECK FOR PSP ON SAME TIMEFRAME
