@@ -4521,10 +4521,13 @@ class UltimateTradingSystem:
                 if crt_signal:
                     logger.info(f"🔷 CRT DETECTED: {crt_tf} {crt_signal['direction']} on {instrument}")
                     
-                    # Check if it's a TPD setup (send immediately without SMT)
+                    # Check if it's a TPD setup
                     if crt_signal.get('is_tpd', False):
-                        logger.info(f"🔄 TPD SETUP DETECTED - Sending without SMT")
-                        return self._send_tpd_signal(crt_signal, instrument)
+                        logger.info(f"🔄 TPD SETUP DETECTED - Adding to FeatureBox")
+                        # Add to FeatureBox - it will handle the signal
+                        self.feature_box.add_tpd(crt_signal)
+                        # Skip SMT confluence for TPD
+                        continue
                     
                     # Otherwise, check for SMT confluence (original logic)
                     allowed_cycles = CRT_SMT_MAPPING.get(crt_tf, [])
