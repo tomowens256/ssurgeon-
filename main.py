@@ -913,23 +913,56 @@ class RobustCRTDetector:
                        float(c2['close']) < float(c1['high']) and 
                        float(c3['open']) < c2_mid)
             
-            if buy_crt or sell_crt:
+                        if buy_crt or sell_crt:
                 direction = 'bullish' if buy_crt else 'bearish'
                 
                 # CHECK FOR PSP ON SAME TIMEFRAME
                 psp_signal = self._detect_psp_for_crt(asset1_data, asset2_data, timeframe, current_candle['time'])
                 
-                logger.info(f"🔷 {direction.upper()} CRT DETECTED: {timeframe} candle at {c3['time'].strftime('%H:%M')}")
-                if psp_signal:
-                    logger.info(f"🎯 PSP FOUND for CRT: {psp_signal['asset1_color']}/{psp_signal['asset2_color']} at {psp_signal['formation_time'].strftime('%H:%M')}")
+                # Get corresponding candles for both assets to check TPD
+                c1_asset1 = c1  # Already have from CRT calculation
+                c1_asset2 = None  # We need to find the corresponding c1 for asset2
+                c3_asset1 = c3  # Current candle for asset1
+                c3_asset2 = None  # Current candle for asset2
                 
-                # Create and return CRT signal
+                # Find the corresponding c1 for asset2 (same time as c1_asset1)
+                if not asset2_data.empty:
+                    c1_asset2 = asset2_data[asset2_data['time'] == c1_asset1['time']]
+                    if not c1_asset2.empty:
+                        c1_asset2 = c1_asset2.iloc[0]
+                    
+                    # Get current candle for asset2
+                    c3_asset2_candidate = asset2_data[asset2_data['is_current'] == True]
+                    if not c3_asset2_candidate.empty:
+                        c3_asset2 = c3_asset2_candidate.iloc[0]
+                
+                # Check TPD conditions if we have PSP and both c1 candles
+                is_tpd = False
+                if psp_signal and c1_asset2 is not None and c3_asset2 is not None:
+                    is_tpd = self._check_tpd_conditions(
+                        asset1_data, asset2_data, 
+                        c1_asset1, c1_asset2, 
+                        c3_asset1, c3_asset2, 
+                        direction
+                    )
+                
+                logger.info(f"🔷 {direction.upper()} CRT DETECTED: {timeframe} candle at {c3['time'].strftime('%H:%M')}")
+                logger.info(f"   PSP: {'✅' if psp_signal else '❌'}, TPD: {'✅' if is_tpd else '❌'}")
+                
+                # Create and return CRT signal with TPD flag
                 return {
                     'direction': direction, 
                     'timestamp': c3['time'],
                     'timeframe': timeframe,
                     'signal_key': f"CRT_{timeframe}_{c3['time'].strftime('%m%d_%H%M')}_{direction}",
-                    'psp_signal': psp_signal  # Include PSP if found
+                    'psp_signal': psp_signal,  # Include PSP if found
+                    'is_tpd': is_tpd,  # Flag indicating TPD setup
+                    'tpd_details': {
+                        'asset1_c1_close': float(c1_asset1['close']) if 'close' in c1_asset1 else None,
+                        'asset2_c1_close': float(c1_asset2['close']) if c1_asset2 and 'close' in c1_asset2 else None,
+                        'asset1_c3_open': float(c3_asset1['open']),
+                        'asset2_c3_open': float(c3_asset2['open']) if c3_asset2 else None,
+                    } if is_tpd else None
                 }
                 
         except (ValueError, TypeError) as e:
