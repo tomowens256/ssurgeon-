@@ -6621,24 +6621,24 @@ class UltimateTradingSystem:
         return None
         """
 
-    def get_sleep_time(self):
-        """Calculate sleep time until next relevant candle - SIMPLIFIED FOR NOW"""
-        # Since we're using Feature Box now, we'll use a simpler approach
-        # TODO: Implement proper sleep timing based on active features
+    # def get_sleep_time(self):
+    #     """Calculate sleep time until next relevant candle - SIMPLIFIED FOR NOW"""
+    #     # Since we're using Feature Box now, we'll use a simpler approach
+    #     # TODO: Implement proper sleep timing based on active features
         
-        # For now, use base interval or check if we have any active features
-        summary = self.feature_box.get_active_features_summary()
+    #     # For now, use base interval or check if we have any active features
+    #     summary = self.feature_box.get_active_features_summary()
         
-        if summary['smt_count'] > 0 or summary['crt_count'] > 0:
-            # We have active features, check more frequently
-            sleep_time = 30  # 30 seconds
-            logger.info(f"⏰ {self.pair_group}: Active features detected - sleeping {sleep_time}s")
-        else:
-            # No active features, use normal interval
-            sleep_time = 60  # 60 seconds
-            logger.info(f"⏰ {self.pair_group}: No active features - sleeping {sleep_time}s")
+    #     if summary['smt_count'] > 0 or summary['crt_count'] > 0:
+    #         # We have active features, check more frequently
+    #         sleep_time = 30  # 30 seconds
+    #         logger.info(f"⏰ {self.pair_group}: Active features detected - sleeping {sleep_time}s")
+    #     else:
+    #         # No active features, use normal interval
+    #         sleep_time = 60  # 60 seconds
+    #         logger.info(f"⏰ {self.pair_group}: No active features - sleeping {sleep_time}s")
         
-        return sleep_time
+    #     return sleep_time
     
     def _find_triad_confluence(self, signals):
         """Find confluence across triad pairs - FIXED UNPACKING"""
