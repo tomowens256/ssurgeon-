@@ -4425,12 +4425,18 @@ class UltimateTradingSystem:
                 if crt_signal:
                     logger.info(f"🔷 CRT DETECTED: {crt_tf} {crt_signal['direction']} on {instrument}")
                     
-                    # Check for SMT confluence
+                    # Check if it's a TPD setup (send immediately without SMT)
+                    if crt_signal.get('is_tpd', False):
+                        logger.info(f"🔄 TPD SETUP DETECTED - Sending without SMT")
+                        return self._send_tpd_signal(crt_signal, instrument)
+                    
+                    # Otherwise, check for SMT confluence (original logic)
                     allowed_cycles = CRT_SMT_MAPPING.get(crt_tf, [])
                     crt_direction = crt_signal['direction']
                     
                     # Look for active SMTs in allowed cycles
                     for smt_key, smt_feature in self.feature_box.active_features['smt'].items():
+                    
                         if self.feature_box._is_feature_expired(smt_feature):
                             continue
                             
@@ -4452,6 +4458,24 @@ class UltimateTradingSystem:
         
         logger.info(f"🔷 No CRT+SMT confluence found")
         return False
+
+        def _cleanup_old_tpd_signals(self):
+            """Remove old TPD signals from tracking (7-day cleanup)"""
+            if not hasattr(self, 'tpd_signals_sent') or not self.tpd_signals_sent:
+                return
+            
+            current_time = datetime.now(NY_TZ)
+            signals_to_remove = []
+            
+            for signal_id, sent_time in self.tpd_signals_sent.items():
+                if (current_time - sent_time).total_seconds() > self.CLEANUP_DAYS:
+                    signals_to_remove.append(signal_id)
+            
+            for signal_id in signals_to_remove:
+                del self.tpd_signals_sent[signal_id]
+            
+            if signals_to_remove:
+                logger.debug(f"🧹 Cleaned up {len(signals_to_remove)} old TPD signals (7+ days)")
 
     def debug_feature_box(self):
         """Debug what's in FeatureBox"""
