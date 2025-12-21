@@ -3932,7 +3932,7 @@ class UltimateTradingSystem:
         
         # Debug: Check timezone of data
         for instrument in self.instruments:
-            for timeframe in ['M15', 'H1', 'H4']:
+            for timeframe in ['M15', 'H1', 'H4','D1' , 'W1']:
                 data = self.market_data[instrument].get(timeframe)
                 if data is not None and not data.empty:
                     sample_time = data['time'].iloc[0]
@@ -3947,7 +3947,7 @@ class UltimateTradingSystem:
                         data['time'] = data['time'].dt.tz_localize('UTC').dt.tz_convert(NY_TZ)
                         logger.info(f"   ↳ Converted to NY_TZ")
         
-        timeframes_to_scan = ['M15', 'H1', 'H4']
+        timeframes_to_scan = ['M15', 'H1', 'H4','D1' , 'W1']
         if 'XAU_USD' in self.instruments:
             timeframes_to_scan.append('M5')
         
@@ -4065,7 +4065,7 @@ class UltimateTradingSystem:
         new_candles = False
         
         for instrument in self.instruments:
-            for timeframe in ['M5', 'M15', 'H1', 'H4']:
+            for timeframe in ['M5', 'M15', 'H1', 'H4','D1' , 'W1']:
                 data = self.market_data[instrument].get(timeframe)
                 if data is None or data.empty:
                     continue
@@ -4099,7 +4099,7 @@ class UltimateTradingSystem:
             'M5': 40,    # 90min timeframe - 40 candles (was working)
             
             # For CRT only
-            'H2': 10, 'H3': 10, 'H6': 10, 'H8': 10, 'H12': 10,
+            'H1': 10, 'H4': 10,
             
             # For SD Zones ONLY - use MORE candles
             'SD_H4': 100,  # For SD zones on H4
@@ -4122,7 +4122,7 @@ class UltimateTradingSystem:
                 required_timeframes.append(tf)
         
         # 3. ADD SD Zone timeframes (LONG lookback - separate calls)
-        sd_timeframes = ['M15', 'H1', 'H4']
+        sd_timeframes = ['M15', 'H1', 'H4','D1' , 'W1']
         if 'XAU_USD' in self.instruments:
             sd_timeframes.append('M5')
         
@@ -4138,7 +4138,7 @@ class UltimateTradingSystem:
             
             # THEN: Fetch LONG data for SD Zones (separate calls)
             for tf in sd_timeframes:
-                count = 100  # 100 candles for SD zones
+                count = 40  # 40 candles for SD zones
                 task = asyncio.create_task(
                     self._fetch_single_instrument_data(instrument, tf, count, api_key)
                 )
@@ -4326,14 +4326,13 @@ class UltimateTradingSystem:
         logger.info(f"🔷 SCANNING: CRT + SMT Confluence")
         
         # CRT timeframes to check
-        crt_timeframes = ['H4', 'H1', 'H6','H12']
+        crt_timeframes = ['H4', 'H1']
         
         # Mapping: CRT timeframe -> allowed SMT cycles
         CRT_SMT_MAPPING = {
             'H4': ['weekly', 'daily'],  # 4hr CRT → Weekly OR Daily SMT
-            'H1': ['daily'],           # 1hr CRT → Daily SMT
-            'H6': ['daily','weekly'],  # 15min CRT → Daily OR 90min SMT
-            'H12': ['daily','weekly']
+            'H1': ['daily']         # 1hr CRT → Daily SMT
+            
         }
         
         # Check each instrument for CRT
@@ -4765,9 +4764,11 @@ class UltimateTradingSystem:
         # Timeframe mapping: SD Zone -> allowed SMT cycles
         sd_to_smt_cycles = {
             'H4': ['weekly', 'daily'],      # H4 Zone → Weekly (H1) or Daily (M15) SMT
-            'H1': ['weekly', 'daily'],      # H1 Zone → Weekly (H1) or Daily (M15) SMT  
+            'H1': ['weekly', 'daily','90min'],      # H1 Zone → Weekly (H1) or Daily (M15) SMT  
             'M15': ['daily','90min'],               # M15 Zone → Daily (M15) SMT
-            'M5': ['daily','90min']                 # M5 Zone → 90min (M5) SMT
+            'M5': ['daily','90min'],                 # M5 Zone → 90min (M5) SMT
+            'D1' :['weekly', 'daily'],
+            'W1' :['weekly', 'daily']
         }
         
         # Get all active SD zones from FeatureBox
@@ -4779,7 +4780,7 @@ class UltimateTradingSystem:
             return False
         
         # Sort zones by timeframe importance (H4 > H1 > M15 > M5)
-        timeframe_order = {'H4': 4, 'H1': 3, 'M15': 2, 'M5': 1}
+        timeframe_order = {'W1': 6,'D1': 5,'H4': 4, 'H1': 3, 'M15': 2, 'M5': 1}
         active_zones.sort(key=lambda x: timeframe_order.get(x['timeframe'], 0), reverse=True)
         
         for zone in active_zones:
@@ -4908,7 +4909,8 @@ class UltimateTradingSystem:
             higher_tf_map = {
                 'M15': 'H1',
                 'H1': 'H4',
-                'H4': 'D'
+                'H4': 'D',
+                'D1': 'W1'
             }
             
             higher_tf = higher_tf_map.get(zone_tf)
