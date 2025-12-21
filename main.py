@@ -4186,7 +4186,7 @@ class UltimateTradingSystem:
         
     def get_sleep_time(self):
         """Use smart timing instead of fixed intervals"""
-        return self.smart_timing.get_smart_sleep_time()
+        return self.hybrid_timing.get_sleep_time()
     
     async def run_ultimate_analysis(self, api_key):
         """Run analysis triggered by new candle formation"""
