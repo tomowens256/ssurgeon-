@@ -3427,7 +3427,7 @@ class SupplyDemandDetector:
                     breach_idx = subsequent_candles['low'].idxmin()
                     breach_candle = subsequent_candles.loc[breach_idx]
                     logger.info(f"❌ DEMAND ZONE INVALIDATED: {zone.get('zone_name', 'Unknown')}")
-                    logger.info(f"   Low {breach_candle['low']:.4f} < Zone low {zone_low:.4f}")
+                    logger.info(f"   Low {breach_candle['low']} < Zone low {zone_low}")
                     return False
             else:  # supply zone
                 # SUPPLY zone invalidated if ANY candle's HIGH > zone_high (which is highest high of A & B)
@@ -3435,7 +3435,7 @@ class SupplyDemandDetector:
                     breach_idx = subsequent_candles['high'].idxmax()
                     breach_candle = subsequent_candles.loc[breach_idx]
                     logger.info(f"❌ SUPPLY ZONE INVALIDATED: {zone.get('zone_name', 'Unknown')}")
-                    logger.info(f"   High {breach_candle['high']:.4f} > Zone high {zone_high:.4f}")
+                    logger.info(f"   High {breach_candle['high']} > Zone high {zone_high}")
                     return False
             
             # Zone is valid
@@ -3490,12 +3490,12 @@ class SupplyDemandDetector:
         if zone_type == 'demand':
             # Demand zone invalidated if ANY candle's LOW < zone_low (lowest low of A & B)
             if (subsequent_candles['low'] < zone_low).any():
-                logger.debug(f"❌ Demand zone invalidated: Low {subsequent_candles['low'].min():.4f} < Zone low {zone_low:.4f}")
+                logger.debug(f"❌ Demand zone invalidated: Low {subsequent_candles['low'].min()} < Zone low {zone_low}")
                 return True
         else:  # supply zone
             # Supply zone invalidated if ANY candle's HIGH > zone_high (highest high of A & B)
             if (subsequent_candles['high'] > zone_high).any():
-                logger.debug(f"❌ Supply zone invalidated: High {subsequent_candles['high'].max():.4f} > Zone high {zone_high:.4f}")
+                logger.debug(f"❌ Supply zone invalidated: High {subsequent_candles['high'].max()} > Zone high {zone_high}")
                 return True
         
         return False
@@ -3590,8 +3590,8 @@ class SupplyDemandDetector:
                 # Create demand zone
                 zone = {
                     'type': 'demand',
-                    'zone_low': zone_low,
-                    'zone_high': zone_high,
+                    'zone_low': zone_low,  # Raw float value with all decimals
+                    'zone_high': zone_high,  # Raw float value with all decimals
                     'formation_candle': {
                         'high': max(candle_a['high'], candle_b['high']),
                         'low': min(candle_a['low'], candle_b['low']),
@@ -3606,7 +3606,7 @@ class SupplyDemandDetector:
                     'zone_name': f"{asset}_{timeframe}_DEMAND_{candle_a['time'].strftime('%Y%m%d%H%M')}",
                     'direction': 'bullish',
                     'wick_adjusted': False,
-                    'wick_category': 'normal',
+                    'wick_category': 'large' if self.calculate_wick_percentage(candle_a) > 40 else 'normal',
                     'candle_a_low': candle_a['low'],
                     'candle_a_high': candle_a['high'],
                     'candle_a_close': candle_a['close'],
@@ -3617,15 +3617,14 @@ class SupplyDemandDetector:
                     'candle_b_open': candle_b['open'],
                     'highest_high': max(candle_a['high'], candle_b['high']),
                     'lowest_low': min(candle_a['low'], candle_b['low']),
-                    'creation_index': i,
-                    'zone_range': f"{zone_low:.4f}-{zone_high:.4f}"
+                    'creation_index': i
                 }
                 zones.append(zone)
                 logger.debug(f"✅ Found DEMAND zone: {zone['zone_name']}")
-                logger.debug(f"   Zone range: {zone_low:.4f} to {zone_high:.4f}")
-                logger.debug(f"   Candle A: {candle_a['open']:.4f} -> {candle_a['close']:.4f} (bearish)")
-                logger.debug(f"   Candle B: {candle_b['open']:.4f} -> {candle_b['close']:.4f} (bullish)")
-                logger.debug(f"   Invalidation: Price below {zone_low:.4f}")
+                logger.debug(f"   Zone range: {zone_low} to {zone_high}")
+                logger.debug(f"   Candle A: {candle_a['open']} -> {candle_a['close']} (bearish)")
+                logger.debug(f"   Candle B: {candle_b['open']} -> {candle_b['close']} (bullish)")
+                logger.debug(f"   Invalidation: Price below {zone_low}")
             
             # Check for SUPPLY zone (A bullish, B bearish)
             elif self.is_supply_zone(candle_a, candle_b):
@@ -3668,8 +3667,8 @@ class SupplyDemandDetector:
                 # Create supply zone
                 zone = {
                     'type': 'supply',
-                    'zone_low': zone_low,
-                    'zone_high': zone_high,
+                    'zone_low': zone_low,  # Raw float value with all decimals
+                    'zone_high': zone_high,  # Raw float value with all decimals
                     'formation_candle': {
                         'high': max(candle_a['high'], candle_b['high']),
                         'low': min(candle_a['low'], candle_b['low']),
@@ -3684,7 +3683,7 @@ class SupplyDemandDetector:
                     'zone_name': f"{asset}_{timeframe}_SUPPLY_{candle_a['time'].strftime('%Y%m%d%H%M')}",
                     'direction': 'bearish',
                     'wick_adjusted': False,
-                    'wick_category': 'normal',
+                    'wick_category': 'large' if self.calculate_wick_percentage(candle_a) > 40 else 'normal',
                     'candle_a_low': candle_a['low'],
                     'candle_a_high': candle_a['high'],
                     'candle_a_close': candle_a['close'],
@@ -3695,15 +3694,14 @@ class SupplyDemandDetector:
                     'candle_b_open': candle_b['open'],
                     'highest_high': max(candle_a['high'], candle_b['high']),
                     'lowest_low': min(candle_a['low'], candle_b['low']),
-                    'creation_index': i,
-                    'zone_range': f"{zone_low:.4f}-{zone_high:.4f}"
+                    'creation_index': i
                 }
                 zones.append(zone)
                 logger.debug(f"✅ Found SUPPLY zone: {zone['zone_name']}")
-                logger.debug(f"   Zone range: {zone_low:.4f} to {zone_high:.4f}")
-                logger.debug(f"   Candle A: {candle_a['open']:.4f} -> {candle_a['close']:.4f} (bullish)")
-                logger.debug(f"   Candle B: {candle_b['open']:.4f} -> {candle_b['close']:.4f} (bearish)")
-                logger.debug(f"   Invalidation: Price above {zone_high:.4f}")
+                logger.debug(f"   Zone range: {zone_low} to {zone_high}")
+                logger.debug(f"   Candle A: {candle_a['open']} -> {candle_a['close']} (bullish)")
+                logger.debug(f"   Candle B: {candle_b['open']} -> {candle_b['close']} (bearish)")
+                logger.debug(f"   Invalidation: Price above {zone_high}")
         
         # ==================== FILTER OVERLAPPING ZONES ====================
         # Remove zones that overlap significantly
@@ -3741,8 +3739,8 @@ class SupplyDemandDetector:
         if filtered_zones and len(filtered_zones) > 0:
             for i, zone in enumerate(filtered_zones[:3]):
                 logger.info(f"   Zone {i+1}: {zone['zone_name']}")
-                logger.info(f"      {zone['type']}: {zone['zone_low']:.4f} to {zone['zone_high']:.4f}")
-                logger.info(f"      Invalidation: Price {'below' if zone['type'] == 'demand' else 'above'} {zone['zone_low' if zone['type'] == 'demand' else 'zone_high']:.4f}")
+                logger.info(f"      {zone['type']}: {zone['zone_low']} to {zone['zone_high']}")
+                logger.info(f"      Invalidation: Price {'below' if zone['type'] == 'demand' else 'above'} {zone['zone_low'] if zone['type'] == 'demand' else zone['zone_high']}")
                 logger.info(f"      Formed: {zone['formation_time']}")
         else:
             logger.info(f"   No zones found for {asset} {timeframe}")
