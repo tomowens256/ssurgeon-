@@ -4306,6 +4306,28 @@ class UltimateTradingSystem:
                 logger.error(f"❌ Error in optimized analysis for {self.pair_group}: {str(e)}", exc_info=True)
                 return 60
 
+        async def _fetch_data_selective(self, timeframes_to_scan, api_key):
+            """Fetch data only for timeframes that need scanning"""
+            tasks = []
+            
+            # Determine which instruments need which timeframes
+            for instrument in self.instruments:
+                for tf in timeframes_to_scan:
+                    # Different candle counts for different purposes
+                    if tf in ['H4', 'D', 'W']:
+                        count = 50  # More for SD zones
+                    else:
+                        count = 40   # Less for quick analysis
+                    
+                    task = asyncio.create_task(
+                        self._fetch_single_instrument_data(instrument, tf, count, api_key)
+                    )
+                    tasks.append(task)
+            
+            if tasks:
+                await asyncio.gather(*tasks)
+                logger.info(f"✅ Fetched data for {len(timeframes_to_scan)} timeframes")
+
     def debug_sd_zones(self):
         """Debug Supply/Demand zones in FeatureBox"""
         logger.info(f"🔧 DEBUG: SD Zones in FeatureBox for {self.pair_group}")
