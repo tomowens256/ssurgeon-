@@ -1018,6 +1018,41 @@ class RobustCRTDetector:
                 continue
         
         return None
+        
+        def _check_tpd_conditions(self, asset1_data, asset2_data, c1_asset1, c1_asset2, c3_asset1, c3_asset2, crt_direction):
+            """Check TPD (Two-Pair Divergence) conditions"""
+            try:
+                # Get open and close prices
+                c3_open_asset1 = float(c3_asset1['open'])
+                c3_open_asset2 = float(c3_asset2['open'])
+                c1_close_asset1 = float(c1_asset1['close'])
+                c1_close_asset2 = float(c1_asset2['close'])
+                
+                if crt_direction == 'bullish':
+                    # Bullish TPD: Asset1 open below close, Asset2 open above close
+                    tpd_conditions = (
+                        c3_open_asset1 < c1_close_asset1 and  # Asset1: open below close
+                        c3_open_asset2 > c1_close_asset2      # Asset2: open above close
+                    )
+                elif crt_direction == 'bearish':
+                    # Bearish TPD: Asset1 open above close, Asset2 open below close
+                    tpd_conditions = (
+                        c3_open_asset1 > c1_close_asset1 and  # Asset1: open above close
+                        c3_open_asset2 < c1_close_asset2      # Asset2: open below close
+                    )
+                else:
+                    return False
+                
+                if tpd_conditions:
+                    logger.info(f"✅ TPD DETECTED: {crt_direction.upper()} TPD pattern")
+                    logger.info(f"   Asset1: C3 open {c3_open_asset1} vs C1 close {c1_close_asset1}")
+                    logger.info(f"   Asset2: C3 open {c3_open_asset2} vs C1 close {c1_close_asset2}")
+                    
+                return tpd_conditions
+                
+            except (ValueError, TypeError) as e:
+                logger.error(f"Error checking TPD conditions: {e}")
+                return False
 
 # ================================
 # ULTIMATE SMT DETECTOR WITH ALL QUARTER PAIRS
