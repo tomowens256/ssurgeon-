@@ -4698,50 +4698,7 @@ class UltimateTradingSystem:
             #{idea['pair_group']} #CRT_SMT #{idea['direction']}
         """
 
-        def _format_tpd_message(self, idea):
-            """Format TPD (Two-Pair Divergence) message"""
-            dir_emoji = "🟢" if idea['direction'] == 'bullish' else "🔴"
-            crt_time = idea['crt_time'].strftime('%H:%M')
-            
-            # Get TPD divergence details
-            tpd_details = idea.get('tpd_details', {})
-            
-            # Build divergence explanation
-            if idea['direction'] == 'bullish':
-                divergence_explanation = (
-                    f"• Asset1: C3 open {tpd_details.get('asset1_c3_open', 'N/A'):.4f} < C1 close {tpd_details.get('asset1_c1_close', 'N/A'):.4f}\n"
-                    f"• Asset2: C3 open {tpd_details.get('asset2_c3_open', 'N/A'):.4f} > C1 close {tpd_details.get('asset2_c1_close', 'N/A'):.4f}"
-                )
-            else:  # bearish
-                divergence_explanation = (
-                    f"• Asset1: C3 open {tpd_details.get('asset1_c3_open', 'N/A'):.4f} > C1 close {tpd_details.get('asset1_c1_close', 'N/A'):.4f}\n"
-                    f"• Asset2: C3 open {tpd_details.get('asset2_c3_open', 'N/A'):.4f} < C1 close {tpd_details.get('asset2_c1_close', 'N/A'):.4f}"
-                )
-            
-            return f"""
-            🔄 *TWO-PAIR DIVERGENCE (TPD)* 🔄
-                        
-            *Group:* {idea['pair_group'].replace('_', ' ').title()}
-            *Direction:* {idea['direction'].upper()} {dir_emoji}
-            *Asset:* {idea['asset']}
-            *Timeframe:* {idea['timeframe']}
-            *Setup:* TPD (No SMT Required)
-            *Strength:* {idea['strength']}
-                        
-            *TPD Divergence:*
-            {divergence_explanation}
-                        
-            *Confirmation:*
-            • PSP: {'✅ Confirmed' if idea['has_psp'] else '❌ Not Confirmed'}
-            • CRT Pattern: ✅ Confirmed
-            • TPD Divergence: ✅ Confirmed
-                        
-            *Reasoning:* {idea['reasoning']}
-                        
-            *Detection:* {idea['timestamp'].strftime('%H:%M:%S')}
-                        
-            #{idea['pair_group']} #TPD #{idea['direction']} #NoSMT
-            """
+        
 
     def _cleanup_old_crt_smt_signals(self):
         """Remove old CRT+SMT signals from tracking (7-day cleanup)"""
