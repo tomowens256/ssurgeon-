@@ -4246,6 +4246,66 @@ class UltimateTradingSystem:
             logger.error(f"❌ Error in candle-triggered analysis for {self.pair_group}: {str(e)}", exc_info=True)
             return None
 
+        async def run_optimized_analysis(self, api_key):
+            """Run analysis only for timeframes that need scanning"""
+            try:
+                # Cleanup
+                self.feature_box.cleanup_expired_features()
+                self.cleanup_old_signals()
+                
+                # Get timeframes that need scanning
+                timeframes_to_scan = self.hybrid_timing.get_timeframes_to_scan()
+                
+                if not timeframes_to_scan:
+                    sleep_time = self.hybrid_timing.get_sleep_time()
+                    logger.info(f"⏰ {self.pair_group}: No timeframes need scanning, sleeping {sleep_time:.0f}s")
+                    return sleep_time
+                
+                logger.info(f"🔍 {self.pair_group}: Scanning timeframes: {timeframes_to_scan}")
+                
+                # Optimized data fetching - only fetch needed timeframes
+                await self._fetch_data_selective(timeframes_to_scan, api_key)
+                
+                # Run specific scans based on timeframe
+                results = {
+                    'fvg': False,
+                    'sd': False,
+                    'crt': False,
+                    'double_smt': False,
+                    'tpd': False
+                }
+                
+                # Check for quick scans (M5, M15) - mostly for TPD/CRT
+                quick_tfs = [tf for tf in timeframes_to_scan if tf in ['M5', 'M15']]
+                if quick_tfs:
+                    results['tpd'] = self._scan_quick_timeframes(quick_tfs)
+                
+                # Check for normal scans (H1) - SMT/CRT
+                normal_tfs = [tf for tf in timeframes_to_scan if tf in ['H1']]
+                if normal_tfs:
+                    results['crt'] = self._scan_crt_smt_confluence()
+                    results['double_smt'] = self._scan_double_smts_temporal()
+                
+                # Check for deep scans (H4, D, W) - SD zones, SMT
+                deep_tfs = [tf for tf in timeframes_to_scan if tf in ['H4', 'D', 'W']]
+                if deep_tfs:
+                    results['sd'] = self._scan_sd_with_smt_tap()
+                    results['fvg'] = self._scan_fvg_with_smt_tap()
+                
+                # Log results
+                signals_found = sum(results.values())
+                logger.info(f"🎯 Signals found: {signals_found} {results}")
+                
+                # Update feature summary
+                summary = self.feature_box.get_active_features_summary()
+                logger.info(f"📊 {self.pair_group} Feature Summary: {summary['smt_count']} SMTs, {summary['sd_zone_count']} SD zones, {summary['crt_count']} CRTs, {summary['psp_count']} PSPs, {summary['tpd_count']} TPDs")
+                
+                return self.hybrid_timing.get_sleep_time()
+                
+            except Exception as e:
+                logger.error(f"❌ Error in optimized analysis for {self.pair_group}: {str(e)}", exc_info=True)
+                return 60
+
     def debug_sd_zones(self):
         """Debug Supply/Demand zones in FeatureBox"""
         logger.info(f"🔧 DEBUG: SD Zones in FeatureBox for {self.pair_group}")
