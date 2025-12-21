@@ -4220,7 +4220,6 @@ class UltimateTradingSystem:
         self._cleanup_old_sd_zone_signals()      # NEW
         self._cleanup_old_sd_hp_signals()        # NEW
         self._cleanup_old_fvg_ideas_signals()    # NEW
-        self._cleanup_old_tpd_signals()
         
         logger.debug("✅ All old signal cleanups completed (7-day threshold)")
     
