@@ -4173,7 +4173,7 @@ class UltimateTradingSystem:
         self.sd_hp_sent = {}    # For High Probability SD zone signals    
         self.fvg_ideas_sent = {}
         self.double_smt_sent = {}
-        self.smart_timing = SmartTimingSystem()
+        self.hybrid_timing = HybridTimingSystem(pair_group)
         self.last_candle_scan = {}
         # Cooldown periods (in seconds)
         self.COOLDOWN_HOURS = 24 * 3600  # 24 hours
