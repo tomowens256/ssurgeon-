@@ -3937,8 +3937,8 @@ class SupplyDemandDetector:
                 # Zone range for demand:
                 # zone_low = lower of (close of A, open of B)
                 # zone_high = lowest low of candles A and B
-                zone_low = min(candle_a['close'], candle_b['open'])
-                zone_high = min(candle_a['low'], candle_b['low'])
+                zone_high = min(candle_a['close'], candle_b['open'])
+                zone_low = min(candle_a['low'], candle_b['low'])
                 
                 # Check activation: need price to close above candle A's high
                 subsequent_start = i + 2
@@ -4008,8 +4008,8 @@ class SupplyDemandDetector:
                 # Zone range for supply:
                 # zone_low = highest high of candles A and B
                 # zone_high = higher of (close of A, open of B)
-                zone_low = max(candle_a['high'], candle_b['high'])
-                zone_high = max(candle_a['close'], candle_b['open'])
+                zone_high = max(candle_a['high'], candle_b['high'])
+                zone_low = min(candle_a['close'], candle_b['open'])
                 
                 # Check activation: need price to close below candle A's low
                 subsequent_start = i + 2
