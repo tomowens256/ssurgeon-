@@ -3701,7 +3701,7 @@ class SupplyDemandDetector:
         }
     
     def check_zone_still_valid(self, zone, current_data, other_asset_data=None):
-        """Check if a zone is still valid - NEW INVALIDATION RULES"""
+        """Check if a zone is still valid - CORRECTED INVALIDATION RULES"""
         try:
             if current_data is None or current_data.empty:
                 logger.debug(f"📭 No current data for zone validation: {zone.get('zone_name', 'Unknown')}")
@@ -3766,16 +3766,17 @@ class SupplyDemandDetector:
                 logger.debug(f"📭 No candles after formation for: {zone.get('zone_name', 'Unknown')}")
                 return True
             
-            # ===== NEW INVALIDATION RULES =====
+            # ===== CORRECTED INVALIDATION RULES =====
             # Check expiration: 35 candles from creation
             candles_since_creation = len(subsequent_candles)
             if candles_since_creation >= 35:
                 logger.info(f"⏰ ZONE EXPIRED (35 candles): {zone.get('zone_name', 'Unknown')}")
                 return False
             
-            # Check for invalidation
+            # Check for invalidation - CORRECTED LOGIC
             if zone_type == 'demand':
-                # DEMAND zone invalidated if ANY candle's LOW < zone_low (which is lowest low of A & B)
+                # DEMAND zone invalidated if ANY candle's LOW < zone_low
+                # zone_low = lowest low of A & B
                 if (subsequent_candles['low'] < zone_low).any():
                     breach_idx = subsequent_candles['low'].idxmin()
                     breach_candle = subsequent_candles.loc[breach_idx]
@@ -3783,7 +3784,8 @@ class SupplyDemandDetector:
                     logger.info(f"   Low {breach_candle['low']} < Zone low {zone_low}")
                     return False
             else:  # supply zone
-                # SUPPLY zone invalidated if ANY candle's HIGH > zone_high (which is highest high of A & B)
+                # SUPPLY zone invalidated if ANY candle's HIGH > zone_high
+                # zone_high = highest high of A & B
                 if (subsequent_candles['high'] > zone_high).any():
                     breach_idx = subsequent_candles['high'].idxmax()
                     breach_candle = subsequent_candles.loc[breach_idx]
@@ -3817,26 +3819,50 @@ class SupplyDemandDetector:
         
         return wick_percentage
     
-    def is_demand_zone(self, candle_a, candle_b):
-        """Check if two consecutive candles form a valid demand zone"""
-        # Demand: Candle A bearish, Candle B bullish
+    def check_candles_opposite_direction(self, candle_a, candle_b):
+        """Check if two consecutive candles are in opposite directions"""
+        # Determine direction of each candle
+        a_bullish = candle_a['close'] > candle_a['open']
+        b_bullish = candle_b['close'] > candle_b['open']
+        
+        # Return True if directions are opposite
+        return a_bullish != b_bullish
+    
+    def is_demand_candles(self, candle_a, candle_b):
+        """Check if two consecutive candles match demand pattern"""
+        # Demand pattern: A bearish, B bullish
         if candle_a['close'] >= candle_a['open']:  # Candle A not bearish
             return False
         if candle_b['close'] <= candle_b['open']:  # Candle B not bullish
             return False
         return True
     
-    def is_supply_zone(self, candle_a, candle_b):
-        """Check if two consecutive candles form a valid supply zone"""
-        # Supply: Candle A bullish, Candle B bearish
+    def is_supply_candles(self, candle_a, candle_b):
+        """Check if two consecutive candles match supply pattern"""
+        # Supply pattern: A bullish, B bearish
         if candle_a['close'] <= candle_a['open']:  # Candle A not bullish
             return False
         if candle_b['close'] >= candle_b['open']:  # Candle B not bearish
             return False
         return True
     
+    def check_zone_activation(self, candle_a, subsequent_candles, zone_type):
+        """Check if zone is activated (price closes above candle A's high for demand, below candle A's low for supply)"""
+        if zone_type == 'demand':
+            # Demand: check if any subsequent candle closes above candle A's high
+            for _, candle in subsequent_candles.iterrows():
+                if candle['close'] > candle_a['high']:
+                    return True
+            return False
+        else:  # supply
+            # Supply: check if any subsequent candle closes below candle A's low
+            for _, candle in subsequent_candles.iterrows():
+                if candle['close'] < candle_a['low']:
+                    return True
+            return False
+    
     def check_zone_invalidation(self, zone, subsequent_candles, zone_type, asset, other_asset_data=None):
-        """Check if zone is invalidated - NEW RULES"""
+        """Check if zone is invalidated - CORRECTED RULES"""
         zone_low = zone['zone_low']
         zone_high = zone['zone_high']
         
@@ -3894,7 +3920,7 @@ class SupplyDemandDetector:
             # Convert from current timezone to NY_TZ
             closed_data['time'] = closed_data['time'].dt.tz_convert(NY_TZ)
         
-        # ==================== A-B CANDLE LOGIC ====================
+        # ==================== IMPROVED A-B CANDLE LOGIC ====================
         logger.info(f"🔄 Scanning for A-B candle patterns for {asset} {timeframe}")
         
         # Iterate through candles to find A-B patterns
@@ -3902,42 +3928,39 @@ class SupplyDemandDetector:
             candle_a = closed_data.iloc[i]
             candle_b = closed_data.iloc[i + 1]
             
-            # Check for DEMAND zone (A bearish, B bullish)
-            if self.is_demand_zone(candle_a, candle_b):
+            # FIRST: Check if candles are in opposite directions
+            if not self.check_candles_opposite_direction(candle_a, candle_b):
+                continue  # Skip, not opposite directions
+            
+            # SECOND: Check for DEMAND zone (A bearish, B bullish)
+            if self.is_demand_candles(candle_a, candle_b):
                 # Zone range for demand:
                 # zone_low = lower of (close of A, open of B)
                 # zone_high = lowest low of candles A and B
                 zone_low = min(candle_a['close'], candle_b['open'])
                 zone_high = min(candle_a['low'], candle_b['low'])
                 
-                # Additional filter: wait for price to close above candle A's high
+                # Check activation: need price to close above candle A's high
                 subsequent_start = i + 2
                 if subsequent_start < len(closed_data):
                     subsequent_candles = closed_data.iloc[subsequent_start:]
                     
                     # Check if price ever closes above candle A's high
-                    activated = False
-                    for _, candle in subsequent_candles.iterrows():
-                        if candle['close'] > candle_a['high']:
-                            activated = True
-                            break
-                    
-                    if not activated:
+                    if not self.check_zone_activation(candle_a, subsequent_candles, 'demand'):
                         continue  # Skip this zone, not activated
                 
-                # Check for invalidation in subsequent candles
+                # Check for immediate invalidation
                 subsequent_start = i + 2
                 if subsequent_start < len(closed_data):
                     subsequent_candles = closed_data.iloc[subsequent_start:min(subsequent_start + 35, len(closed_data))]
                     
                     # Skip if immediately invalidated (price goes below zone_low)
-                    invalidated = False
-                    for _, candle in subsequent_candles.iterrows():
-                        if candle['low'] < zone_low:  # Price trades below lowest low
-                            invalidated = True
-                            break
-                    
-                    if invalidated:
+                    if self.check_zone_invalidation(
+                        {'zone_low': zone_low, 'zone_high': zone_high, 'type': 'demand'},
+                        subsequent_candles,
+                        'demand',
+                        asset
+                    ):
                         continue
                 
                 # Create demand zone
@@ -3975,46 +3998,40 @@ class SupplyDemandDetector:
                 zones.append(zone)
                 logger.debug(f"✅ Found DEMAND zone: {zone['zone_name']}")
                 logger.debug(f"   Zone range: {zone_low} to {zone_high}")
-                logger.debug(f"   Candle A: {candle_a['open']} -> {candle_a['close']} (bearish)")
-                logger.debug(f"   Candle B: {candle_b['open']} -> {candle_b['close']} (bullish)")
+                logger.debug(f"   Candle A (bearish): {candle_a['open']} -> {candle_a['close']}")
+                logger.debug(f"   Candle B (bullish): {candle_b['open']} -> {candle_b['close']}")
+                logger.debug(f"   Activation: Price closed above {candle_a['high']}")
                 logger.debug(f"   Invalidation: Price below {zone_low}")
             
-            # Check for SUPPLY zone (A bullish, B bearish)
-            elif self.is_supply_zone(candle_a, candle_b):
+            # THIRD: Check for SUPPLY zone (A bullish, B bearish)
+            elif self.is_supply_candles(candle_a, candle_b):
                 # Zone range for supply:
                 # zone_low = highest high of candles A and B
                 # zone_high = higher of (close of A, open of B)
                 zone_low = max(candle_a['high'], candle_b['high'])
                 zone_high = max(candle_a['close'], candle_b['open'])
                 
-                # Additional filter: wait for price to close below candle A's low
+                # Check activation: need price to close below candle A's low
                 subsequent_start = i + 2
                 if subsequent_start < len(closed_data):
                     subsequent_candles = closed_data.iloc[subsequent_start:]
                     
                     # Check if price ever closes below candle A's low
-                    activated = False
-                    for _, candle in subsequent_candles.iterrows():
-                        if candle['close'] < candle_a['low']:
-                            activated = True
-                            break
-                    
-                    if not activated:
+                    if not self.check_zone_activation(candle_a, subsequent_candles, 'supply'):
                         continue  # Skip this zone, not activated
                 
-                # Check for invalidation in subsequent candles
+                # Check for immediate invalidation
                 subsequent_start = i + 2
                 if subsequent_start < len(closed_data):
                     subsequent_candles = closed_data.iloc[subsequent_start:min(subsequent_start + 35, len(closed_data))]
                     
                     # Skip if immediately invalidated (price goes above zone_high)
-                    invalidated = False
-                    for _, candle in subsequent_candles.iterrows():
-                        if candle['high'] > zone_high:  # Price trades above highest high
-                            invalidated = True
-                            break
-                    
-                    if invalidated:
+                    if self.check_zone_invalidation(
+                        {'zone_low': zone_low, 'zone_high': zone_high, 'type': 'supply'},
+                        subsequent_candles,
+                        'supply',
+                        asset
+                    ):
                         continue
                 
                 # Create supply zone
@@ -4052,41 +4069,44 @@ class SupplyDemandDetector:
                 zones.append(zone)
                 logger.debug(f"✅ Found SUPPLY zone: {zone['zone_name']}")
                 logger.debug(f"   Zone range: {zone_low} to {zone_high}")
-                logger.debug(f"   Candle A: {candle_a['open']} -> {candle_a['close']} (bullish)")
-                logger.debug(f"   Candle B: {candle_b['open']} -> {candle_b['close']} (bearish)")
+                logger.debug(f"   Candle A (bullish): {candle_a['open']} -> {candle_a['close']}")
+                logger.debug(f"   Candle B (bearish): {candle_b['open']} -> {candle_b['close']}")
+                logger.debug(f"   Activation: Price closed below {candle_a['low']}")
                 logger.debug(f"   Invalidation: Price above {zone_high}")
         
         # ==================== FILTER OVERLAPPING ZONES ====================
-        # Remove zones that overlap significantly
         filtered_zones = []
-        zones.sort(key=lambda x: x['formation_time'])
-        
-        for i, zone in enumerate(zones):
-            if i == 0:
-                filtered_zones.append(zone)
-                continue
+        if zones:
+            # Sort by formation time
+            zones.sort(key=lambda x: x['formation_time'])
             
-            # Check if this zone overlaps with previous zone
-            prev_zone = filtered_zones[-1]
-            
-            # Calculate overlap percentage
-            overlap_low = max(zone['zone_low'], prev_zone['zone_low'])
-            overlap_high = min(zone['zone_high'], prev_zone['zone_high'])
-            
-            if overlap_low < overlap_high:  # There is overlap
-                zone_range = zone['zone_high'] - zone['zone_low']
-                overlap_range = overlap_high - overlap_low
-                overlap_pct = (overlap_range / zone_range) * 100
-                
-                if overlap_pct > 50:  # More than 50% overlap
-                    # Keep the zone with stronger wick percentage
-                    if zone['wick_percentage'] > prev_zone['wick_percentage']:
-                        filtered_zones[-1] = zone
+            for i, zone in enumerate(zones):
+                if i == 0:
+                    filtered_zones.append(zone)
                     continue
-            
-            filtered_zones.append(zone)
+                
+                # Check if this zone overlaps with previous zone
+                prev_zone = filtered_zones[-1]
+                
+                # Calculate overlap percentage
+                overlap_low = max(zone['zone_low'], prev_zone['zone_low'])
+                overlap_high = min(zone['zone_high'], prev_zone['zone_high'])
+                
+                if overlap_low < overlap_high:  # There is overlap
+                    zone_range = zone['zone_high'] - zone['zone_low']
+                    if zone_range > 0:
+                        overlap_range = overlap_high - overlap_low
+                        overlap_pct = (overlap_range / zone_range) * 100
+                        
+                        if overlap_pct > 50:  # More than 50% overlap
+                            # Keep the zone with stronger wick percentage
+                            if zone['wick_percentage'] > prev_zone['wick_percentage']:
+                                filtered_zones[-1] = zone
+                            continue
+                
+                filtered_zones.append(zone)
         
-        logger.info(f"🔍 A-B Pattern Scan {asset} {timeframe}: Found {len(filtered_zones)} zones (from {len(zones)} raw)")
+        logger.info(f"🔍 A-B Pattern Scan {asset} {timeframe}: Found {len(filtered_zones)} valid zones (from {len(zones)} raw candidates)")
         
         # Debug: Log first few zones found
         if filtered_zones and len(filtered_zones) > 0:
@@ -4096,11 +4116,11 @@ class SupplyDemandDetector:
                 logger.info(f"      Invalidation: Price {'below' if zone['type'] == 'demand' else 'above'} {zone['zone_low'] if zone['type'] == 'demand' else zone['zone_high']}")
                 logger.info(f"      Formed: {zone['formation_time']}")
         else:
-            logger.info(f"   No zones found for {asset} {timeframe}")
+            logger.info(f"   No valid zones found for {asset} {timeframe}")
         
         return filtered_zones
     
-    def scan_all_timeframes(self, market_data, instruments, timeframes=['M15', 'H1', 'H4','D' , 'W']):
+    def scan_all_timeframes(self, market_data, instruments, timeframes=['M15', 'H1', 'H4','D' ,'W']):
         """Scan all instruments and timeframes for zones"""
         all_zones = []
         
@@ -4112,7 +4132,7 @@ class SupplyDemandDetector:
                     all_zones.extend(zones)
         
         # Sort by timeframe importance (H4 > H1 > M15 > M5)
-        timeframe_order = {'W': 6, 'D' : 5 ,'H4': 4, 'H1': 3, 'M15': 2, 'M5': 1}
+        timeframe_order = {'W' :6 ,'D' : 5,'H4': 4, 'H1': 3, 'M15': 2, 'M5': 1}
         all_zones.sort(key=lambda x: timeframe_order.get(x['timeframe'], 0), reverse=True)
         
         return all_zones
