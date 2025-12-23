@@ -3941,7 +3941,7 @@ class SupplyDemandDetector:
                 zone_low = min(candle_a['low'], candle_b['low'])
 
                 current_index = len(closed_data) - 1  # Last candle index
-                if i >= current_index - 2:  # Zone formed within last 2 candles
+                if i >= current_index - 3:  # Zone formed within last 2 candles
                     logger.debug(f"⏭️ Skipping demand zone at index {i} - too new (within last 2 candles)")
                     continue
                 
@@ -4018,7 +4018,7 @@ class SupplyDemandDetector:
 
                 # Check if zone is at least 2 candles old (skip if too new)
                 current_index = len(closed_data) - 1  # Last candle index
-                if i >= current_index - 2:  # Zone formed within last 2 candles
+                if i >= current_index - 3:  # Zone formed within last 2 candles
                     logger.debug(f"⏭️ Skipping supply zone at index {i} - too new (within last 2 candles)")
                     continue
                     
