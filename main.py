@@ -5258,7 +5258,7 @@ class UltimateTradingSystem:
         
         # Timeframe mapping: SD Zone -> allowed SMT cycles
         sd_to_smt_cycles = {
-            'H4': ['weekly', 'daily','monthly'],      # H4 Zone → Weekly (H1) or Daily (M15) SMT
+            'H4': ['weekly', 'daily','monthly'],      # H4 Zone → Weekly (H1) or Daily (M15) SMTs
             'H1': ['weekly', 'daily','90min'],      # H1 Zone → Weekly (H1) or Daily (M15) SMT  
             'M15': ['daily','90min'],               # M15 Zone → Daily (M15) SMT
             'M5': ['daily','90min'],                 # M5 Zone → 90min (M5) SMT
