@@ -4239,63 +4239,85 @@ class UltimateTradingSystem:
         """Use smart timing instead of fixed intervals"""
         return self.hybrid_timing.get_sleep_time()
     
-    async def run_ultimate_analysis(self, api_key):
-        """Run analysis triggered by new candle formation"""
-        try:
-            # Cleanup expired features first
-            self.feature_box.cleanup_expired_features()
-            self.cleanup_old_signals()
+        async def run_ultimate_analysis(self, api_key):
+            """Run analysis triggered by new candle formation - with short-circuit optimization"""
+            try:
+                # Cleanup expired features first
+                self.feature_box.cleanup_expired_features()
+                self.cleanup_old_signals()
+                
+                # Fetch data (this will get the new candle)
+                await self._fetch_all_data_parallel(api_key)
+        
+                self.reset_smt_detector_state()
+                
+                # Check if we have new candles that warrant immediate scanning
+                new_candles_detected = self._check_new_candles()
+                
+                if new_candles_detected:
+                    logger.info(f"🎯 NEW CANDLES DETECTED - Running analysis")
+                    
+                    # Scan for new features and add to Feature Box
+                    await self._scan_and_add_features_immediate()
+                    
+                    # ✅ Scan for Supply/Demand zones and add to FeatureBox
+                    self._scan_and_add_sd_zones()
+                    
+                    self.debug_feature_box()
+                    self.debug_smt_detection()
+                    
+                    # ✅ Run scans in ORDER with SHORT-CIRCUIT optimization
+                    # If one scan returns True, skip the rest to save processing
+                    
+                    signals_found = 0
+                    signal_types = []
+                    
+                    # 1. FVG+SMT Scan
+                    fvg_signal = self._scan_fvg_with_smt_tap()
+                    if fvg_signal:
+                        signals_found = 1
+                        signal_types.append("FVG")
+                        logger.info(f"✅ FVG signal found - skipping remaining scans")
+                    else:
+                        # 2. Supply/Demand+SMT Scan
+                        sd_signal = self._scan_sd_with_smt_tap()
+                        if sd_signal:
+                            signals_found = 1
+                            signal_types.append("SD")
+                            logger.info(f"✅ SD signal found - skipping remaining scans")
+                        else:
+                            # 3. CRT+SMT Scan (including TPD)
+                            crt_signal = self._scan_crt_smt_confluence()
+                            if crt_signal:
+                                signals_found = 1
+                                signal_types.append("CRT/TPD")
+                                logger.info(f"✅ CRT/TPD signal found - skipping remaining scans")
+                            else:
+                                # 4. Double SMT Scan
+                                double_signal = self._scan_double_smts_temporal()
+                                if double_signal:
+                                    signals_found = 1
+                                    signal_types.append("Double SMT")
+                                    logger.info(f"✅ Double SMT signal found")
+                                else:
+                                    logger.info(f"🔍 No signals found in any scan")
+                    
+                    # Log what we found
+                    logger.info(f"🎯 Total signals found: {signals_found} ({', '.join(signal_types) if signal_types else 'None'})")
+                    
+                    # Get current feature summary
+                    summary = self.feature_box.get_active_features_summary()
+                    sd_count = len(self.feature_box.active_features['sd_zone'])
+                    logger.info(f"📊 {self.pair_group} Feature Summary: {summary['smt_count']} SMTs, {sd_count} SD zones, {summary['crt_count']} CRTs, {summary['psp_count']} PSPs, {summary.get('tpd_count', 0)} TPDs")
+                else:
+                    logger.info(f"⏸️ No new candles - skipping analysis")
+                
+                return None
+                
+            except Exception as e:
+                logger.error(f"❌ Error in candle-triggered analysis for {self.pair_group}: {str(e)}", exc_info=True)
+                return None
             
-            # Fetch data (this will get the new candle)
-            await self._fetch_all_data_parallel(api_key)
-    
-            self.reset_smt_detector_state()
-            
-            # Check if we have new candles that warrant immediate scanning
-            new_candles_detected = self._check_new_candles()
-            
-            if new_candles_detected:
-                logger.info(f"🎯 NEW CANDLES DETECTED - Running analysis")
-                
-                # Scan for new features and add to Feature Box
-                await self._scan_and_add_features_immediate()
-                
-                # ✅ Scan for Supply/Demand zones and add to FeatureBox
-                self._scan_and_add_sd_zones()
-                
-                self.debug_feature_box()
-                self.debug_smt_detection()
-                
-                # ✅ Run ALL scans - they each check for signals independently
-                
-                # 1. FVG+SMT Scan
-                fvg_signal = self._scan_fvg_with_smt_tap()
-                
-                # 2. Supply/Demand+SMT Scan (regardless of FVG result)
-                sd_signal = self._scan_sd_with_smt_tap()
-                
-                # 3. CRT+SMT Scan (regardless of previous results)
-                crt_signal = self._scan_crt_smt_confluence()
-                
-                # 4. Double SMT Scan (regardless of previous results)
-                double_signal = self._scan_double_smts_temporal()
-                
-                # Log what we found
-                signals_found = sum([fvg_signal, sd_signal, crt_signal, double_signal])
-                logger.info(f"🎯 Signals found: {signals_found} (FVG:{fvg_signal}, SD:{sd_signal}, CRT:{crt_signal}, Double:{double_signal})")
-                
-                # Get current feature summary
-                summary = self.feature_box.get_active_features_summary()
-                sd_count = len(self.feature_box.active_features['sd_zone'])
-                logger.info(f"📊 {self.pair_group} Feature Summary: {summary['smt_count']} SMTs, {sd_count} SD zones, {summary['crt_count']} CRTs, {summary['psp_count']} PSPs, {summary.get('tpd_count', 0)} TPDs")
-            else:
-                logger.info(f"⏸️ No new candles - skipping analysis")
-            
-            return None
-            
-        except Exception as e:
-            logger.error(f"❌ Error in candle-triggered analysis for {self.pair_group}: {str(e)}", exc_info=True)
-            return None
 
         async def run_optimized_analysis(self, api_key):
             """Run analysis only for timeframes that need scanning"""
