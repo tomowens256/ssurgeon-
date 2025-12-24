@@ -58,37 +58,6 @@ TRADING_PAIRS = {
             '90min': 'M5'
         }
     },
-    'EXOTIC JPY': {
-        'pair1': 'USD_JPY',
-        'pair2': 'CAD_JPY',
-        'timeframe_mapping': {
-            'monthly': 'H4',
-            'weekly': 'H1',
-            'daily': 'M15', 
-            '90min': 'M5'
-        }
-    },
-    'jpy_triad': {
-        'pair1': 'EUR_JPY',  # OLD structure
-        'pair2': 'GBP_JPY',  # OLD structure
-        'instruments': ['EUR_JPY', 'GBP_JPY'],  # NEW structure
-        'timeframe_mapping': {
-            'monthly': 'H4',
-            'weekly': 'H1',
-            'daily': 'M15',
-            '90min': 'M5'
-        }
-    },
-    'us_indices2': {
-        'pair1': 'NAS100_USD',
-        'pair2': 'SPX500_USD',
-        'timeframe_mapping': {
-            'monthly': 'H4',
-            'weekly': 'H1',
-            'daily': 'M15', 
-            '90min': 'M5'
-        }
-    },
     'european_indices': {
         'pair1': 'DE30_EUR',
         'pair2': 'EU50_EUR',
