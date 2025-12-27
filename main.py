@@ -4241,7 +4241,7 @@ class UltimateTradingSystem:
                 # Define scan pipeline in priority order
             scan_pipeline = [
                 ("FVG+SMT", self._scan_fvg_with_smt_tap),
-                ("SD+SMT", self._scan_fvg_with_smt_tap),
+                ("SD+SMT", self._scan_sd_with_smt_tap),
                 ("CRT/TPD", self._scan_crt_smt_confluence),
                 ("Double SMT", self._scan_double_smts_temporal)
             ]
