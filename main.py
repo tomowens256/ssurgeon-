@@ -5260,11 +5260,11 @@ class UltimateTradingSystem:
         # Timeframe mapping: SD Zone -> allowed SMT cycles
         sd_to_smt_cycles = {
             'H4': ['weekly', 'daily','monthly'],      # H4 Zone → Weekly (H1) or Daily (M15) SMTs
-            'H1': ['weekly', 'daily','90min'],      # H1 Zone → Weekly (H1) or Daily (M15) SMT  
-            'M15': ['daily','90min'],               # M15 Zone → Daily (M15) SMT
-            'M5': ['daily','90min'],                 # M5 Zone → 90min (M5) SMT
-            'D' :['weekly', 'daily','monthly'],
-            'W' :['weekly', 'daily','monthly']
+            'H1': ['weekly', 'daily','90min'],        # H1 Zone → Weekly (H1) or Daily (M15) SMT  
+            'M15': ['daily','90min'],                 # M15 Zone → Daily (M15) SMT
+            'M5': ['daily','90min'],                  # M5 Zone → 90min (M5) SMT
+            'D' : ['weekly', 'daily','monthly'],
+            'W' : ['weekly', 'daily','monthly']
         }
         
         # Get all active SD zones from FeatureBox
@@ -5321,13 +5321,60 @@ class UltimateTradingSystem:
                 if not has_psp:
                     continue
                 
-                # ✅ USE THE SAME FUNCTION AS FVG!
+                # ✅ Get SMT second swing details for this asset
+                swing_times = smt_data.get('swing_times', {})
+                
+                # Determine which asset key to use
+                if zone_asset == self.instruments[0]:
+                    asset_key = 'asset1_curr'
+                else:
+                    asset_key = 'asset2_curr'
+                
+                # Get the current swing for this asset
+                asset_curr = swing_times.get(asset_key, {})
+                
+                if not asset_curr:
+                    logger.info(f"⚠️ No swing data for {zone_asset} in SMT {smt_cycle}")
+                    continue
+                
+                # Extract second swing details
+                if isinstance(asset_curr, dict):
+                    second_swing_time = asset_curr.get('time')
+                    second_swing_price = asset_curr.get('price')
+                    second_swing_type = asset_curr.get('type', 'high' if smt_data['direction'] == 'bearish' else 'low')
+                else:
+                    # Fallback: try to get price from other fields
+                    second_swing_time = asset_curr
+                    second_swing_price = smt_data.get('price')
+                    second_swing_type = 'high' if smt_data['direction'] == 'bearish' else 'low'
+                
+                if not second_swing_time or not second_swing_price:
+                    logger.info(f"⚠️ No swing price/time found for {zone_asset} in SMT {smt_cycle}")
+                    continue
+                
+                # ✅ REJECT if SMT second swing is BEFORE zone formation
+                if second_swing_time <= zone_formation_time:
+                    logger.info(f"❌ SD+SMT REJECTED: SMT {smt_cycle} second swing at {second_swing_time} is BEFORE zone formation at {zone_formation_time}")
+                    continue  # Skip this SMT
+                
+                # ✅ CRITICAL: Check if zone was invalidated BEFORE SMT swing (by any candle)
+                # Get candles between zone formation and SMT swing time
+                if self._was_zone_invalidated_before_smt_swing(zone, second_swing_time):
+                    logger.info(f"❌ SD+SMT REJECTED: Zone {zone['zone_name']} was invalidated BEFORE SMT swing at {second_swing_time}")
+                    continue
+                
+                # ✅ Now check if SMT swing actually tapped the zone
                 tapped = self._check_cross_tf_smt_second_swing_in_fvg(
                     smt_data, zone_asset, zone_low, zone_high, zone_direction,
                     zone_timeframe, smt_cycle, zone_formation_time
                 )
                 
                 if tapped:
+                    # ✅ CRITICAL: Check if SMT swing itself invalidated the zone
+                    if self._did_smt_swing_invalidate_zone(zone, smt_data, second_swing_price, second_swing_type):
+                        logger.info(f"❌ SD+SMT REJECTED: SMT {smt_cycle} swing INVALIDATED the zone {zone['zone_name']}")
+                        continue
+                    
                     # Check for High Probability: Zone within higher TF zone of same direction
                     is_hp_zone = self._check_hp_sd_zone(zone, zone_direction)
                     
