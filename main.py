@@ -5316,10 +5316,11 @@ class UltimateTradingSystem:
                 if zone_type == 'demand' and smt_data['direction'] != 'bullish':
                     continue
                 
-                # Check PSP requirement
+                # ✅ MODIFIED: PSP is NOT required, but we note if it exists
                 has_psp = smt_feature['psp_data'] is not None
                 if not has_psp:
-                    continue
+                    logger.info(f"⚠️ SMT {smt_cycle} has no PSP confirmation - STILL CHECKING")
+                    # Continue anyway - we don't skip!
                 
                 # ✅ Get SMT second swing details for this asset
                 swing_times = smt_data.get('swing_times', {})
@@ -5378,10 +5379,12 @@ class UltimateTradingSystem:
                     # Check for High Probability: Zone within higher TF zone of same direction
                     is_hp_zone = self._check_hp_sd_zone(zone, zone_direction)
                     
-                    logger.info(f"✅ SD+SMT TAP CONFIRMED: {smt_cycle} {smt_data['direction']} "
+                    # Log whether we have PSP or not
+                    psp_status = "WITH PSP" if has_psp else "WITHOUT PSP"
+                    logger.info(f"✅ SD+SMT TAP CONFIRMED {psp_status}: {smt_cycle} {smt_data['direction']} "
                                f"tapped {zone_timeframe} {zone_type} on {zone_asset}")
                     
-                    # Send the signal
+                    # Send the signal (with or without PSP)
                     return self._send_sd_smt_tap_signal(
                         zone, smt_data, has_psp, is_hp_zone
                     )
