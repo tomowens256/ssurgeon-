@@ -5901,7 +5901,9 @@ class UltimateTradingSystem:
             summary = self.feature_box.get_active_features_summary()
             sd_count = len(self.feature_box.active_features['sd_zone'])
             logger.info(f"📊 {self.pair_group} Feature Summary: {summary['smt_count']} SMTs, {sd_count} SD zones, {summary['crt_count']} CRTs, {summary['psp_count']} PSPs, {summary.get('tpd_count', 0)} TPDs")
-                
+
+            self.run_entry_monitoring()
+            
             return None
                 
         except Exception as e:
@@ -5968,6 +5970,12 @@ class UltimateTradingSystem:
             except Exception as e:
                 logger.error(f"❌ Error in optimized analysis for {self.pair_group}: {str(e)}", exc_info=True)
                 return 60
+
+        def get_entry_journal_stats(self):
+            """Get entry signal journal statistics"""
+            if hasattr(self, 'entry_signal_manager'):
+                return self.entry_signal_manager.get_journal_stats()
+            return {"total_entries": 0}
 
         def run_entry_monitoring(self):
             """Run entry signal monitoring"""
