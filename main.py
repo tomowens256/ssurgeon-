@@ -7623,6 +7623,23 @@ class UltimateTradingSystem:
         logger.info(f"🔍 No FVG+SMT setups with PSP found")
         return False
 
+    def run_entry_monitoring(self):
+        """Run entry signal monitoring after analysis"""
+        try:
+            # Process new signals from the analysis
+            self.entry_signal_manager.process_new_signals()
+            
+            # Monitor for entry conditions
+            self.entry_signal_manager.run_entry_monitoring_cycle()
+            
+            # Log status
+            active_setups = len(self.entry_signal_manager.monitored_setups)
+            traffic_lights = len(self.entry_signal_manager.traffic_lights)
+            logger.info(f"📊 Entry Monitoring: {active_setups} setups, {traffic_lights} traffic lights")
+            
+        except Exception as e:
+            logger.error(f"❌ Error in entry monitoring: {e}")
+
     def _check_cross_tf_smt_second_swing_in_fvg(self, smt_data, asset, fvg_low, fvg_high, fvg_direction, fvg_tf, smt_cycle, fvg_formation_time):
         """Check if SMT's second swing (on lower TF) entered FVG zone (on higher TF)"""
         try:
