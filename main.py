@@ -5971,6 +5971,15 @@ class UltimateTradingSystem:
                 logger.error(f"❌ Error in optimized analysis for {self.pair_group}: {str(e)}", exc_info=True)
                 return 60
 
+
+        # Add to UltimateTradingSystem class:
+        def cleanup_entry_monitoring(self):
+            """Cleanup entry monitoring resources"""
+            if hasattr(self, 'entry_signal_manager'):
+                # Optional: Save journal to file before cleanup
+                if hasattr(self.entry_signal_manager, '_save_journal_to_file'):
+                    self.entry_signal_manager._save_journal_to_file()
+            
         def get_entry_journal_stats(self):
             """Get entry signal journal statistics"""
             if hasattr(self, 'entry_signal_manager'):
