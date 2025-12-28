@@ -5796,14 +5796,6 @@ class UltimateTradingSystem:
             self.telegram_chat_id
         )
         
-        self.entry_signal_manager = EntrySignalManager(
-            pair_group=self.pair_group,
-            instruments=self.instruments,
-            market_data=self.market_data,
-            feature_box=self.feature_box,
-            telegram_token=self.telegram_token,
-            telegram_chat_id=self.telegram_chat_id
-        )
         
         # THEN create detectors and connect FeatureBox
         self.smt_detector = UltimateSMTDetector(pair_config, self.timing_manager)
@@ -5833,6 +5825,15 @@ class UltimateTradingSystem:
                 'H1': ['daily'], 
                 'M15': ['daily', '90min']
             }
+        self.entry_signal_manager = EntrySignalManager(
+            pair_group=self.pair_group,
+            instruments=self.instruments,
+            market_data=self.market_data,
+            feature_box=self.feature_box,
+            telegram_token=self.telegram_token,
+            telegram_chat_id=self.telegram_chat_id
+        )
+        
         
         
     def get_sleep_time(self):
