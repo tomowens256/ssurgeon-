@@ -8737,44 +8737,48 @@ class UltimateTradingManager:
         
         return message
     
+    # Modify the task creation in run_ultimate_systems:
     async def run_ultimate_systems(self):
         """Run all trading systems with ultimate decision making"""
         logger.info("🎯 Starting ULTIMATE Multi-Pair Trading System...")
         test_proven_quarter_patch()
-        api_key = os.getenv('OANDA_API_KEY')
-        telegram_token = os.getenv('TELEGRAM_BOT_TOKEN')
         
         while True:
             try:
                 tasks = []
-                sleep_times = []
                 
                 for pair_group, system in self.trading_systems.items():
-                    task = asyncio.create_task(
+                    # Task for main analysis
+                    task_analysis = asyncio.create_task(
                         system.run_ultimate_analysis(self.api_key),
                         name=f"ultimate_analysis_{pair_group}"
                     )
-                    tasks.append(task)
+                    tasks.append(task_analysis)
                     
-                    # Get sleep time for the fastest cycle (usually '90min')
-                    sleep_time = system.get_sleep_time_for_cycle('90min')  # or whichever cycle type you want
-                    sleep_times.append(sleep_time)
+                    # Task for entry monitoring (runs more frequently)
+                    # Using a wrapper to run entry monitoring with shorter intervals
+                    async def run_entry_wrapper(system_instance):
+                        while True:
+                            try:
+                                system_instance.run_entry_monitoring()
+                                await asyncio.sleep(3)  # Run every 3 seconds
+                            except Exception as e:
+                                logger.error(f"Entry monitoring error: {e}")
+                                await asyncio.sleep(3)
+                    
+                    task_entry = asyncio.create_task(
+                        run_entry_wrapper(system),
+                        name=f"entry_monitoring_{pair_group}"
+                    )
+                    tasks.append(task_entry)
                 
-                results = await asyncio.gather(*tasks, return_exceptions=True)
+                # Wait for all tasks
+                await asyncio.gather(*tasks, return_exceptions=True)
                 
-                signals = []
-                for i, result in enumerate(results):
-                    pair_group = list(self.trading_systems.keys())[i]
-                    if isinstance(result, Exception):
-                        logger.error(f"❌ Ultimate analysis task failed for {pair_group}: {str(result)}")
-                    elif result is not None:
-                        signals.append(result)
-                        logger.info(f"🎯 ULTIMATE SIGNAL FOUND for {pair_group}")
+                # Get sleep time from one system (they should be similar)
+                sample_system = next(iter(self.trading_systems.values()))
+                sleep_time = sample_system.get_sleep_time()
                 
-                if signals:
-                    await self._process_ultimate_signals(signals)
-                
-                sleep_time = min(sleep_times) if sleep_times else BASE_INTERVAL
                 logger.info(f"⏰ Ultimate cycle complete. Sleeping for {sleep_time:.1f} seconds")
                 await asyncio.sleep(sleep_time)
                 
