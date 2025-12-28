@@ -4136,6 +4136,1627 @@ class SupplyDemandDetector:
         all_zones.sort(key=lambda x: timeframe_order.get(x['timeframe'], 0), reverse=True)
         
         return all_zones
+
+
+class EntrySignalManager:
+    """Comprehensive entry signal manager with Fibonacci, Pin Bar detection, and traffic light system"""
+    
+    def __init__(self, pair_group, instruments, market_data, feature_box, 
+                 telegram_token=None, telegram_chat_id=None):
+        """
+        Initialize the entry signal manager
+        
+        Args:
+            pair_group (str): Trading pair group name
+            instruments (list): List of instruments in the group
+            market_data (dict): Market data from UltimateTradingSystem
+            feature_box (RealTimeFeatureBox): Active features/signals
+            telegram_token (str): Telegram bot token
+            telegram_chat_id (str): Telegram chat ID
+        """
+        self.pair_group = pair_group
+        self.instruments = instruments
+        self.market_data = market_data
+        self.feature_box = feature_box
+        self.telegram_token = telegram_token
+        self.telegram_chat_id = telegram_chat_id
+        
+        # Traffic light system for each monitored setup
+        self.traffic_lights = {}  # key: setup_id, value: {'state': 'green'/'yellow'/'red', 'setup_data': {...}}
+        
+        # Active entry monitoring
+        self.monitored_setups = {}  # key: setup_id, value: setup_data
+        
+        # Pin bar detection parameters
+        self.wick_threshold = 0.6  # 60% for Case 1
+        self.lower_wick_threshold = 0.25  # 25% for Case 2
+        
+        # Fibonacci levels
+        self.fib_levels = [0.0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0]
+        self.fib_extensions = [1.272, 1.414, 1.618, 2.0, 2.618, 3.618]
+        
+        # Timeframe mappings for different setups
+        self.setup_timeframe_mappings = {
+            # FVG + SMT setups
+            ('FVG_SMT_TAP', '15M'): {
+                'lq_candle_tf': ['3M'],
+                'pin_bar_tfs': ['5M', '3M']
+            },
+            ('FVG_SMT_TAP', '1H'): {
+                'daily_smt': {
+                    'lq_candle_tf': ['15M'],
+                    'pin_bar_tfs': ['15M', '5M']
+                },
+                'weekly_smt': {
+                    'lq_candle_tf': ['1H'],
+                    'pin_bar_tfs': ['15M', '30M']
+                }
+            },
+            ('FVG_SMT_TAP', '4H'): {
+                'daily_smt': {
+                    'lq_candle_tf': ['15M'],
+                    'pin_bar_tfs': ['15M', '5M']
+                },
+                'weekly_smt': {
+                    'lq_candle_tf': ['1H'],
+                    'pin_bar_tfs': ['15M', '30M']
+                }
+            },
+            # CRT + SMT setups
+            ('CRT_SMT', '1H'): {
+                'lq_candle_tf': ['5M'],
+                'pin_bar_tfs': ['5M']
+            },
+            ('CRT_SMT', '4H'): {
+                'lq_candle_tf': ['15M'],
+                'pin_bar_tfs': ['15M', '10M', '5M']
+            },
+            # Supply/Demand zone setups
+            ('SD_SMT_TAP', '1H'): {
+                'lq_candle_tf': ['5M', '15M'],
+                'pin_bar_tfs': ['15M', '5M']
+            },
+            ('SD_SMT_TAP', '15M'): {
+                'lq_candle_tf': ['5M', '3M'],
+                'pin_bar_tfs': ['5M', '3M']
+            },
+            ('SD_SMT_TAP', '4H'): {
+                'lq_candle_tf': ['15M'],
+                'pin_bar_tfs': ['15M']
+            },
+            ('SD_SMT_TAP', '1D'): {
+                'lq_candle_tf': ['1H'],
+                'pin_bar_tfs': ['1H', '15M']
+            }
+        }
+        
+        # Signal tracking
+        self.sent_entry_signals = {}  # key: entry_signal_id, value: sent_time
+        self.COOLDOWN_HOURS = 24 * 3600  # 24-hour cooldown for same setup
+        
+        # Journal for ML data
+        self.journal = []
+        
+        logger.info(f"🎯 EntrySignalManager initialized for {pair_group}")
+    
+    # ===================== FIBONACCI UTILITIES =====================
+    
+    def calculate_fib_levels(self, high, low, direction='bearish'):
+        """
+        Calculate Fibonacci retracement levels
+        
+        Args:
+            high (float): Swing high
+            low (float): Swing low
+            direction (str): 'bearish' or 'bullish'
+        
+        Returns:
+            dict: Fibonacci levels with prices
+        """
+        price_range = high - low
+        levels = {}
+        
+        for level in self.fib_levels:
+            if direction == 'bearish':
+                price = high - (price_range * level)
+            else:  # bullish
+                price = low + (price_range * level)
+            
+            levels[f'F{int(level*1000):03d}'] = {
+                'level': level,
+                'price': price,
+                'type': 'retracement'
+            }
+        
+        return levels
+    
+    def calculate_extensions(self, high, low, direction='bearish'):
+        """
+        Calculate Fibonacci extension levels
+        
+        Args:
+            high (float): Swing high
+            low (float): Swing low
+            direction (str): 'bearish' or 'bullish'
+        
+        Returns:
+            dict: Extension levels with prices
+        """
+        price_range = high - low
+        levels = {}
+        
+        for level in self.fib_extensions:
+            if direction == 'bearish':
+                price = low - (price_range * level)
+            else:  # bullish
+                price = high + (price_range * level)
+            
+            levels[f'EXT_{int(level*1000):03d}'] = {
+                'level': level,
+                'price': price,
+                'type': 'extension'
+            }
+        
+        return levels
+    
+    def get_level_at_price(self, price, fib_levels):
+        """Find which Fibonacci level the price is at"""
+        for level_name, level_data in sorted(fib_levels.items(), 
+                                            key=lambda x: x[1]['price']):
+            level_price = level_data['price']
+            # Check if price is within 0.1% of the level
+            if abs(price - level_price) / level_price < 0.001:
+                return level_data
+        return None
+    
+    def is_above_fib_level(self, price, fib_level, threshold_pct=0.001):
+        """Check if price is above a specific Fibonacci level"""
+        return price > fib_level['price'] * (1 + threshold_pct)
+    
+    def is_below_fib_level(self, price, fib_level, threshold_pct=0.001):
+        """Check if price is below a specific Fibonacci level"""
+        return price < fib_level['price'] * (1 - threshold_pct)
+    
+    # ===================== PIN BAR DETECTION =====================
+    
+    def detect_pin_bar(self, candle_data, direction='bearish'):
+        """
+        Case 1: Wick percentage > threshold (60%)
+        
+        Args:
+            candle_data (dict): {'open', 'high', 'low', 'close'}
+            direction (str): 'bearish' or 'bullish'
+        
+        Returns:
+            dict: Pin bar info or None
+        """
+        try:
+            o = candle_data['open']
+            h = candle_data['high']
+            l = candle_data['low']
+            c = candle_data['close']
+            
+            # Calculate wick percentages
+            upper_wick = h - max(o, c)
+            lower_wick = min(o, c) - l
+            total_range = h - l
+            
+            if total_range == 0:
+                return None
+            
+            upper_wick_pct = upper_wick / total_range
+            lower_wick_pct = lower_wick / total_range
+            
+            if direction == 'bearish':
+                if upper_wick_pct > self.wick_threshold:
+                    return {
+                        'type': 'PIN_BAR_CASE_1',
+                        'direction': direction,
+                        'wick_pct': upper_wick_pct,
+                        'condition': f'Upper wick {upper_wick_pct:.1%} > {self.wick_threshold:.0%}',
+                        'candle_data': candle_data
+                    }
+            else:  # bullish
+                if lower_wick_pct > self.wick_threshold:
+                    return {
+                        'type': 'PIN_BAR_CASE_1',
+                        'direction': direction,
+                        'wick_pct': lower_wick_pct,
+                        'condition': f'Lower wick {lower_wick_pct:.1%} > {self.wick_threshold:.0%}',
+                        'candle_data': candle_data
+                    }
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error detecting pin bar: {e}")
+            return None
+    
+    def detect_pin_bar_case2(self, current_candle, previous_candle, direction='bearish'):
+        """
+        Case 2: Previous candle took out high of candle before it AND closed below its low
+                AND lower wick is below 25%
+        
+        Args:
+            current_candle (dict): Candle N
+            previous_candle (dict): Candle N-1
+            direction (str): 'bearish' or 'bullish'
+        
+        Returns:
+            dict: Pin bar info or None
+        """
+        try:
+            if direction == 'bearish':
+                # Current candle must take out high of previous candle
+                if current_candle['high'] > previous_candle['high']:
+                    # Current candle must close below low of previous candle
+                    if current_candle['close'] < previous_candle['low']:
+                        # Calculate lower wick percentage
+                        lower_wick = min(current_candle['open'], current_candle['close']) - current_candle['low']
+                        total_range = current_candle['high'] - current_candle['low']
+                        
+                        if total_range == 0:
+                            return None
+                        
+                        lower_wick_pct = lower_wick / total_range
+                        
+                        # Lower wick must be below threshold
+                        if lower_wick_pct < self.lower_wick_threshold:
+                            return {
+                                'type': 'PIN_BAR_CASE_2',
+                                'direction': direction,
+                                'wick_pct': lower_wick_pct,
+                                'condition': f'Bearish engulfing with lower wick {lower_wick_pct:.1%} < {self.lower_wick_threshold:.0%}',
+                                'candle_data': current_candle,
+                                'previous_candle': previous_candle
+                            }
+            
+            else:  # bullish
+                # Current candle must take out low of previous candle
+                if current_candle['low'] < previous_candle['low']:
+                    # Current candle must close above high of previous candle
+                    if current_candle['close'] > previous_candle['high']:
+                        # Calculate upper wick percentage
+                        upper_wick = current_candle['high'] - max(current_candle['open'], current_candle['close'])
+                        total_range = current_candle['high'] - current_candle['low']
+                        
+                        if total_range == 0:
+                            return None
+                        
+                        upper_wick_pct = upper_wick / total_range
+                        
+                        # Upper wick must be below threshold
+                        if upper_wick_pct < self.lower_wick_threshold:
+                            return {
+                                'type': 'PIN_BAR_CASE_2',
+                                'direction': direction,
+                                'wick_pct': upper_wick_pct,
+                                'condition': f'Bullish engulfing with upper wick {upper_wick_pct:.1%} < {self.lower_wick_threshold:.0%}',
+                                'candle_data': current_candle,
+                                'previous_candle': previous_candle
+                            }
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error detecting pin bar Case 2: {e}")
+            return None
+    
+    def scan_for_pin_bars(self, df, direction='bearish', lookback=10):
+        """
+        Scan dataframe for pin bars
+        
+        Args:
+            df (pd.DataFrame): Candlestick data
+            direction (str): 'bearish' or 'bullish'
+            lookback (int): Number of recent candles to check
+        
+        Returns:
+            list: Pin bars found
+        """
+        pin_bars = []
+        
+        if df is None or len(df) < 2:
+            return pin_bars
+        
+        start_idx = max(0, len(df) - lookback - 1)
+        
+        for i in range(start_idx, len(df) - 1):
+            current_candle = df.iloc[i]
+            previous_candle = df.iloc[i-1] if i > 0 else None
+            
+            current_dict = {
+                'open': current_candle['open'],
+                'high': current_candle['high'],
+                'low': current_candle['low'],
+                'close': current_candle['close']
+            }
+            
+            # Check Case 1
+            pin_bar = self.detect_pin_bar(current_dict, direction)
+            if pin_bar:
+                pin_bar['index'] = i
+                pin_bar['time'] = current_candle['time']
+                pin_bars.append(pin_bar)
+            
+            # Check Case 2
+            if previous_candle is not None:
+                previous_dict = {
+                    'open': previous_candle['open'],
+                    'high': previous_candle['high'],
+                    'low': previous_candle['low'],
+                    'close': previous_candle['close']
+                }
+                
+                pin_bar_case2 = self.detect_pin_bar_case2(current_dict, previous_dict, direction)
+                if pin_bar_case2:
+                    pin_bar_case2['index'] = i
+                    pin_bar_case2['time'] = current_candle['time']
+                    pin_bars.append(pin_bar_case2)
+        
+        return pin_bars
+    
+    # ===================== LQ CANDLE DETECTION =====================
+    
+    def find_lq_candle(self, setup_data, timeframe_options, direction='bearish'):
+        """
+        Find Liquidity Candle (LQ candle) for a setup
+        
+        Args:
+            setup_data (dict): Setup information
+            timeframe_options (list): List of timeframes to check
+            direction (str): 'bearish' or 'bullish'
+        
+        Returns:
+            dict: LQ candle info or None
+        """
+        try:
+            asset = setup_data['asset']
+            setup_type = setup_data['type']
+            setup_tf = setup_data.get('timeframe', 'H4')
+            
+            # Get swing points between zone formation and current price
+            if setup_type in ['FVG_SMT_TAP', 'SD_SMT_TAP']:
+                formation_time = setup_data.get('formation_time')
+                if not formation_time:
+                    logger.warning(f"No formation time for {setup_type}")
+                    return None
+                
+                # For each timeframe option (starting from larger TF)
+                for tf in sorted(timeframe_options, reverse=True):
+                    df = self.market_data[asset].get(tf)
+                    if df is None or df.empty:
+                        continue
+                    
+                    # Filter data from formation time
+                    df_filtered = df[df['time'] >= formation_time].copy()
+                    if len(df_filtered) < 3:
+                        continue
+                    
+                    # Find swing highs/lows
+                    if direction == 'bearish':
+                        swing_points = self._find_swing_highs(df_filtered)
+                    else:  # bullish
+                        swing_points = self._find_swing_lows(df_filtered)
+                    
+                    if not swing_points:
+                        continue
+                    
+                    # Find the highest swing high/low
+                    if direction == 'bearish':
+                        target_swing = max(swing_points, key=lambda x: x['price'])
+                    else:
+                        target_swing = min(swing_points, key=lambda x: x['price'])
+                    
+                    # Find candle that took out this swing
+                    for i in range(len(df_filtered)):
+                        candle = df_filtered.iloc[i]
+                        
+                        if direction == 'bearish':
+                            # Candle took out swing high
+                            if candle['high'] > target_swing['price']:
+                                # Check if it's a bullish candle (for bearish scenario)
+                                is_bullish = candle['close'] > candle['open']
+                                
+                                # Check if it closed above swing high
+                                closed_above = candle['close'] > target_swing['price']
+                                
+                                # Check if it mitigated the zone
+                                mitigated = self._check_candle_mitigated_zone(
+                                    candle, setup_data, direction
+                                )
+                                
+                                if (is_bullish and mitigated) or (closed_above and mitigated):
+                                    return {
+                                        'tf': tf,
+                                        'index': i,
+                                        'time': candle['time'],
+                                        'open': candle['open'],
+                                        'high': candle['high'],
+                                        'low': candle['low'],
+                                        'close': candle['close'],
+                                        'is_bullish': is_bullish,
+                                        'closed_above_swing': closed_above,
+                                        'mitigated_zone': mitigated,
+                                        'swing_price': target_swing['price']
+                                    }
+                        else:  # bullish
+                            # Candle took out swing low
+                            if candle['low'] < target_swing['price']:
+                                # Check if it's a bearish candle (for bullish scenario)
+                                is_bearish = candle['close'] < candle['open']
+                                
+                                # Check if it closed below swing low
+                                closed_below = candle['close'] < target_swing['price']
+                                
+                                # Check if it mitigated the zone
+                                mitigated = self._check_candle_mitigated_zone(
+                                    candle, setup_data, direction
+                                )
+                                
+                                if (is_bearish and mitigated) or (closed_below and mitigated):
+                                    return {
+                                        'tf': tf,
+                                        'index': i,
+                                        'time': candle['time'],
+                                        'open': candle['open'],
+                                        'high': candle['high'],
+                                        'low': candle['low'],
+                                        'close': candle['close'],
+                                        'is_bearish': is_bearish,
+                                        'closed_below_swing': closed_below,
+                                        'mitigated_zone': mitigated,
+                                        'swing_price': target_swing['price']
+                                    }
+            
+            elif setup_type == 'CRT_SMT':
+                # For CRT, use candle 2 high and candle 1 low
+                crt_data = setup_data.get('crt_data', {})
+                if not crt_data:
+                    return None
+                
+                # Get the TF for LQ candle
+                for tf in timeframe_options:
+                    df = self.market_data[asset].get(tf)
+                    if df is None or df.empty:
+                        continue
+                    
+                    # Find candle that took out CRT candle 2 high
+                    candle2_high = crt_data.get('candle2_high')
+                    if not candle2_high:
+                        continue
+                    
+                    for i in range(len(df)):
+                        candle = df.iloc[i]
+                        if candle['high'] > candle2_high:
+                            return {
+                                'tf': tf,
+                                'index': i,
+                                'time': candle['time'],
+                                'open': candle['open'],
+                                'high': candle['high'],
+                                'low': candle['low'],
+                                'close': candle['close'],
+                                'is_bullish': candle['close'] > candle['open'],
+                                'crt_breakout': True,
+                                'breakout_level': candle2_high
+                            }
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error finding LQ candle: {e}")
+            return None
+    
+    def _find_swing_highs(self, df, lookback=3):
+        """Find swing highs in price data"""
+        swing_highs = []
+        
+        for i in range(lookback, len(df) - lookback):
+            current_high = df.iloc[i]['high']
+            
+            # Check if it's higher than lookback candles
+            is_swing = True
+            for j in range(1, lookback + 1):
+                if current_high <= df.iloc[i - j]['high'] or \
+                   current_high <= df.iloc[i + j]['high']:
+                    is_swing = False
+                    break
+            
+            if is_swing:
+                swing_highs.append({
+                    'index': i,
+                    'time': df.iloc[i]['time'],
+                    'price': current_high
+                })
+        
+        return swing_highs
+    
+    def _find_swing_lows(self, df, lookback=3):
+        """Find swing lows in price data"""
+        swing_lows = []
+        
+        for i in range(lookback, len(df) - lookback):
+            current_low = df.iloc[i]['low']
+            
+            # Check if it's lower than lookback candles
+            is_swing = True
+            for j in range(1, lookback + 1):
+                if current_low >= df.iloc[i - j]['low'] or \
+                   current_low >= df.iloc[i + j]['low']:
+                    is_swing = False
+                    break
+            
+            if is_swing:
+                swing_lows.append({
+                    'index': i,
+                    'time': df.iloc[i]['time'],
+                    'price': current_low
+                })
+        
+        return swing_lows
+    
+    def _check_candle_mitigated_zone(self, candle, setup_data, direction):
+        """Check if candle mitigated the zone/FVG"""
+        if setup_data['type'] == 'FVG_SMT_TAP':
+            fvg_low = setup_data.get('fvg_low')
+            fvg_high = setup_data.get('fvg_high')
+            
+            if direction == 'bearish':
+                # For bearish, bullish candle should enter FVG from below
+                return candle['low'] <= fvg_high and candle['high'] >= fvg_low
+            else:  # bullish
+                # For bullish, bearish candle should enter FVG from above
+                return candle['high'] >= fvg_low and candle['low'] <= fvg_high
+        
+        elif setup_data['type'] == 'SD_SMT_TAP':
+            zone_low = setup_data.get('zone_low')
+            zone_high = setup_data.get('zone_high')
+            
+            if direction == 'bearish':
+                # For bearish, bullish candle should enter supply zone from below
+                return candle['low'] <= zone_high and candle['high'] >= zone_low
+            else:  # bullish
+                # For bullish, bearish candle should enter demand zone from above
+                return candle['high'] >= zone_low and candle['low'] <= zone_high
+        
+        return True  # For CRT, assume mitigated
+    
+    # ===================== TRAFFIC LIGHT SYSTEM =====================
+    
+    def update_traffic_light(self, setup_id, state, setup_data=None):
+        """
+        Update traffic light state for a setup
+        
+        Args:
+            setup_id (str): Unique setup identifier
+            state (str): 'green', 'yellow', or 'red'
+            setup_data (dict): Setup data for reference
+        """
+        if state not in ['green', 'yellow', 'red']:
+            logger.warning(f"Invalid traffic light state: {state}")
+            return
+        
+        self.traffic_lights[setup_id] = {
+            'state': state,
+            'updated': datetime.now(NY_TZ),
+            'setup_data': setup_data
+        }
+        
+        logger.info(f"🚦 Traffic light for {setup_id}: {state}")
+    
+    def check_traffic_light(self, setup_id):
+        """Get current traffic light state for a setup"""
+        return self.traffic_lights.get(setup_id, {}).get('state', 'yellow')
+    
+    # ===================== ENTRY SIGNAL GENERATION =====================
+    
+    def generate_entry_signal(self, setup_data, entry_type, entry_data):
+        """
+        Generate complete entry signal
+        
+        Args:
+            setup_data (dict): Original setup data
+            entry_type (str): 'MODEL_1' or 'PIN_BAR'
+            entry_data (dict): Entry-specific data
+        
+        Returns:
+            dict: Complete entry signal
+        """
+        try:
+            asset = setup_data['asset']
+            direction = setup_data['direction']
+            setup_type = setup_data['type']
+            setup_tf = setup_data.get('timeframe', 'H4')
+            
+            # Get current market price
+            current_price = self._get_current_price(asset)
+            
+            # Calculate Fibonacci levels for the setup
+            fib_levels = self._calculate_setup_fibonacci(setup_data, direction)
+            
+            # Get default TP (lowest point between swing high and current price for bearish)
+            default_tp = self._get_default_tp(setup_data, direction)
+            
+            # Get entry price
+            if entry_type == 'MODEL_1':
+                entry_price = entry_data.get('next_candle_open', current_price)
+            else:  # PIN_BAR
+                entry_price = entry_data.get('next_candle_open', current_price)
+            
+            # Calculate SL and TP
+            sl_price, tp_price = self._calculate_sl_tp(
+                entry_data, entry_price, direction, default_tp
+            )
+            
+            # Check if TP is beyond default TP
+            tp_beyond_default = False
+            if direction == 'bearish' and tp_price < default_tp:
+                tp_beyond_default = True
+            elif direction == 'bullish' and tp_price > default_tp:
+                tp_beyond_default = True
+            
+            # Get potential TP levels
+            potential_tps = self._get_potential_tp_levels(asset, direction)
+            
+            # Create entry signal
+            signal_id = f"ENTRY_{setup_type}_{asset}_{datetime.now(NY_TZ).strftime('%H%M%S')}"
+            
+            entry_signal = {
+                'signal_id': signal_id,
+                'pair_group': self.pair_group,
+                'asset': asset,
+                'direction': direction,
+                'setup_type': setup_type,
+                'setup_tf': setup_tf,
+                'entry_type': entry_type,
+                'entry_time': datetime.now(NY_TZ),
+                'entry_price': entry_price,
+                'stop_loss': sl_price,
+                'take_profit': tp_price,
+                'default_tp': default_tp,
+                'tp_beyond_default': tp_beyond_default,
+                'risk_reward': abs(tp_price - entry_price) / abs(entry_price - sl_price) if entry_price != sl_price else 0,
+                'potential_tps': potential_tps,
+                'fib_levels': fib_levels,
+                'current_price': current_price,
+                'setup_data': setup_data,
+                'entry_data': entry_data,
+                'latency': (datetime.now(NY_TZ) - setup_data.get('detection_time', datetime.now(NY_TZ))).total_seconds()
+            }
+            
+            return entry_signal
+            
+        except Exception as e:
+            logger.error(f"Error generating entry signal: {e}")
+            return None
+    
+    def _calculate_setup_fibonacci(self, setup_data, direction):
+        """Calculate Fibonacci levels based on setup type"""
+        if setup_data['type'] == 'FVG_SMT_TAP':
+            # FVG: Swing high before FVG to lowest point between swing high and current price
+            formation_time = setup_data.get('formation_time')
+            asset = setup_data['asset']
+            tf = setup_data.get('timeframe', 'H4')
+            
+            # Get data from formation time
+            df = self.market_data[asset].get(tf)
+            if df is None or df.empty:
+                return {}
+            
+            df_filtered = df[df['time'] >= formation_time].copy()
+            if len(df_filtered) < 2:
+                return {}
+            
+            # Find swing high before FVG
+            swing_highs = self._find_swing_highs(df_filtered)
+            if not swing_highs:
+                return {}
+            
+            swing_high = max(swing_highs, key=lambda x: x['price'])
+            
+            # Find lowest point between swing high and current price
+            current_price = self._get_current_price(asset)
+            
+            if direction == 'bearish':
+                # For bearish, we need the lowest low after swing high
+                lows_after = df_filtered[df_filtered['time'] > swing_high['time']]['low'].tolist()
+                if not lows_after:
+                    return {}
+                
+                swing_low = min(lows_after + [current_price])
+                
+                # Calculate Fibonacci from swing high to swing low
+                return self.calculate_fib_levels(swing_high['price'], swing_low, 'bearish')
+            
+            else:  # bullish (for FVG bullish scenario)
+                # For bullish FVG, flip logic
+                swing_lows = self._find_swing_lows(df_filtered)
+                if not swing_lows:
+                    return {}
+                
+                swing_low = min(swing_lows, key=lambda x: x['price'])
+                
+                # Find highest point between swing low and current price
+                highs_after = df_filtered[df_filtered['time'] > swing_low['time']]['high'].tolist()
+                if not highs_after:
+                    return {}
+                
+                swing_high_after = max(highs_after + [current_price])
+                
+                return self.calculate_fib_levels(swing_high_after, swing_low, 'bullish')
+        
+        elif setup_data['type'] == 'CRT_SMT':
+            # CRT: High of candle 2 to low of candle 1
+            crt_data = setup_data.get('crt_data', {})
+            if not crt_data:
+                return {}
+            
+            candle2_high = crt_data.get('candle2_high')
+            candle1_low = crt_data.get('candle1_low')
+            
+            if candle2_high and candle1_low:
+                return self.calculate_fib_levels(candle2_high, candle1_low, direction)
+        
+        elif setup_data['type'] == 'SD_SMT_TAP':
+            # Supply/Demand: High of zone to lowest low between zone formation and current price
+            zone_high = setup_data.get('zone_high')
+            zone_low = setup_data.get('zone_low')
+            formation_time = setup_data.get('formation_time')
+            asset = setup_data['asset']
+            
+            if not zone_high or not formation_time:
+                return {}
+            
+            # Get data from formation time
+            df = self.market_data[asset].get('H1')  # Use H1 for calculation
+            if df is None or df.empty:
+                return {}
+            
+            df_filtered = df[df['time'] >= formation_time].copy()
+            if len(df_filtered) < 2:
+                return {}
+            
+            # Find lowest low after zone formation
+            current_price = self._get_current_price(asset)
+            lows_after = df_filtered['low'].tolist()
+            
+            if not lows_after:
+                return {}
+            
+            lowest_low = min(lows_after + [current_price])
+            
+            if direction == 'bearish':
+                return self.calculate_fib_levels(zone_high, lowest_low, 'bearish')
+            else:  # bullish (demand zone)
+                return self.calculate_fib_levels(lowest_low, zone_low, 'bullish')
+        
+        return {}
+    
+    def _get_default_tp(self, setup_data, direction):
+        """Get default TP (lowest point between swing high and current price)"""
+        try:
+            asset = setup_data['asset']
+            current_price = self._get_current_price(asset)
+            
+            if setup_data['type'] == 'FVG_SMT_TAP':
+                formation_time = setup_data.get('formation_time')
+                tf = setup_data.get('timeframe', 'H4')
+                
+                df = self.market_data[asset].get(tf)
+                if df is None or df.empty:
+                    return current_price
+                
+                df_filtered = df[df['time'] >= formation_time].copy()
+                if len(df_filtered) < 2:
+                    return current_price
+                
+                if direction == 'bearish':
+                    # For bearish, default TP is the lowest low after swing high
+                    swing_highs = self._find_swing_highs(df_filtered)
+                    if not swing_highs:
+                        return current_price
+                    
+                    swing_high = max(swing_highs, key=lambda x: x['price'])
+                    lows_after = df_filtered[df_filtered['time'] > swing_high['time']]['low'].tolist()
+                    
+                    if not lows_after:
+                        return current_price
+                    
+                    return min(lows_after + [current_price])
+                
+                else:  # bullish
+                    # For bullish, default TP is the highest high after swing low
+                    swing_lows = self._find_swing_lows(df_filtered)
+                    if not swing_lows:
+                        return current_price
+                    
+                    swing_low = min(swing_lows, key=lambda x: x['price'])
+                    highs_after = df_filtered[df_filtered['time'] > swing_low['time']]['high'].tolist()
+                    
+                    if not highs_after:
+                        return current_price
+                    
+                    return max(highs_after + [current_price])
+            
+            elif setup_data['type'] == 'CRT_SMT':
+                # For CRT, default TP is low of candle 1
+                crt_data = setup_data.get('crt_data', {})
+                candle1_low = crt_data.get('candle1_low')
+                
+                if candle1_low:
+                    return candle1_low
+            
+            elif setup_data['type'] == 'SD_SMT_TAP':
+                formation_time = setup_data.get('formation_time')
+                asset = setup_data['asset']
+                
+                df = self.market_data[asset].get('H1')
+                if df is None or df.empty:
+                    return current_price
+                
+                df_filtered = df[df['time'] >= formation_time].copy()
+                if len(df_filtered) < 2:
+                    return current_price
+                
+                if direction == 'bearish':
+                    # For bearish supply zone, default TP is lowest low after zone
+                    lows_after = df_filtered['low'].tolist()
+                    if not lows_after:
+                        return current_price
+                    
+                    return min(lows_after + [current_price])
+                
+                else:  # bullish demand zone
+                    # For bullish demand zone, default TP is highest high after zone
+                    highs_after = df_filtered['high'].tolist()
+                    if not highs_after:
+                        return current_price
+                    
+                    return max(highs_after + [current_price])
+            
+            return current_price
+            
+        except Exception as e:
+            logger.error(f"Error getting default TP: {e}")
+            return self._get_current_price(asset)
+    
+    def _calculate_sl_tp(self, entry_data, entry_price, direction, default_tp):
+        """Calculate SL and TP based on entry type"""
+        if 'pin_bar' in entry_data:
+            # Pin bar entry: SL at 1.25x above pin bar, TP at 4x SL
+            pin_bar = entry_data['pin_bar']
+            candle_data = pin_bar['candle_data']
+            
+            # Calculate Fibonacci of pin bar
+            pin_bar_range = candle_data['high'] - candle_data['low']
+            
+            if direction == 'bearish':
+                sl_distance = pin_bar_range * 1.25
+                sl_price = candle_data['high'] + sl_distance
+                tp_distance = sl_distance * 4
+                tp_price = entry_price - tp_distance
+                
+                # Check if TP is beyond default TP
+                if tp_price < default_tp:
+                    tp_price = default_tp
+            else:  # bullish
+                sl_distance = pin_bar_range * 1.25
+                sl_price = candle_data['low'] - sl_distance
+                tp_distance = sl_distance * 4
+                tp_price = entry_price + tp_distance
+                
+                # Check if TP is beyond default TP
+                if tp_price > default_tp:
+                    tp_price = default_tp
+            
+            return sl_price, tp_price
+        
+        else:  # MODEL_1 entry
+            lq_candle = entry_data.get('lq_candle')
+            if lq_candle:
+                # SL at high between LQ candle and close below it
+                if direction == 'bearish':
+                    sl_price = max(lq_candle['high'], entry_data.get('close_below_price', lq_candle['high']))
+                    tp_price = default_tp
+                else:  # bullish
+                    sl_price = min(lq_candle['low'], entry_data.get('close_above_price', lq_candle['low']))
+                    tp_price = default_tp
+                
+                return sl_price, tp_price
+        
+        # Default fallback
+        risk_pct = 0.01  # 1% risk
+        if direction == 'bearish':
+            sl_price = entry_price * (1 + risk_pct)
+            tp_price = entry_price * (1 - risk_pct * 4)
+        else:
+            sl_price = entry_price * (1 - risk_pct)
+            tp_price = entry_price * (1 + risk_pct * 4)
+        
+        return sl_price, tp_price
+    
+    def _get_potential_tp_levels(self, asset, direction):
+        """Get potential TP levels for runners"""
+        potential_tps = []
+        
+        # Check daily high/low
+        df_daily = self.market_data[asset].get('D')
+        if df_daily is not None and not df_daily.empty:
+            daily_high = df_daily['high'].max()
+            daily_low = df_daily['low'].min()
+            
+            if direction == 'bearish':
+                # For bearish, daily low is potential TP
+                potential_tps.append({
+                    'level': 'DAILY_LOW',
+                    'price': daily_low,
+                    'timeframe': 'D'
+                })
+            else:
+                # For bullish, daily high is potential TP
+                potential_tps.append({
+                    'level': 'DAILY_HIGH',
+                    'price': daily_high,
+                    'timeframe': 'D'
+                })
+        
+        # Check 4H high/low
+        df_4h = self.market_data[asset].get('H4')
+        if df_4h is not None and not df_4h.empty:
+            h4_high = df_4h['high'].max()
+            h4_low = df_4h['low'].min()
+            
+            if direction == 'bearish':
+                potential_tps.append({
+                    'level': '4H_LOW',
+                    'price': h4_low,
+                    'timeframe': 'H4'
+                })
+            else:
+                potential_tps.append({
+                    'level': '4H_HIGH',
+                    'price': h4_high,
+                    'timeframe': 'H4'
+                })
+        
+        # Filter out levels where price has already traded beyond
+        current_price = self._get_current_price(asset)
+        
+        filtered_tps = []
+        for tp in potential_tps:
+            if direction == 'bearish':
+                # For bearish, TP must be below current price (not taken out yet)
+                if tp['price'] < current_price:
+                    filtered_tps.append(tp)
+            else:
+                # For bullish, TP must be above current price
+                if tp['price'] > current_price:
+                    filtered_tps.append(tp)
+        
+        return filtered_tps
+    
+    def _get_current_price(self, asset):
+        """Get current price for an asset"""
+        # Try to get from 1M or M1 timeframe first
+        for tf in ['M1', 'M5', 'H1']:
+            df = self.market_data[asset].get(tf)
+            if df is not None and not df.empty:
+                return df.iloc[-1]['close']
+        
+        # Fallback to last known price
+        return 0.0
+    
+    # ===================== SIGNAL MONITORING =====================
+    
+    def add_setup_for_monitoring(self, setup_data):
+        """
+        Add a setup to monitor for entries
+        
+        Args:
+            setup_data (dict): Setup data from signal
+        """
+        try:
+            # Extract key information from signal
+            if '🎯 *FVG + SMT TAP CONFIRMED* 🎯' in str(setup_data):
+                # Parse from signal message
+                setup_id = self._parse_signal_for_setup(setup_data)
+            else:
+                # Assume it's already a structured setup
+                setup_id = setup_data.get('signal_key', 
+                                         f"{setup_data.get('type', 'UNKNOWN')}_{datetime.now(NY_TZ).strftime('%H%M%S')}")
+            
+            if setup_id in self.monitored_setups:
+                logger.info(f"Setup already being monitored: {setup_id}")
+                return False
+            
+            # Store setup
+            self.monitored_setups[setup_id] = {
+                'setup_id': setup_id,
+                'setup_data': setup_data,
+                'added_time': datetime.now(NY_TZ),
+                'last_check': datetime.now(NY_TZ),
+                'state': 'monitoring'
+            }
+            
+            # Initialize traffic light
+            self.update_traffic_light(setup_id, 'yellow', setup_data)
+            
+            logger.info(f"✅ Added setup for entry monitoring: {setup_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error adding setup for monitoring: {e}")
+            return False
+    
+    def _parse_signal_for_setup(self, signal_message):
+        """Parse signal message to extract setup data"""
+        # This is a simplified parser - you'll need to adjust based on your signal format
+        try:
+            lines = signal_message.split('\n')
+            setup_data = {}
+            
+            for line in lines:
+                if '*Pair Group:*' in line:
+                    setup_data['pair_group'] = line.split(':')[1].strip()
+                elif '*Direction:*' in line:
+                    direction = line.split(':')[1].strip()
+                    if 'BULLISH' in direction:
+                        setup_data['direction'] = 'bullish'
+                    else:
+                        setup_data['direction'] = 'bearish'
+                elif '*Asset:*' in line:
+                    setup_data['asset'] = line.split(':')[1].strip()
+                elif 'FVG:' in line:
+                    parts = line.split(':')
+                    if len(parts) > 1:
+                        fvg_info = parts[1].strip()
+                        if 'H4' in fvg_info:
+                            setup_data['timeframe'] = 'H4'
+                        elif 'H1' in fvg_info:
+                            setup_data['timeframe'] = 'H1'
+                        elif '15M' in fvg_info:
+                            setup_data['timeframe'] = '15M'
+                elif 'SMT:' in line:
+                    parts = line.split(':')
+                    if len(parts) > 1:
+                        smt_info = parts[1].strip()
+                        if 'daily' in smt_info.lower():
+                            setup_data['smt_cycle'] = 'daily'
+                        elif 'weekly' in smt_info.lower():
+                            setup_data['smt_cycle'] = 'weekly'
+            
+            setup_data['type'] = 'FVG_SMT_TAP'
+            setup_id = f"FVG_SMT_{setup_data.get('asset', 'UNKNOWN')}_{setup_data.get('timeframe', 'UNKNOWN')}_{datetime.now(NY_TZ).strftime('%H%M%S')}"
+            
+            return setup_id
+            
+        except Exception as e:
+            logger.error(f"Error parsing signal: {e}")
+            return f"PARSED_{datetime.now(NY_TZ).strftime('%H%M%S')}"
+    
+    def monitor_setups(self):
+        """Monitor all active setups for entry conditions"""
+        try:
+            current_time = datetime.now(NY_TZ)
+            setups_to_remove = []
+            
+            for setup_id, setup_info in list(self.monitored_setups.items()):
+                setup_data = setup_info['setup_data']
+                last_check = setup_info['last_check']
+                
+                # Skip if checked too recently (3-second throttle)
+                if (current_time - last_check).total_seconds() < 3:
+                    continue
+                
+                # Update last check time
+                self.monitored_setups[setup_id]['last_check'] = current_time
+                
+                # Get traffic light state
+                traffic_state = self.check_traffic_light(setup_id)
+                
+                if traffic_state == 'red':
+                    setups_to_remove.append(setup_id)
+                    continue
+                
+                # Get setup type and timeframe mapping
+                setup_type = setup_data.get('type')
+                setup_tf = setup_data.get('timeframe', 'H4')
+                direction = setup_data.get('direction', 'bearish')
+                
+                # Get timeframe mapping
+                mapping_key = (setup_type, setup_tf)
+                mapping = self.setup_timeframe_mappings.get(mapping_key)
+                
+                if not mapping and setup_type == 'FVG_SMT_TAP':
+                    # FVG+SMT has nested mapping by SMT cycle
+                    smt_cycle = setup_data.get('smt_cycle', 'daily')
+                    if smt_cycle == 'daily':
+                        mapping = mapping.get('daily_smt', {})
+                    elif smt_cycle == 'weekly':
+                        mapping = mapping.get('weekly_smt', {})
+                
+                if not mapping:
+                    logger.warning(f"No timeframe mapping for {setup_type} {setup_tf}")
+                    continue
+                
+                # Check for Model 1 entry (if traffic light is yellow)
+                if traffic_state == 'yellow':
+                    lq_candle_found = self._check_model1_entry(setup_data, mapping, direction)
+                    if lq_candle_found:
+                        # Update to green to look for pin bars
+                        self.update_traffic_light(setup_id, 'green', setup_data)
+                
+                # Check for pin bar entry (if traffic light is green)
+                if traffic_state == 'green':
+                    pin_bar_found = self._check_pin_bar_entry(setup_data, mapping, direction)
+                    if pin_bar_found:
+                        # Entry triggered, remove setup
+                        setups_to_remove.append(setup_id)
+                
+                # Check if price crossed 50% Fibonacci level
+                if self._check_price_crossed_50_fib(setup_data, direction):
+                    logger.info(f"Price crossed 50% Fibonacci - stopping monitoring for {setup_id}")
+                    self.update_traffic_light(setup_id, 'red', setup_data)
+                    setups_to_remove.append(setup_id)
+            
+            # Remove completed setups
+            for setup_id in setups_to_remove:
+                if setup_id in self.monitored_setups:
+                    del self.monitored_setups[setup_id]
+                    logger.info(f"Removed setup from monitoring: {setup_id}")
+            
+        except Exception as e:
+            logger.error(f"Error monitoring setups: {e}")
+    
+    def _check_model1_entry(self, setup_data, mapping, direction):
+        """Check for Model 1 entry (LQ candle close)"""
+        try:
+            # Get LQ candle timeframe options
+            lq_tf_options = mapping.get('lq_candle_tf', [])
+            if not lq_tf_options:
+                return False
+            
+            # Find LQ candle
+            lq_candle = self.find_lq_candle(setup_data, lq_tf_options, direction)
+            if not lq_candle:
+                return False
+            
+            # Check if price closed below/above LQ candle
+            asset = setup_data['asset']
+            lq_tf = lq_candle['tf']
+            
+            df = self.market_data[asset].get(lq_tf)
+            if df is None or df.empty:
+                return False
+            
+            # Find candles after LQ candle
+            lq_time = lq_candle['time']
+            df_after = df[df['time'] > lq_time].copy()
+            
+            if len(df_after) < 1:
+                return False
+            
+            # Check each candle after LQ
+            for i in range(len(df_after)):
+                candle = df_after.iloc[i]
+                
+                if direction == 'bearish':
+                    # Check if price closed below LQ candle low
+                    if candle['close'] < lq_candle['low']:
+                        # Model 1 entry confirmed
+                        entry_data = {
+                            'entry_type': 'MODEL_1',
+                            'lq_candle': lq_candle,
+                            'confirmation_candle': {
+                                'time': candle['time'],
+                                'close': candle['close']
+                            },
+                            'next_candle_open': df_after.iloc[i+1]['open'] if i+1 < len(df_after) else candle['close']
+                        }
+                        
+                        # Generate and send entry signal
+                        entry_signal = self.generate_entry_signal(setup_data, 'MODEL_1', entry_data)
+                        if entry_signal:
+                            self._send_entry_signal(entry_signal)
+                            return True
+                
+                else:  # bullish
+                    # Check if price closed above LQ candle high
+                    if candle['close'] > lq_candle['high']:
+                        entry_data = {
+                            'entry_type': 'MODEL_1',
+                            'lq_candle': lq_candle,
+                            'confirmation_candle': {
+                                'time': candle['time'],
+                                'close': candle['close']
+                            },
+                            'next_candle_open': df_after.iloc[i+1]['open'] if i+1 < len(df_after) else candle['close']
+                        }
+                        
+                        entry_signal = self.generate_entry_signal(setup_data, 'MODEL_1', entry_data)
+                        if entry_signal:
+                            self._send_entry_signal(entry_signal)
+                            return True
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"Error checking Model 1 entry: {e}")
+            return False
+    
+    def _check_pin_bar_entry(self, setup_data, mapping, direction):
+        """Check for pin bar entry"""
+        try:
+            # Get pin bar timeframe options
+            pin_bar_tfs = mapping.get('pin_bar_tfs', [])
+            if not pin_bar_tfs:
+                return False
+            
+            asset = setup_data['asset']
+            
+            # Check each timeframe for pin bars
+            for tf in pin_bar_tfs:
+                df = self.market_data[asset].get(tf)
+                if df is None or df.empty:
+                    continue
+                
+                # Scan for pin bars
+                pin_bars = self.scan_for_pin_bars(df, direction, lookback=5)
+                
+                for pin_bar in pin_bars:
+                    # Check if pin bar formed above 50% Fibonacci level
+                    if self._check_pin_bar_above_50_fib(pin_bar, setup_data, direction):
+                        # Pin bar entry confirmed
+                        # Get next candle's open for entry
+                        pin_bar_idx = pin_bar['index']
+                        if pin_bar_idx + 1 < len(df):
+                            next_candle = df.iloc[pin_bar_idx + 1]
+                            entry_price = next_candle['open']
+                            
+                            entry_data = {
+                                'entry_type': 'PIN_BAR',
+                                'pin_bar': pin_bar,
+                                'timeframe': tf,
+                                'next_candle_open': entry_price
+                            }
+                            
+                            # Generate and send entry signal
+                            entry_signal = self.generate_entry_signal(setup_data, 'PIN_BAR', entry_data)
+                            if entry_signal:
+                                self._send_entry_signal(entry_signal)
+                                return True
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"Error checking pin bar entry: {e}")
+            return False
+    
+    def _check_pin_bar_above_50_fib(self, pin_bar, setup_data, direction):
+        """Check if pin bar formed above 50% Fibonacci level"""
+        try:
+            # Get Fibonacci levels for the setup
+            fib_levels = self._calculate_setup_fibonacci(setup_data, direction)
+            if not fib_levels:
+                return True  # If no Fibonacci levels, accept pin bar
+            
+            # Get 50% level
+            fib_50 = fib_levels.get('F500')
+            if not fib_50:
+                return True
+            
+            pin_bar_price = pin_bar['candle_data']['close']
+            
+            if direction == 'bearish':
+                # For bearish, pin bar should be above 50% level
+                return pin_bar_price > fib_50['price']
+            else:  # bullish
+                # For bullish, pin bar should be below 50% level
+                return pin_bar_price < fib_50['price']
+            
+        except Exception as e:
+            logger.error(f"Error checking pin bar Fibonacci level: {e}")
+            return False
+    
+    def _check_price_crossed_50_fib(self, setup_data, direction):
+        """Check if price crossed 50% Fibonacci level"""
+        try:
+            asset = setup_data['asset']
+            current_price = self._get_current_price(asset)
+            
+            # Get Fibonacci levels
+            fib_levels = self._calculate_setup_fibonacci(setup_data, direction)
+            if not fib_levels:
+                return False
+            
+            # Get 50% level
+            fib_50 = fib_levels.get('F500')
+            if not fib_50:
+                return False
+            
+            if direction == 'bearish':
+                # For bearish, price crossing below 50% level
+                return current_price < fib_50['price']
+            else:  # bullish
+                # For bullish, price crossing above 50% level
+                return current_price > fib_50['price']
+            
+        except Exception as e:
+            logger.error(f"Error checking 50% Fibonacci crossing: {e}")
+            return False
+    
+    # ===================== SIGNAL SENDING =====================
+    
+    def _send_entry_signal(self, entry_signal):
+        """Send entry signal via Telegram"""
+        try:
+            signal_id = entry_signal['signal_id']
+            
+            # Check cooldown (24 hours for same setup)
+            if signal_id in self.sent_entry_signals:
+                last_sent = self.sent_entry_signals[signal_id]
+                if (datetime.now(NY_TZ) - last_sent).total_seconds() < self.COOLDOWN_HOURS:
+                    logger.info(f"⏳ Entry signal cooldown active: {signal_id}")
+                    return False
+            
+            # Format message
+            message = self._format_entry_signal_message(entry_signal)
+            
+            # Send via Telegram
+            success = send_telegram(message, self.telegram_token, self.telegram_chat_id)
+            
+            if success:
+                self.sent_entry_signals[signal_id] = datetime.now(NY_TZ)
+                
+                # Add to journal
+                self._add_to_journal(entry_signal)
+                
+                logger.info(f"🚀 ENTRY SIGNAL SENT: {entry_signal['setup_type']} - {entry_signal['asset']} {entry_signal['direction']}")
+                return True
+            else:
+                logger.error(f"❌ Failed to send entry signal: {signal_id}")
+                return False
+            
+        except Exception as e:
+            logger.error(f"Error sending entry signal: {e}")
+            return False
+    
+    def _format_entry_signal_message(self, entry_signal):
+        """Format entry signal for Telegram"""
+        direction_emoji = "🔴" if entry_signal['direction'] == 'bearish' else "🟢"
+        entry_type = entry_signal['entry_type']
+        setup_type = entry_signal['setup_type']
+        
+        # Format potential TPs
+        potential_tps_text = ""
+        for tp in entry_signal.get('potential_tps', []):
+            potential_tps_text += f"• {tp['level']}: {tp['price']:.4f} ({tp['timeframe']})\n"
+        
+        if not potential_tps_text:
+            potential_tps_text = "• No potential TP levels identified\n"
+        
+        # TP beyond default warning
+        tp_warning = ""
+        if entry_signal.get('tp_beyond_default', False):
+            if entry_signal['direction'] == 'bearish':
+                tp_warning = f"⚠️ *WARNING:* TP ({entry_signal['take_profit']:.4f}) is BEYOND default TP ({entry_signal['default_tp']:.4f})\n"
+            else:
+                tp_warning = f"⚠️ *WARNING:* TP ({entry_signal['take_profit']:.4f}) is BEYOND default TP ({entry_signal['default_tp']:.4f})\n"
+        
+        message = f"""
+        🎯 *{entry_type} ENTRY SIGNAL* 🎯
+                
+        *Setup Type:* {setup_type.replace('_', ' ').title()}
+        *Pair Group:* {entry_signal['pair_group'].replace('_', ' ').title()}
+        *Asset:* {entry_signal['asset']}
+        *Direction:* {entry_signal['direction'].upper()} {direction_emoji}
+        *Timeframe:* {entry_signal['setup_tf']}
+                
+        *Entry Details:*
+        • Entry Price: {entry_signal['entry_price']:.4f}
+        • Stop Loss: {entry_signal['stop_loss']:.4f}
+        • Take Profit: {entry_signal['take_profit']:.4f}
+        • Risk/Reward: {entry_signal['risk_reward']:.2f}:1
+                
+        {tp_warning}
+        *Potential TP Levels for Runners:*
+        {potential_tps_text}
+        *Signal Info:*
+        • Entry Type: {entry_type.replace('_', ' ')}
+        • Detection Time: {entry_signal['setup_data'].get('detection_time', 'N/A')}
+        • Signal Confirmation: {entry_signal['entry_time'].strftime('%Y-%m-%d %H:%M:%S')}
+        • Latency: {entry_signal.get('latency', 0):.1f} seconds
+                
+        #{entry_signal['pair_group']} #{entry_signal['direction']} #{entry_type} #{setup_type}
+                """
+        
+        return message
+    
+    # ===================== JOURNALING =====================
+    
+    def _add_to_journal(self, entry_signal):
+        """Add entry signal to journal for ML data"""
+        journal_entry = {
+            'timestamp': datetime.now(NY_TZ),
+            'entry_signal': entry_signal,
+            'outcome': 'pending'  # Will be updated when trade closes
+        }
+        
+        self.journal.append(journal_entry)
+        
+        # Save to file (optional)
+        self._save_journal_to_file()
+        
+        logger.info(f"📒 Journal entry added: {entry_signal['signal_id']}")
+    
+    def _save_journal_to_file(self):
+        """Save journal to file for persistence"""
+        try:
+            filename = f"journal_{self.pair_group}_{datetime.now(NY_TZ).strftime('%Y%m')}.json"
+            
+            # Convert to serializable format
+            serializable_journal = []
+            for entry in self.journal[-100:]:  # Keep last 100 entries
+                serializable_entry = {
+                    'timestamp': entry['timestamp'].isoformat(),
+                    'outcome': entry['outcome']
+                }
+                
+                # Simplify entry signal for storage
+                signal = entry['entry_signal']
+                serializable_entry['signal'] = {
+                    'signal_id': signal['signal_id'],
+                    'pair_group': signal['pair_group'],
+                    'asset': signal['asset'],
+                    'direction': signal['direction'],
+                    'setup_type': signal['setup_type'],
+                    'entry_type': signal['entry_type'],
+                    'entry_price': signal['entry_price'],
+                    'stop_loss': signal['stop_loss'],
+                    'take_profit': signal['take_profit'],
+                    'risk_reward': signal['risk_reward'],
+                    'latency': signal.get('latency', 0)
+                }
+                
+                serializable_journal.append(serializable_entry)
+            
+            # Save to file
+            with open(filename, 'w') as f:
+                json.dump(serializable_journal, f, indent=2)
+            
+        except Exception as e:
+            logger.error(f"Error saving journal: {e}")
+    
+    def get_journal_stats(self):
+        """Get statistics from journal"""
+        if not self.journal:
+            return {"total_entries": 0}
+        
+        total = len(self.journal)
+        pending = sum(1 for e in self.journal if e['outcome'] == 'pending')
+        winners = sum(1 for e in self.journal if e['outcome'] == 'win')
+        losers = sum(1 for e in self.journal if e['outcome'] == 'loss')
+        
+        return {
+            'total_entries': total,
+            'pending': pending,
+            'winners': winners,
+            'losers': losers,
+            'win_rate': winners / (winners + losers) if (winners + losers) > 0 else 0
+        }
+    
+    # ===================== INTEGRATION METHODS =====================
+    
+    def process_new_signals(self):
+        """Process new signals from FeatureBox for entry monitoring"""
+        try:
+            # Check FeatureBox for recent signals
+            # This is a placeholder - you'll need to adapt based on how your signals are stored
+            
+            # For now, we'll monitor active SMTs with PSP
+            for smt_key, smt_feature in self.feature_box.active_features['smt'].items():
+                if self.feature_box._is_feature_expired(smt_feature):
+                    continue
+                
+                smt_data = smt_feature['smt_data']
+                has_psp = smt_feature['psp_data'] is not None
+                
+                if has_psp:
+                    # Check if we have corresponding FVG or SD zone
+                    setup_data = self._create_setup_from_smt(smt_data, smt_feature)
+                    if setup_data:
+                        self.add_setup_for_monitoring(setup_data)
+            
+            # Monitor CRT setups
+            for crt_key, crt_feature in self.feature_box.active_features['crt'].items():
+                if self.feature_box._is_feature_expired(crt_feature):
+                    continue
+                
+                crt_data = crt_feature['crt_data']
+                has_psp = crt_feature['psp_data'] is not None
+                
+                if has_psp:
+                    setup_data = self._create_setup_from_crt(crt_data, crt_feature)
+                    if setup_data:
+                        self.add_setup_for_monitoring(setup_data)
+            
+            logger.info(f"Processed signals for entry monitoring. Active: {len(self.monitored_setups)} setups")
+            
+        except Exception as e:
+            logger.error(f"Error processing new signals: {e}")
+    
+    def _create_setup_from_smt(self, smt_data, smt_feature):
+        """Create setup data from SMT feature"""
+        # This is a simplified version - adapt based on your actual data structure
+        setup_data = {
+            'type': 'FVG_SMT_TAP',  # Default assumption
+            'asset': self.instruments[0],  # Need to determine which asset
+            'direction': smt_data['direction'],
+            'smt_cycle': smt_data['cycle'],
+            'smt_data': smt_data,
+            'psp_data': smt_feature['psp_data'],
+            'detection_time': datetime.now(NY_TZ)
+        }
+        
+        # Try to find corresponding FVG or SD zone
+        # This would need to cross-reference with your existing detection logic
+        
+        return setup_data
+    
+    def _create_setup_from_crt(self, crt_data, crt_feature):
+        """Create setup data from CRT feature"""
+        setup_data = {
+            'type': 'CRT_SMT',
+            'asset': self.instruments[0],  # Need to determine which asset
+            'direction': crt_data['direction'],
+            'timeframe': crt_data['timeframe'],
+            'crt_data': crt_data,
+            'psp_data': crt_feature['psp_data'],
+            'detection_time': datetime.now(NY_TZ)
+        }
+        
+        return setup_data
+    
+    def run_entry_monitoring_cycle(self):
+        """Run one cycle of entry monitoring"""
+        try:
+            # Process new signals
+            self.process_new_signals()
+            
+            # Monitor active setups
+            self.monitor_setups()
+            
+            # Cleanup old traffic lights (older than 24 hours)
+            self._cleanup_old_traffic_lights()
+            
+            # Log status
+            active_setups = len(self.monitored_setups)
+            green_lights = sum(1 for tl in self.traffic_lights.values() if tl['state'] == 'green')
+            yellow_lights = sum(1 for tl in self.traffic_lights.values() if tl['state'] == 'yellow')
+            
+            logger.info(f"📊 Entry Monitoring: {active_setups} setups, 🟢{green_lights} 🟡{yellow_lights} 🔴{len(self.traffic_lights) - green_lights - yellow_lights}")
+            
+        except Exception as e:
+            logger.error(f"Error in entry monitoring cycle: {e}")
+    
+    def _cleanup_old_traffic_lights(self, hours=24):
+        """Cleanup traffic lights older than specified hours"""
+        current_time = datetime.now(NY_TZ)
+        to_remove = []
+        
+        for setup_id, traffic_info in self.traffic_lights.items():
+            updated = traffic_info.get('updated')
+            if updated and (current_time - updated).total_seconds() > hours * 3600:
+                to_remove.append(setup_id)
+        
+        for setup_id in to_remove:
+            del self.traffic_lights[setup_id]
+            if setup_id in self.monitored_setups:
+                del self.monitored_setups[setup_id]
+        
+        if to_remove:
+            logger.info(f"🧹 Cleaned up {len(to_remove)} old traffic lights")
 # ================================
 # ULTIMATE TRADING SYSTEM WITH TRIPLE CONFLUENCE
 # ================================
@@ -4203,6 +5824,17 @@ class UltimateTradingSystem:
                 'H1': ['daily'], 
                 'M15': ['daily', '90min']
             }
+        # In UltimateTradingSystem.__init__():
+        # After feature_box initialization
+        
+        self.entry_signal_manager = EntrySignalManager(
+            pair_group=self.pair_group,
+            instruments=self.instruments,
+            market_data=self.market_data,
+            feature_box=self.feature_box,
+            telegram_token=self.telegram_token,
+            telegram_chat_id=self.telegram_chat_id
+        )
         
     def get_sleep_time(self):
         """Use smart timing instead of fixed intervals"""
@@ -4337,6 +5969,10 @@ class UltimateTradingSystem:
             except Exception as e:
                 logger.error(f"❌ Error in optimized analysis for {self.pair_group}: {str(e)}", exc_info=True)
                 return 60
+
+        def run_entry_monitoring(self):
+            """Run entry signal monitoring"""
+            self.entry_signal_manager.run_entry_monitoring_cycle()
 
         async def _fetch_data_selective(self, timeframes_to_scan, api_key):
             """Fetch data only for timeframes that need scanning"""
