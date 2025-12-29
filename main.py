@@ -8242,6 +8242,222 @@ class TimeManager:
         return f"⏳ Sleeping {sleep_str} until {next_time.strftime('%H:%M:%S')} ({info})"
 
 
+
+class ParallelBotManager:
+    """Manager to run multiple trading systems in parallel with coordinated timing"""
+    
+    def __init__(self, api_key, telegram_token, telegram_chat_id):
+        self.api_key = api_key
+        self.telegram_token = telegram_token
+        self.telegram_chat_id = telegram_chat_id
+        
+        # Create trading systems for each pair group
+        self.trading_systems = {}
+        for pair_group, pair_config in TRADING_PAIRS.items():
+            # Setup logging for this bot
+            self._setup_bot_logging(pair_group)
+            
+            # Create system
+            self.trading_systems[pair_group] = UltimateTradingSystem(
+                pair_group, pair_config, telegram_token, telegram_chat_id
+            )
+        
+        # Thread pool for parallel execution
+        self.executor = ThreadPoolExecutor(max_workers=len(TRADING_PAIRS) * 2)
+        
+        # Event for graceful shutdown
+        self.shutdown_event = threading.Event()
+        
+        print(f"🚀 ParallelBotManager initialized with {len(self.trading_systems)} systems")
+    
+    def _setup_bot_logging(self, bot_name):
+        """Setup logging for a specific bot"""
+        import logging
+        
+        # Create logger for this bot
+        logger = logging.getLogger(f"bot_{bot_name}")
+        logger.setLevel(logging.INFO)
+        
+        # Don't propagate to root logger
+        logger.propagate = False
+        
+        # Create console handler with bot name prefix
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.INFO)
+        
+        # Custom formatter with bot name
+        formatter = logging.Formatter(f'%(asctime)s - [{bot_name}] - %(levelname)s - %(message)s')
+        console_handler.setFormatter(formatter)
+        
+        # Create file handler
+        file_handler = logging.FileHandler(f'logs/bot_{bot_name}.log')
+        file_handler.setLevel(logging.DEBUG)
+        file_handler.setFormatter(formatter)
+        
+        # Add handlers
+        logger.addHandler(console_handler)
+        logger.addHandler(file_handler)
+    
+    def start_all(self):
+        """Start all bots in parallel threads"""
+        threads = []
+        
+        for pair_group, system in self.trading_systems.items():
+            # Thread for main analysis (runs every 5 minutes)
+            main_thread = threading.Thread(
+                target=self._run_main_analysis_loop,
+                args=(pair_group, system),
+                name=f"MainAnalysis_{pair_group}",
+                daemon=True
+            )
+            threads.append(main_thread)
+            main_thread.start()
+            
+            # Thread for entry monitoring (runs every 1 minute)
+            entry_thread = threading.Thread(
+                target=self._run_entry_monitoring_loop,
+                args=(pair_group, system),
+                name=f"EntryMonitoring_{pair_group}",
+                daemon=True
+            )
+            threads.append(entry_thread)
+            entry_thread.start()
+        
+        return threads
+    
+    def _run_main_analysis_loop(self, pair_group, system):
+        """Run main analysis every 5 minutes with better sleep logging"""
+        bot_logger = logging.getLogger(f"bot_{pair_group}")
+        bot_logger.info(f"⏰ Starting main analysis loop (5-minute intervals)")
+        
+        while not self.shutdown_event.is_set():
+            try:
+                # Calculate next run time
+                sleep_info = TimeManager.calculate_next_candle_time("M5", offset_seconds=3)
+                
+                if sleep_info['sleep_seconds'] > 0:
+                    sleep_msg = TimeManager.log_sleep_info("M5", sleep_info)
+                    bot_logger.info(sleep_msg)
+                    time.sleep(sleep_info['sleep_seconds'])
+                
+                # Run analysis
+                bot_logger.info(f"🔍 Running main analysis...")
+                start_time = time.time()
+                
+                future = self.executor.submit(self._run_async_main_analysis, system)
+                
+                try:
+                    result = future.result(timeout=60)
+                    elapsed = time.time() - start_time
+                    bot_logger.info(f"✅ Main analysis completed in {elapsed:.1f}s")
+                except TimeoutError:
+                    bot_logger.warning(f"⚠️ Main analysis timed out after 60s")
+                
+            except Exception as e:
+                bot_logger.error(f"❌ Error in main analysis: {e}")
+                time.sleep(30)
+    
+    def _run_entry_monitoring_loop(self, pair_group, system):
+        """Run entry monitoring every 1 minute with better logging"""
+        bot_logger = logging.getLogger(f"bot_{pair_group}")
+        bot_logger.info(f"⏰ Starting entry monitoring loop")
+        
+        while not self.shutdown_event.is_set():
+            try:
+                # Calculate next 1-minute candle time
+                next_run = TimeManager.calculate_next_candle_time("M1", offset_seconds=3)
+                sleep_seconds = TimeManager.get_sleep_time_until(next_run)
+                
+                if sleep_seconds > 0:
+                    if sleep_seconds > 30:  # Only log long sleeps
+                        bot_logger.debug(f"⏳ Entry monitoring sleeping {sleep_seconds:.1f}s")
+                    time.sleep(sleep_seconds)
+                
+                # Run entry monitoring
+                if hasattr(system, 'entry_signal_manager'):
+                    active_signals = len(system.entry_signal_manager.active_signals)
+                    if active_signals > 0:
+                        bot_logger.debug(f"📡 Monitoring {active_signals} active signals")
+                    
+                    # Run monitoring
+                    start_time = time.time()
+                    future = self.executor.submit(
+                        system.entry_signal_manager.run_monitoring_cycle
+                    )
+                    
+                    try:
+                        future.result(timeout=10)
+                        elapsed = time.time() - start_time
+                        if elapsed > 1:  # Only log if it took time
+                            bot_logger.debug(f"✅ Entry monitoring completed in {elapsed:.1f}s")
+                    except TimeoutError:
+                        bot_logger.warning(f"⚠️ Entry monitoring timed out")
+                
+            except Exception as e:
+                bot_logger.error(f"❌ Error in entry monitoring: {e}")
+                time.sleep(5)
+    
+    def _run_async_main_analysis(self, system):
+        """Run async main analysis in thread"""
+        try:
+            # Create new event loop for this thread
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            # Run the analysis
+            result = loop.run_until_complete(
+                system.run_ultimate_analysis(self.api_key)
+            )
+            
+            loop.close()
+            return result
+            
+        except Exception as e:
+            logger.error(f"❌ Async analysis error: {e}")
+            raise
+    
+    def stop_all(self):
+        """Stop all bots gracefully"""
+        logger.info("🛑 Stopping all bots...")
+        self.shutdown_event.set()
+        self.executor.shutdown(wait=True)
+        logger.info("✅ All bots stopped")
+
+    def _fetch_entry_monitoring_data(self, system):
+        """Fetch entry monitoring data for a system"""
+        try:
+            # Create new event loop for this thread
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            # Run the data fetch
+            result = loop.run_until_complete(
+                system.fetch_entry_monitoring_data(self.api_key)
+            )
+            
+            loop.close()
+            return result
+            
+        except Exception as e:
+            logger.error(f"❌ Error fetching entry monitoring data: {e}")
+            raise
+    
+    def get_status(self):
+        """Get status of all bots"""
+        status = {}
+        for pair_group, system in self.trading_systems.items():
+            if hasattr(system, 'entry_signal_manager'):
+                active_signals = len(system.entry_signal_manager.active_signals)
+                traffic_lights = len(system.entry_signal_manager.traffic_lights)
+                status[pair_group] = {
+                    'active_signals': active_signals,
+                    'traffic_lights': traffic_lights,
+                    'market_data': {inst: list(system.market_data[inst].keys()) 
+                                   for inst in system.instruments if inst in system.market_data}
+                }
+        return status
+
+
 # ================================
 # MAIN EXECUTION WITH PARALLEL BOTS
 # ================================
