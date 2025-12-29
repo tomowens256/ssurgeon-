@@ -47,6 +47,28 @@ TRADING_PAIRS = {
             '90min': 'M5'
         }
     },
+    'jpy_triad': {
+        'pair1': 'EUR_JPY',  # OLD structure
+        'pair2': 'GBP_JPY',  # OLD structure
+        'instruments': ['EUR_JPY', 'GBP_JPY'],  # NEW structure
+        'timeframe_mapping': {
+            'monthly': 'H4',
+            'weekly': 'H1',
+            'daily': 'M15',
+            '90min': 'M5'
+        }
+    },
+    'jpy_rare': {
+        'pair1': 'CAD_JPY',  # OLD structure
+        'pair2': 'USD_JPY',  # OLD structure
+        'instruments': ['CAD_JPY', 'USD_JPY'],  # NEW structure
+        'timeframe_mapping': {
+            'monthly': 'H4',
+            'weekly': 'H1',
+            'daily': 'M15',
+            '90min': 'M5'
+        }
+    },
     'fx_triad': {
         'pair1': 'GBP_USD',  # OLD structure
         'pair2': 'EUR_USD',  # OLD structure  
