@@ -8520,8 +8520,10 @@ class ParallelBotManager:
         return threads
     
     def _run_main_analysis_loop(self, pair_group, system):
-        """Run main analysis every 5 minutes"""
-        logger.info(f"⏰ Starting main analysis loop for {pair_group}")
+        """Run main analysis every 5 minutes with better logging"""
+        # Get logger for this bot
+        bot_logger = logging.getLogger(f"bot_{pair_group}")
+        bot_logger.info(f"⏰ Starting main analysis loop")
         
         while not self.shutdown_event.is_set():
             try:
@@ -8530,28 +8532,35 @@ class ParallelBotManager:
                 sleep_seconds = TimeManager.get_sleep_time_until(next_run)
                 
                 if sleep_seconds > 0:
-                    logger.info(f"⏳ {pair_group} main analysis sleeping {sleep_seconds:.1f}s until {next_run.strftime('%H:%M:%S')}")
+                    bot_logger.info(f"⏳ Sleeping {sleep_seconds:.1f}s until {next_run.strftime('%H:%M:%S')} (next 5-min candle)")
                     time.sleep(sleep_seconds)
                 
-                # Run analysis
-                logger.info(f"🔍 {pair_group} running main analysis")
+                # Log before running
+                start_time = time.time()
+                bot_logger.info(f"🔍 Running main analysis...")
                 
-                # Run in thread pool to avoid blocking
+                # Run analysis
                 future = self.executor.submit(
                     self._run_async_main_analysis,
                     system
                 )
-                future.result(timeout=60)  # Wait with timeout
                 
-                logger.info(f"✅ {pair_group} main analysis completed")
+                # Wait with timeout
+                try:
+                    result = future.result(timeout=60)
+                    elapsed = time.time() - start_time
+                    bot_logger.info(f"✅ Main analysis completed in {elapsed:.1f}s")
+                except TimeoutError:
+                    bot_logger.warning(f"⚠️ Main analysis timed out after 60s")
                 
             except Exception as e:
-                logger.error(f"❌ Error in {pair_group} main analysis: {e}")
+                bot_logger.error(f"❌ Error in main analysis: {e}")
                 time.sleep(30)  # Sleep on error
     
     def _run_entry_monitoring_loop(self, pair_group, system):
-        """Run entry monitoring every 1 minute"""
-        logger.info(f"⏰ Starting entry monitoring loop for {pair_group}")
+        """Run entry monitoring every 1 minute with better logging"""
+        bot_logger = logging.getLogger(f"bot_{pair_group}")
+        bot_logger.info(f"⏰ Starting entry monitoring loop")
         
         while not self.shutdown_event.is_set():
             try:
@@ -8560,21 +8569,33 @@ class ParallelBotManager:
                 sleep_seconds = TimeManager.get_sleep_time_until(next_run)
                 
                 if sleep_seconds > 0:
+                    if sleep_seconds > 30:  # Only log long sleeps
+                        bot_logger.debug(f"⏳ Entry monitoring sleeping {sleep_seconds:.1f}s")
                     time.sleep(sleep_seconds)
                 
                 # Run entry monitoring
                 if hasattr(system, 'entry_signal_manager'):
-                    logger.debug(f"🔍 {pair_group} running entry monitoring")
+                    active_signals = len(system.entry_signal_manager.active_signals)
+                    if active_signals > 0:
+                        bot_logger.debug(f"📡 Monitoring {active_signals} active signals")
                     
-                    # Run in thread pool
+                    # Run monitoring
+                    start_time = time.time()
                     future = self.executor.submit(
                         system.entry_signal_manager.run_monitoring_cycle
                     )
-                    future.result(timeout=10)  # Quick timeout for fast monitoring
+                    
+                    try:
+                        future.result(timeout=10)
+                        elapsed = time.time() - start_time
+                        if elapsed > 1:  # Only log if it took time
+                            bot_logger.debug(f"✅ Entry monitoring completed in {elapsed:.1f}s")
+                    except TimeoutError:
+                        bot_logger.warning(f"⚠️ Entry monitoring timed out")
                 
             except Exception as e:
-                logger.error(f"❌ Error in {pair_group} entry monitoring: {e}")
-                time.sleep(5)  # Short sleep on error
+                bot_logger.error(f"❌ Error in entry monitoring: {e}")
+                time.sleep(5)
     
     def _run_async_main_analysis(self, system):
         """Run async main analysis in thread"""
