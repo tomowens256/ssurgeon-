@@ -8548,32 +8548,26 @@ class ParallelBotManager:
         return threads
     
     def _run_main_analysis_loop(self, pair_group, system):
-        """Run main analysis every 5 minutes with better logging"""
-        # Get logger for this bot
+        """Run main analysis every 5 minutes with better sleep logging"""
         bot_logger = logging.getLogger(f"bot_{pair_group}")
-        bot_logger.info(f"⏰ Starting main analysis loop")
+        bot_logger.info(f"⏰ Starting main analysis loop (5-minute intervals)")
         
         while not self.shutdown_event.is_set():
             try:
-                # Calculate next 5-minute candle time
-                next_run = TimeManager.calculate_next_candle_time("M5", offset_seconds=3)
-                sleep_seconds = TimeManager.get_sleep_time_until(next_run)
+                # Calculate next run time
+                sleep_info = TimeManager.calculate_next_candle_time("M5", offset_seconds=3)
                 
-                if sleep_seconds > 0:
-                    bot_logger.info(f"⏳ Sleeping {sleep_seconds:.1f}s until {next_run.strftime('%H:%M:%S')} (next 5-min candle)")
-                    time.sleep(sleep_seconds)
-                
-                # Log before running
-                start_time = time.time()
-                bot_logger.info(f"🔍 Running main analysis...")
+                if sleep_info['sleep_seconds'] > 0:
+                    sleep_msg = TimeManager.log_sleep_info("M5", sleep_info)
+                    bot_logger.info(sleep_msg)
+                    time.sleep(sleep_info['sleep_seconds'])
                 
                 # Run analysis
-                future = self.executor.submit(
-                    self._run_async_main_analysis,
-                    system
-                )
+                bot_logger.info(f"🔍 Running main analysis...")
+                start_time = time.time()
                 
-                # Wait with timeout
+                future = self.executor.submit(self._run_async_main_analysis, system)
+                
                 try:
                     result = future.result(timeout=60)
                     elapsed = time.time() - start_time
@@ -8583,7 +8577,7 @@ class ParallelBotManager:
                 
             except Exception as e:
                 bot_logger.error(f"❌ Error in main analysis: {e}")
-                time.sleep(30)  # Sleep on error
+                time.sleep(30)
     
     def _run_entry_monitoring_loop(self, pair_group, system):
         """Run entry monitoring every 1 minute with better logging"""
