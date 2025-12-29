@@ -8273,7 +8273,7 @@ class ParallelBotManager:
                 
                 if sleep_info['sleep_seconds'] > 0:
                     sleep_msg = TimeManager.log_sleep_info("M5", sleep_info)
-                    bot_logger.info(sleep_msg)
+                    bot_logger.info(f"⏰ {pair_group}: {sleep_msg}")
                     time.sleep(sleep_info['sleep_seconds'])
                 
                 # Run analysis
