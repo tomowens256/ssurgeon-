@@ -4282,9 +4282,9 @@ class EntrySignalManager:
             return False
     
     def _parse_signal_message(self, message):
-        """Parse Telegram message to extract signal data - FIXED"""
+        """Parse Telegram message to extract signal data - CUSTOMIZED FOR YOUR SIGNAL FORMATS"""
         try:
-            lines = message.split('\n')
+            # Create basic signal data structure
             signal_data = {
                 'signal_id': f"SIGNAL_{datetime.now(NY_TZ).strftime('%Y%m%d_%H%M%S')}",
                 'pair_group': '',
@@ -4292,76 +4292,103 @@ class EntrySignalManager:
                 'direction': '',
                 'asset': '',
                 'timeframe': '',
-                'detection_time': None,
+                'detection_time': datetime.now(NY_TZ),
                 'levels': {},
                 'smt_cycle': '',
                 'has_psp': False,
-                'zone_type': '',  # For SD zones
+                'zone_type': '',
             }
+            
+            # Debug: log what we're parsing
+            logger.info(f"🔍 Parsing signal message (first 500 chars): {message[:500]}")
+            
+            # Check signal type from title
+            if "FVG + SMT TAP CONFIRMED" in message:
+                signal_data['setup_type'] = 'FVG_SMT_TAP'
+                logger.info(f"✅ Detected FVG_SMT_TAP signal")
+            elif "DEMAND ZONE + SMT TAP" in message or "*DEMAND ZONE + SMT TAP*" in message:
+                signal_data['setup_type'] = 'SD_SMT_TAP'
+                signal_data['zone_type'] = 'demand'
+                logger.info(f"✅ Detected DEMAND ZONE signal")
+            elif "SUPPLY ZONE + SMT TAP" in message or "*SUPPLY ZONE + SMT TAP*" in message:
+                signal_data['setup_type'] = 'SD_SMT_TAP'
+                signal_data['zone_type'] = 'supply'
+                logger.info(f"✅ Detected SUPPLY ZONE signal")
+            elif "CRT + SMT CONFLUENCE" in message or "*CRT + SMT CONFLUENCE*" in message:
+                signal_data['setup_type'] = 'CRT_SMT'
+                logger.info(f"✅ Detected CRT_SMT signal")
+            elif "DOUBLE SMT CONFIRM" in message:
+                signal_data['setup_type'] = 'DOUBLE_SMT'
+                logger.info(f"✅ Detected DOUBLE_SMT signal")
+            else:
+                logger.warning(f"⚠️ Unknown signal type in message")
+                return None
+            
+            # Parse line by line
+            lines = message.split('\n')
             
             for line in lines:
                 line = line.strip()
                 
-                # Debug: log what we're parsing
-                # logger.debug(f"Parsing line: {line}")
+                # Parse pair group (from your examples: "Jpy Triad", "European Indices")
+                if "*Pair Group:*" in line or "*Group:*" in line:
+                    # Extract text after the colon
+                    parts = line.split('*')
+                    for i, part in enumerate(parts):
+                        if 'Group:' in part or 'Pair Group:' in part:
+                            if i + 1 < len(parts):
+                                signal_data['pair_group'] = parts[i + 1].strip().replace(' ', '_').lower()
+                                logger.info(f"📋 Parsed pair_group: {signal_data['pair_group']}")
+                            break
                 
-                # Check signal type
-                if '*FVG + SMT TAP CONFIRMED*' in line:
-                    signal_data['setup_type'] = 'FVG_SMT_TAP'
-                elif '*DEMAND ZONE + SMT TAP*' in line:
-                    signal_data['setup_type'] = 'SD_SMT_TAP'
-                    signal_data['zone_type'] = 'demand'
-                elif '*SUPPLY ZONE + SMT TAP*' in line:
-                    signal_data['setup_type'] = 'SD_SMT_TAP'
-                    signal_data['zone_type'] = 'supply'
-                elif '*CRT + SMT CONFLUENCE*' in line:
-                    signal_data['setup_type'] = 'CRT_SMT'
-                
-                # Parse pair group - FIXED: Check if colon exists
-                elif '*Pair Group:*' in line:
-                    parts = line.split('*Pair Group:*')
-                    if len(parts) > 1:
-                        signal_data['pair_group'] = parts[1].strip().replace(' ', '_').lower()
-                
-                # Parse direction - FIXED: Check if colon exists
-                elif '*Direction:*' in line:
+                # Parse direction
+                if "*Direction:*" in line:
                     if 'BULLISH' in line.upper():
                         signal_data['direction'] = 'bullish'
                     elif 'BEARISH' in line.upper():
                         signal_data['direction'] = 'bearish'
+                    logger.info(f"📋 Parsed direction: {signal_data['direction']}")
                 
-                # Parse asset - FIXED: Safer parsing
-                elif '*Asset:*' in line:
+                # Parse asset (from your examples: "EUR_JPY", "DE30_EUR")
+                if "*Asset:*" in line:
+                    # Extract text after the colon
                     parts = line.split('*Asset:*')
                     if len(parts) > 1:
-                        signal_data['asset'] = parts[1].strip()
+                        asset = parts[1].strip()
+                        # Clean up any emojis or extra spaces
+                        asset = asset.replace('🟢', '').replace('🔴', '').replace('🎯', '').strip()
+                        signal_data['asset'] = asset
+                        logger.info(f"📋 Parsed asset: {signal_data['asset']}")
                 
-                # Parse timeframe from "FVG: H1 at ..." or "#H1"
-                elif 'FVG:' in line:
-                    if 'H4' in line:
-                        signal_data['timeframe'] = 'H4'
-                    elif 'H1' in line:
-                        signal_data['timeframe'] = 'H1'
-                    elif '15M' in line or 'M15' in line:
-                        signal_data['timeframe'] = 'M15'
+                # Parse timeframe - check multiple patterns from your examples
+                if signal_data['setup_type'] == 'FVG_SMT_TAP':
+                    # Example: "• FVG: H1 at 12/29 04:00"
+                    if "• FVG:" in line:
+                        for tf in ['H4', 'H1', 'M15', 'D', 'W']:
+                            if f" {tf} " in line or f": {tf}" in line:
+                                signal_data['timeframe'] = tf
+                                break
                 
-                # Parse SMT cycle - FIXED: Safer parsing
-                elif 'SMT:' in line:
-                    if 'daily' in line.lower():
-                        signal_data['smt_cycle'] = 'daily'
-                    elif 'weekly' in line.lower():
-                        signal_data['smt_cycle'] = 'weekly'
-                    elif '90min' in line.lower():
-                        signal_data['smt_cycle'] = '90min'
+                elif signal_data['setup_type'] == 'SD_SMT_TAP':
+                    # Example: "• Timeframe: D at 12/10 17:00"
+                    if "• Timeframe:" in line:
+                        for tf in ['H4', 'H1', 'M15', 'D', 'W']:
+                            if f" {tf} " in line or f": {tf}" in line:
+                                signal_data['timeframe'] = tf
+                                break
                 
-                # Parse PSP status
-                elif 'PSP:' in line:
-                    signal_data['has_psp'] = '✅' in line or 'YES' in line
+                elif signal_data['setup_type'] == 'CRT_SMT':
+                    # Example: "• CRT: H4 at 05:00"
+                    if "• CRT:" in line:
+                        for tf in ['H4', 'H1']:
+                            if f" {tf} " in line or f": {tf}" in line:
+                                signal_data['timeframe'] = tf
+                                break
                 
-                # Parse levels (for zones/FVG) - FIXED: Safer parsing
-                elif 'Levels:' in line:
+                # Parse levels (for FVG/SD zones)
+                if "• Levels:" in line:
                     # Example: "• Levels: 183.9460 - 184.0000"
-                    parts = line.split('Levels:')
+                    parts = line.split('• Levels:')
                     if len(parts) > 1:
                         levels_text = parts[1].strip()
                         try:
@@ -4371,31 +4398,48 @@ class EntrySignalManager:
                                     'low': float(low),
                                     'high': float(high)
                                 }
-                        except:
-                            pass
+                                logger.info(f"📋 Parsed levels: {signal_data['levels']}")
+                        except Exception as e:
+                            logger.warning(f"⚠️ Could not parse levels: {levels_text}, error: {e}")
                 
-                # Parse detection time - FIXED: Safer parsing
-                elif '*Detection Time:*' in line:
-                    parts = line.split('*Detection Time:*')
-                    if len(parts) > 1:
-                        time_str = parts[1].strip()
-                        try:
-                            # Try with microseconds
-                            signal_data['detection_time'] = datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S')
-                        except:
+                # Parse SMT cycle
+                if "• SMT:" in line or "• Cycle:" in line:
+                    line_lower = line.lower()
+                    if 'daily' in line_lower:
+                        signal_data['smt_cycle'] = 'daily'
+                    elif 'weekly' in line_lower:
+                        signal_data['smt_cycle'] = 'weekly'
+                    elif '90min' in line_lower:
+                        signal_data['smt_cycle'] = '90min'
+                    logger.info(f"📋 Parsed SMT cycle: {signal_data['smt_cycle']}")
+                
+                # Parse PSP status
+                if "• PSP:" in line:
+                    signal_data['has_psp'] = '✅' in line or 'Confirmed' in line
+                    logger.info(f"📋 Parsed PSP status: {signal_data['has_psp']}")
+                
+                # Parse detection time
+                if "*Detection Time:*" in line or "*Detection:*" in line:
+                    # Find the time part
+                    time_parts = line.split('*')
+                    for part in time_parts:
+                        if ':' in part and len(part) > 5:  # Looks like a time string
+                            time_str = part.strip()
                             try:
-                                # Try without microseconds
-                                signal_data['detection_time'] = datetime.strptime(time_str, '%Y-%m-%d %H:%M')
+                                # Try with full datetime format
+                                signal_data['detection_time'] = datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S')
+                                logger.info(f"📋 Parsed detection time: {signal_data['detection_time']}")
+                                break
                             except:
-                                signal_data['detection_time'] = datetime.now(NY_TZ)
-                
-                # Check hashtags for timeframe if not founde
-                elif '#H1' in line and not signal_data['timeframe']:
-                    signal_data['timeframe'] = 'H1'
-                elif '#H4' in line and not signal_data['timeframe']:
-                    signal_data['timeframe'] = 'H4'
-                elif '#M15' in line and not signal_data['timeframe']:
-                    signal_data['timeframe'] = 'M15'
+                                try:
+                                    # Try with just time (HH:MM:SS)
+                                    today = datetime.now(NY_TZ).date()
+                                    time_obj = datetime.strptime(time_str, '%H:%M:%S').time()
+                                    signal_data['detection_time'] = datetime.combine(today, time_obj)
+                                    logger.info(f"📋 Parsed detection time (time only): {signal_data['detection_time']}")
+                                    break
+                                except:
+                                    pass
             
             # Set defaults if not found
             if not signal_data['timeframe']:
@@ -4403,22 +4447,38 @@ class EntrySignalManager:
                     signal_data['timeframe'] = 'H4'
                 elif signal_data['setup_type'] == 'SD_SMT_TAP':
                     signal_data['timeframe'] = 'H1'
+                elif signal_data['setup_type'] == 'CRT_SMT':
+                    signal_data['timeframe'] = 'H4'
+                logger.info(f"📋 Using default timeframe: {signal_data['timeframe']}")
             
             if not signal_data['smt_cycle']:
                 signal_data['smt_cycle'] = 'daily'
+                logger.info(f"📋 Using default SMT cycle: {signal_data['smt_cycle']}")
             
-            if not signal_data['detection_time']:
-                signal_data['detection_time'] = datetime.now(NY_TZ)
+            if not signal_data['asset'] and signal_data['pair_group']:
+                # Try to infer asset from pair_group if available
+                # This is a fallback - you may need to adjust based on your pair_group naming
+                signal_data['asset'] = self.instruments[0] if self.instruments else ''
+                logger.info(f"📋 Using first instrument as asset: {signal_data['asset']}")
             
-            # Log what we parsed
-            logger.debug(f"✅ Parsed signal: {signal_data['setup_type']} {signal_data['timeframe']} {signal_data['direction']} {signal_data['asset']}")
+            # Validate we have the minimum required data
+            required_fields = ['setup_type', 'direction', 'asset', 'timeframe']
+            missing_fields = [field for field in required_fields if not signal_data.get(field)]
+            
+            if missing_fields:
+                logger.error(f"❌ Missing required fields: {missing_fields}")
+                logger.error(f"❌ Parsed data: {signal_data}")
+                return None
+            
+            logger.info(f"✅ Successfully parsed signal: {signal_data['setup_type']} {signal_data['timeframe']} {signal_data['direction']} {signal_data['asset']}")
             
             return signal_data
             
         except Exception as e:
             logger.error(f"❌ Error parsing signal message: {e}")
-            # Log the problematic message for debugging
-            logger.error(f"Problematic message: {message[:500]}...")
+            logger.error(f"❌ Message that caused error: {message[:200]}...")
+            import traceback
+            logger.error(traceback.format_exc())
             return None
     
     # ===================== TRAFFIC LIGHT SYSTEM =====================
