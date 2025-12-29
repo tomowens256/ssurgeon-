@@ -8026,6 +8026,93 @@ class UltimateTradingSystem:
         if psp_updates > 0:
             logger.info(f"🔄 Updated {psp_updates} SMTs with PSP confirmation")
 
+
+import asyncio
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta
+import time
+
+class TimeManager:
+    """Precise timing for different candle intervals"""
+    
+    @staticmethod
+    def calculate_next_candle_time(timeframe="M1", offset_seconds=3):
+        """
+        Calculate next candle time with offset
+        
+        Args:
+            timeframe: M1, M5, M15, H1, H4, D
+            offset_seconds: seconds to add after candle close (for data availability)
+        
+        Returns:
+            datetime: Next candle time with offset
+        """
+        now = datetime.now(NY_TZ)
+        
+        if timeframe == "M1":
+            next_time = now.replace(second=0, microsecond=0) + timedelta(minutes=1)
+        
+        elif timeframe == "M5":
+            minutes_past = now.minute % 5
+            next_minute = now.minute - minutes_past + 5
+            if next_minute >= 60:
+                next_time = now.replace(hour=now.hour+1, minute=0, second=0, microsecond=0)
+            else:
+                next_time = now.replace(minute=next_minute, second=0, microsecond=0)
+        
+        elif timeframe == "M15":
+            minutes_past = now.minute % 15
+            next_minute = now.minute - minutes_past + 15
+            if next_minute >= 60:
+                next_time = now.replace(hour=now.hour+1, minute=0, second=0, microsecond=0)
+            else:
+                next_time = now.replace(minute=next_minute, second=0, microsecond=0)
+        
+        elif timeframe == "H1":
+            next_time = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+        
+        elif timeframe == "H4":
+            hour = now.hour
+            next_hour = ((hour // 4) + 1) * 4
+            if next_hour >= 24:
+                next_time = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+            else:
+                next_time = now.replace(hour=next_hour, minute=0, second=0, microsecond=0)
+        
+        elif timeframe == "D":
+            next_time = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        else:
+            raise ValueError(f"Unsupported timeframe: {timeframe}")
+        
+        # Add offset for data availability
+        next_time += timedelta(seconds=offset_seconds)
+        
+        # If we're already past this time (shouldn't happen with offset), add one more period
+        if now >= next_time:
+            if timeframe == "M1":
+                next_time += timedelta(minutes=1)
+            elif timeframe == "M5":
+                next_time += timedelta(minutes=5)
+            elif timeframe == "M15":
+                next_time += timedelta(minutes=15)
+            elif timeframe == "H1":
+                next_time += timedelta(hours=1)
+            elif timeframe == "H4":
+                next_time += timedelta(hours=4)
+            elif timeframe == "D":
+                next_time += timedelta(days=1)
+        
+        return next_time
+    
+    @staticmethod
+    def get_sleep_time_until(next_time):
+        """Calculate seconds to sleep until next_time"""
+        now = datetime.now(NY_TZ)
+        sleep_seconds = (next_time - now).total_seconds()
+        return max(0, sleep_seconds)
+
 # ================================
 # ULTIMATE MAIN MANAGER
 # ================================
