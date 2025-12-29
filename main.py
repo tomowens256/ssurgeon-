@@ -5265,7 +5265,7 @@ class UltimateTradingSystem:
             pair_group=self.pair_group,
             instruments=self.instruments,
             market_data=self.market_data,
-            feature_box=self.feature_box,
+            # feature_box=self.feature_box,
             telegram_token=self.telegram_token,
             telegram_chat_id=self.telegram_chat_id
         )
@@ -5339,8 +5339,8 @@ class UltimateTradingSystem:
             sd_count = len(self.feature_box.active_features['sd_zone'])
             logger.info(f"📊 {self.pair_group} Feature Summary: {summary['smt_count']} SMTs, {sd_count} SD zones, {summary['crt_count']} CRTs, {summary['psp_count']} PSPs, {summary.get('tpd_count', 0)} TPDs")
 
-            self.run_entry_monitoring()
-            
+            # self.run_entry_monitoring()
+            self.entry_signal_manager.run_monitoring_cycle()
             return None
                 
         except Exception as e:
