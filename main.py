@@ -7549,6 +7549,7 @@ class UltimateTradingSystem:
         message = self._format_fvg_smt_tap_message(idea)
         
         if self._send_telegram_message(message):
+            self.entry_signal_manager.add_signal_from_message(message)
             # Record when we sent this signal
             if not hasattr(self, 'fvg_smt_tap_sent'):
                 self.fvg_smt_tap_sent = {}
