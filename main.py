@@ -5473,7 +5473,7 @@ class UltimateTradingSystem:
             
             # Get summary
             summary = self.feature_box.get_active_features_summary()
-            logger.info(f"📊 {self.pair_group} Feature Summary: {summary['smt_count']} SMTs, {summary.get('sd_zone_count', 0)} SD zones, {summary['crt_count']} CRTs, {summary['psp_count']} PSPs")
+            logger.info(f"📊 {self.pair_group} Feature Summary: {summary['smt_count']} SMTs, {summary['sd_zone_count']} SD zones, {summary['crt_count']} CRTs, {summary['psp_count']} PSPs, {summary['tpd_count']} TPDs")
             
             # Run entry monitoring
             if hasattr(self, 'entry_signal_manager'):
