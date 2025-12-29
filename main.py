@@ -7979,7 +7979,7 @@ class UltimateTradingSystem:
             logger.info(f"🔍 {self.pair_group}: No triad confluence (only {len(signals)} signals)")
             return None
         
-        # Count directions - FIXED: Properly unpack the signals
+        # Count directions - FIXED: Properly unpack the signalz
         bullish_count = 0
         bearish_count = 0
         signal_details = []
