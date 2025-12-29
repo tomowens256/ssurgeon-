@@ -8409,9 +8409,8 @@ class ParallelBotManager:
     def _run_entry_monitoring_loop(self, pair_group, system):
         """Run entry monitoring every 30 seconds with data fetching"""
         bot_logger = logging.getLogger(f"bot_{pair_group}")
-        bot_logger.info(f"⏰ Starting entry monitoring loop (30-second intervals)")
+        bot_logger.info(f"⏰ {pair_group}: Starting entry monitoring loop (30-second intervals)")
         
-        # Count for logging (only log every 10th cycle to reduce noise)
         cycle_count = 0
         
         while not self.shutdown_event.is_set():
@@ -8419,49 +8418,68 @@ class ParallelBotManager:
                 cycle_count += 1
                 
                 # Sleep 30 seconds between checks
-                if cycle_count % 10 == 1:  # Log every 10th cycle
-                    bot_logger.info(f"⏳ {pair_group}: Entry monitoring sleeping 30s")
+                if cycle_count % 5 == 1:  # Log every 5th cycle
+                    bot_logger.debug(f"⏳ {pair_group}: Entry monitoring sleeping 30s")
                 time.sleep(30)
                 
-                # Run entry monitoring
-                if hasattr(system, 'entry_signal_manager'):
-                    active_signals = len(system.entry_signal_manager.active_signals)
+                # Check if system has entry_signal_manager
+                if not hasattr(system, 'entry_signal_manager'):
+                    if cycle_count % 10 == 1:
+                        bot_logger.debug(f"⚠️ {pair_group}: No entry_signal_manager found")
+                    continue
+                
+                active_signals = len(system.entry_signal_manager.active_signals)
+                
+                if active_signals > 0:
+                    if cycle_count % 3 == 1:  # Log less frequently but still visible
+                        bot_logger.info(f"📡 {pair_group}: Monitoring {active_signals} active signal(s)")
                     
-                    if active_signals > 0:
-                        if cycle_count % 5 == 1:  # Log less frequently
-                            bot_logger.info(f"📡 {pair_group}: Monitoring {active_signals} active signals")
+                    # DEBUG: Log what timeframes we need
+                    try:
+                        # Check what data we have
+                        available_data = {}
+                        for inst in system.instruments:
+                            available_data[inst] = list(system.market_data.get(inst, {}).keys())
                         
-                        # FIRST: Fetch entry monitoring data
+                        bot_logger.debug(f"📊 {pair_group}: Available data: {available_data}")
+                        
+                        # Fetch entry monitoring data
+                        bot_logger.info(f"📥 {pair_group}: Starting entry data fetch...")
                         fetch_future = self.executor.submit(
                             self._fetch_entry_monitoring_data, system
                         )
                         
                         try:
-                            fetch_future.result(timeout=15)
-                            if cycle_count % 5 == 1:
-                                bot_logger.info(f"✅ {pair_group}: Entry monitoring data fetched")
+                            fetch_future.result(timeout=20)
+                            bot_logger.info(f"✅ {pair_group}: Entry data fetch completed")
                         except TimeoutError:
-                            bot_logger.warning(f"⚠️ {pair_group}: Entry monitoring data fetch timed out")
+                            bot_logger.warning(f"⚠️ {pair_group}: Entry data fetch timed out after 20s")
+                            continue
                         
-                        # THEN: Run monitoring
+                        # Run monitoring
                         start_time = time.time()
+                        bot_logger.debug(f"🔍 {pair_group}: Running entry monitoring cycle...")
+                        
                         monitor_future = self.executor.submit(
                             system.entry_signal_manager.run_monitoring_cycle
                         )
                         
                         try:
-                            monitor_future.result(timeout=10)
+                            monitor_future.result(timeout=15)
                             elapsed = time.time() - start_time
-                            if elapsed > 1:  # Only log if it took time
-                                bot_logger.debug(f"✅ {pair_group}: Entry monitoring completed in {elapsed:.1f}s")
+                            bot_logger.info(f"✅ {pair_group}: Entry monitoring completed in {elapsed:.1f}s")
                         except TimeoutError:
-                            bot_logger.warning(f"⚠️ {pair_group}: Entry monitoring timed out")
-                    else:
-                        if cycle_count % 20 == 1:  # Log very infrequently when no signals
-                            bot_logger.debug(f"📭 {pair_group}: No active signals to monitor")
-                    
+                            bot_logger.warning(f"⚠️ {pair_group}: Entry monitoring timed out after 15s")
+                            
+                    except Exception as e:
+                        bot_logger.error(f"❌ {pair_group}: Error in entry monitoring cycle: {e}")
+                        
+                else:
+                    if cycle_count % 20 == 1:
+                        bot_logger.debug(f"📭 {pair_group}: No active signals to monitor")
+                
             except Exception as e:
-                bot_logger.error(f"❌ {pair_group}: Error in entry monitoring: {e}")
+                bot_logger.error(f"❌ {pair_group}: Critical error in entry monitoring loop: {e}")
                 time.sleep(10)
     
     def _run_async_main_analysis(self, system):
