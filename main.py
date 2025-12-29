@@ -5591,74 +5591,53 @@ class UltimateTradingSystem:
             logger.debug(f"🧹 Cleaned up {len(signals_to_remove)} old Double SMT signals (7+ days)")
 
     def _scan_and_add_sd_zones(self):
-        """Scan for Supply/Demand zones with timezone debug"""
-        logger.info(f"🔍 SCANNING: Supply/Demand Zones")
+        """Scan for Supply/Demand zones"""
         
-        # Import NY_TZ
-        from pytz import timezone
-        NY_TZ = timezone('America/New_York')
+        # REMOVE the local import and use the global NY_TZ
+        # from pytz import timezone
+        # NY_TZ = timezone('America/New_York')
         
-        # Debug: Check timezone of data
-        for instrument in self.instruments:
-            for timeframe in ['M15', 'H1', 'H4','D' , 'W']:
-                data = self.market_data[instrument].get(timeframe)
-                if data is not None and not data.empty:
-                    sample_time = data['time'].iloc[0]
-                    if hasattr(sample_time, 'tz'):
-                        tz_info = str(sample_time.tz)
-                    else:
-                        tz_info = 'NO TIMEZONE'
-                    logger.info(f"📊 {instrument} {timeframe}: First candle at {sample_time}, TZ: {tz_info}")
-                    
-                    # Convert to NY_TZ if needed
-                    if data['time'].dt.tz is None:
-                        data['time'] = data['time'].dt.tz_localize('UTC').dt.tz_convert(NY_TZ)
-                        logger.info(f"   ↳ Converted to NY_TZ")
-        
-        timeframes_to_scan = ['M15', 'H1', 'H4','D' , 'W']
+        timeframes_to_scan = ['M15', 'H1', 'H4', 'D', 'W']
         if 'XAU_USD' in self.instruments:
             timeframes_to_scan.append('M5')
         
         zones_added = 0
         zones_invalidated = 0
         
+        # Debug log
+        logger.info(f"🔍 {self.pair_group}: Scanning for SD zones in {timeframes_to_scan}")
+        
         for instrument in self.instruments:
             for timeframe in timeframes_to_scan:
                 data = self.market_data[instrument].get(timeframe)
-                if data is not None and not data.empty:
-                    # Get OTHER instrument's data for dual validation
-                    other_instrument = [inst for inst in self.instruments if inst != instrument][0]
-                    other_data = self.market_data[other_instrument].get(timeframe)
+                
+                if data is None or data.empty:
+                    logger.debug(f"⚠️ {self.pair_group}: No data for {instrument} {timeframe}")
+                    continue
+                
+                # Get OTHER instrument's data for dual validation
+                other_instrument = [inst for inst in self.instruments if inst != instrument][0]
+                other_data = self.market_data[other_instrument].get(timeframe)
+                
+                # Scan for zones
+                zones = self.sd_detector.scan_timeframe(data, timeframe, instrument)
+                
+                logger.debug(f"🔍 {self.pair_group}: Found {len(zones)} zones for {instrument} {timeframe}")
+                
+                for zone in zones:
+                    # Check if zone is still valid
+                    is_valid = self.sd_detector.check_zone_still_valid(zone, data, other_data)
                     
-                    # Scan for zones
-                    zones = self.sd_detector.scan_timeframe(data, timeframe, instrument)
-                    logger.info(f"📊 {instrument} {timeframe}: Found {len(zones)} zones")
-                    
-                    for zone in zones:
-                        # Check if zone is still valid
-                        is_valid = self.sd_detector.check_zone_still_valid(zone, data, other_data)
-                        
-                        if is_valid:
-                            # Add to FeatureBox
-                            if self.feature_box.add_sd_zone(zone):
-                                zones_added += 1
-                                logger.info(f"📦 Added {zone['type']} zone: {zone['zone_name']}")
-                                logger.info(f"   Range: {zone['zone_low']:.4f}-{zone['zone_high']:.4f}")
-                                logger.info(f"   Formed: {zone['formation_time']}")
-                        else:
-                            zones_invalidated += 1
-                            logger.info(f"❌ Zone invalidated: {zone['zone_name']}")
+                    if is_valid:
+                        # Add to FeatureBox
+                        if self.feature_box.add_sd_zone(zone):
+                            zones_added += 1
+                            logger.info(f"📦 {self.pair_group}: Added {zone['type']} zone at {zone['zone_low']:.4f}-{zone['zone_high']:.4f}")
+                    else:
+                        zones_invalidated += 1
         
-        logger.info(f"📊 SD Zones Summary: {zones_added} added, {zones_invalidated} invalidated")
-        
-        # DEBUG: Show what's in FeatureBox
-        active_zones = self.feature_box.get_active_sd_zones()
-        logger.info(f"📦 FeatureBox now has {len(active_zones)} active SD zones")
-        
-        for zone in active_zones:
-            wick_note = f"(wick-adjusted)" if zone.get('wick_adjusted', False) else ""
-            logger.info(f"📦   {zone['zone_name']} {wick_note}: {zone['type']} at {zone['zone_low']:.4f}-{zone['zone_high']:.4f}")
-            logger.info(f"     Formed: {zone['formation_time']}")
+        if zones_added > 0:
+            logger.info(f"📊 {self.pair_group}: Added {zones_added} SD zones, invalidated {zones_invalidated}")
         
         return zones_added
 
