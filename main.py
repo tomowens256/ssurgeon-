@@ -8296,11 +8296,12 @@ class ParallelBotManager:
     def _run_entry_monitoring_loop(self, pair_group, system):
         """Run entry monitoring every 30 seconds with data fetching"""
         bot_logger = logging.getLogger(f"bot_{pair_group}")
-        bot_logger.info(f"⏰ Starting entry monitoring loop")
+        bot_logger.info(f"⏰ Starting entry monitoring loop (30-second intervals)")
         
         while not self.shutdown_event.is_set():
             try:
-                # Check every 30 seconds
+                # Sleep 30 seconds between checks
+                bot_logger.debug(f"⏳ {pair_group}: Entry monitoring sleeping 30s")
                 time.sleep(30)
                 
                 # Run entry monitoring
@@ -8308,19 +8309,19 @@ class ParallelBotManager:
                     active_signals = len(system.entry_signal_manager.active_signals)
                     
                     if active_signals > 0:
-                        bot_logger.info(f"📡 Monitoring {active_signals} active signals")
+                        bot_logger.info(f"📡 {pair_group}: Monitoring {active_signals} active signals")
                         
                         # FIRST: Fetch entry monitoring data
-                        bot_logger.debug(f"📥 Fetching entry monitoring data...")
+                        bot_logger.info(f"📥 {pair_group}: Fetching entry monitoring data...")
                         fetch_future = self.executor.submit(
                             self._fetch_entry_monitoring_data, system
                         )
                         
                         try:
                             fetch_future.result(timeout=15)
-                            bot_logger.debug(f"✅ Entry monitoring data fetched")
+                            bot_logger.info(f"✅ {pair_group}: Entry monitoring data fetched")
                         except TimeoutError:
-                            bot_logger.warning(f"⚠️ Entry monitoring data fetch timed out")
+                            bot_logger.warning(f"⚠️ {pair_group}: Entry monitoring data fetch timed out")
                         
                         # THEN: Run monitoring
                         start_time = time.time()
@@ -8331,12 +8332,14 @@ class ParallelBotManager:
                         try:
                             monitor_future.result(timeout=10)
                             elapsed = time.time() - start_time
-                            bot_logger.debug(f"✅ Entry monitoring completed in {elapsed:.1f}s")
+                            bot_logger.info(f"✅ {pair_group}: Entry monitoring completed in {elapsed:.1f}s")
                         except TimeoutError:
-                            bot_logger.warning(f"⚠️ Entry monitoring timed out")
+                            bot_logger.warning(f"⚠️ {pair_group}: Entry monitoring timed out")
+                    else:
+                        bot_logger.debug(f"📭 {pair_group}: No active signals to monitor")
                     
             except Exception as e:
-                bot_logger.error(f"❌ Error in entry monitoring: {e}")
+                bot_logger.error(f"❌ {pair_group}: Error in entry monitoring: {e}")
                 time.sleep(10)
     
     def _run_async_main_analysis(self, system):
