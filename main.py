@@ -6604,6 +6604,7 @@ class UltimateTradingSystem:
         message = self._format_sd_smt_tap_message(idea)
         
         if self._send_telegram_message(message):
+            self.entry_signal_manager.add_signal_from_message(message)
             # Store in BOTH dictionaries based on type
             self.sd_zone_sent[signal_id] = datetime.now(NY_TZ)
             if is_hp_zone:
