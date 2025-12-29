@@ -8358,44 +8358,50 @@ class ParallelBotManager:
                 time.sleep(30)
     
     def _run_entry_monitoring_loop(self, pair_group, system):
-        """Run entry monitoring every 1 minute with better logging"""
+        """Run entry monitoring every 30 seconds with data fetching"""
         bot_logger = logging.getLogger(f"bot_{pair_group}")
         bot_logger.info(f"⏰ Starting entry monitoring loop")
         
         while not self.shutdown_event.is_set():
             try:
-                # Calculate next 1-minute candle time
-                next_run = TimeManager.calculate_next_candle_time("M1", offset_seconds=3)
-                sleep_seconds = TimeManager.get_sleep_time_until(next_run)
-                
-                if sleep_seconds > 0:
-                    if sleep_seconds > 30:  # Only log long sleeps
-                        bot_logger.debug(f"⏳ Entry monitoring sleeping {sleep_seconds:.1f}s")
-                    time.sleep(sleep_seconds)
+                # Check every 30 seconds
+                time.sleep(30)
                 
                 # Run entry monitoring
                 if hasattr(system, 'entry_signal_manager'):
                     active_signals = len(system.entry_signal_manager.active_signals)
+                    
                     if active_signals > 0:
-                        bot_logger.debug(f"📡 Monitoring {active_signals} active signals")
-                    
-                    # Run monitoring
-                    start_time = time.time()
-                    future = self.executor.submit(
-                        system.entry_signal_manager.run_monitoring_cycle
-                    )
-                    
-                    try:
-                        future.result(timeout=10)
-                        elapsed = time.time() - start_time
-                        if elapsed > 1:  # Only log if it took time
+                        bot_logger.info(f"📡 Monitoring {active_signals} active signals")
+                        
+                        # FIRST: Fetch entry monitoring data
+                        bot_logger.debug(f"📥 Fetching entry monitoring data...")
+                        fetch_future = self.executor.submit(
+                            self._fetch_entry_monitoring_data, system
+                        )
+                        
+                        try:
+                            fetch_future.result(timeout=15)
+                            bot_logger.debug(f"✅ Entry monitoring data fetched")
+                        except TimeoutError:
+                            bot_logger.warning(f"⚠️ Entry monitoring data fetch timed out")
+                        
+                        # THEN: Run monitoring
+                        start_time = time.time()
+                        monitor_future = self.executor.submit(
+                            system.entry_signal_manager.run_monitoring_cycle
+                        )
+                        
+                        try:
+                            monitor_future.result(timeout=10)
+                            elapsed = time.time() - start_time
                             bot_logger.debug(f"✅ Entry monitoring completed in {elapsed:.1f}s")
-                    except TimeoutError:
-                        bot_logger.warning(f"⚠️ Entry monitoring timed out")
-                
+                        except TimeoutError:
+                            bot_logger.warning(f"⚠️ Entry monitoring timed out")
+                    
             except Exception as e:
                 bot_logger.error(f"❌ Error in entry monitoring: {e}")
-                time.sleep(5)
+                time.sleep(10)
     
     def _run_async_main_analysis(self, system):
         """Run async main analysis in thread"""
