@@ -2976,15 +2976,50 @@ class RealTimeFeatureBox:
                     del self.active_features[feature_type][feature_key]
     
     def get_active_features_summary(self):
-        """Get summary of currently active features"""
+        """Get summary of currently active features - FIXED to include all types"""
+        # Count active (non-expired) features
+        smt_count = 0
+        crt_count = 0
+        psp_count = 0
+        sd_zone_count = 0
+        tpd_count = 0
+        
+        # Count active SMTs
+        for smt_key, smt_feature in self.active_features['smt'].items():
+            if not self._is_feature_expired(smt_feature):
+                smt_count += 1
+        
+        # Count active CRTs
+        for crt_key, crt_feature in self.active_features['crt'].items():
+            if not self._is_feature_expired(crt_feature):
+                crt_count += 1
+        
+        # Count active PSPs
+        for psp_key, psp_feature in self.active_features['psp'].items():
+            if not self._is_feature_expired(psp_feature):
+                psp_count += 1
+        
+        # Count active SD zones
+        for zone_name, zone_feature in self.active_features['sd_zone'].items():
+            if not self._is_feature_expired(zone_feature):
+                sd_zone_count += 1
+        
+        # Count active TPDs
+        for tpd_key, tpd_feature in self.active_features['tpd'].items():
+            if not self._is_feature_expired(tpd_feature):
+                tpd_count += 1
+        
         summary = {
-            'smt_count': len(self.active_features['smt']),
-            'crt_count': len(self.active_features['crt']),
-            'psp_count': len(self.active_features['psp']),
+            'smt_count': smt_count,
+            'crt_count': crt_count,
+            'psp_count': psp_count,
+            'sd_zone_count': sd_zone_count,
+            'tpd_count': tpd_count,
             'active_smts': [],
             'active_crts': []
         }
         
+        # Add SMT details
         for smt_key, smt_feature in self.active_features['smt'].items():
             if not self._is_feature_expired(smt_feature):
                 smt_data = smt_feature['smt_data']
@@ -2995,6 +3030,7 @@ class RealTimeFeatureBox:
                     'has_psp': smt_feature['psp_data'] is not None
                 })
         
+        # Add CRT details
         for crt_key, crt_feature in self.active_features['crt'].items():
             if not self._is_feature_expired(crt_feature):
                 crt_data = crt_feature['crt_data']
@@ -3002,16 +3038,6 @@ class RealTimeFeatureBox:
                     'timeframe': crt_data['timeframe'],
                     'direction': crt_data['direction'],
                     'has_psp': crt_feature['psp_data'] is not None
-                })
-
-        # TPD summary
-        for tpd_key, tpd_feature in self.active_features['tpd'].items():
-            if not self._is_feature_expired(tpd_feature):
-                tpd_data = tpd_feature['tpd_data']
-                summary['active_tpds'].append({
-                    'timeframe': tpd_data['timeframe'],
-                    'direction': tpd_data['direction'],
-                    'has_psp': tpd_data.get('psp_signal') is not None
                 })
         
         return summary
