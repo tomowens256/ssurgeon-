@@ -7502,41 +7502,31 @@ class UltimateTradingSystem:
     
     def _scan_fvg_with_smt_tap(self):
         """Find FVGs where SMT's SECOND SWING traded in FVG zone - USING CLOSED CANDLES ONLY"""
-        logger.info(f"🔍 SCANNING: FVG + SMT Second Swing Tap (Cross-TF) - PSP REQUIRED - CLOSED CANDLES ONLY")
         
         # CORRECT CROSS-TIMEFRAME MAPPING
         fvg_to_smt_cycles = {
-            'H4': ['weekly', 'daily'],    # H4 FVG → Weekly (H1) or Daily (M15) SMT
-            'H1': ['daily'],              # H1 FVG → Daily (M15) SMT
-            'M15': ['daily', '90min']     # M15 FVG → Daily (M15) or 90min (M5) SMT
+            'H4': ['weekly', 'daily'],
+            'H1': ['daily'],
+            'M15': ['daily', '90min']
         }
         
-        # We need to get FVGs from FVGDetector, not from _find_zone_fvgs (which uses Fibonacci)
-        # Let's scan for FVGs using FVGDetector with ONLY CLOSED CANDLES
         all_fvgs = []
         
         for instrument in self.instruments:
-            for fvg_tf in ['H4', 'H1', 'M15']:  # Only these FVG timeframes
+            for fvg_tf in ['H4', 'H1', 'M15']:
                 data = self.market_data[instrument].get(fvg_tf)
                 if data is not None and not data.empty:
-                    # ✅ NEW: Use only CLOSED candles for FVG detection
                     if 'complete' in data.columns:
                         closed_data = data[data['complete'] == True].copy()
-                        logger.info(f"📊 {instrument} {fvg_tf}: {len(data)} total candles, {len(closed_data)} closed candles")
                         
-                        if len(closed_data) < 5:  # Need at least 5 closed candles
-                            logger.warning(f"⚠️ Not enough closed candles for {instrument} {fvg_tf}: {len(closed_data)}")
+                        if len(closed_data) < 5:
                             continue
                         
-                        # Use FVGDetector to get FVGs from CLOSED CANDLES ONLY
                         fvgs = self.fvg_detector.scan_tf(closed_data, fvg_tf, instrument)
                     else:
-                        # Fallback if no 'complete' column
-                        logger.warning(f"⚠️ No 'complete' column in {instrument} {fvg_tf} data")
                         fvgs = self.fvg_detector.scan_tf(data, fvg_tf, instrument)
                     
                     for fvg in fvgs:
-                        # Convert FVGDetector format to the format expected by this method
                         fvg_idea = {
                             'fvg_name': f"{instrument}_{fvg_tf}_{fvg['formation_time'].strftime('%m%d%H%M')}",
                             'fvg_levels': f"{fvg['fvg_low']:.4f} - {fvg['fvg_high']:.4f}",
@@ -7544,14 +7534,12 @@ class UltimateTradingSystem:
                             'timeframe': fvg_tf,
                             'asset': instrument,
                             'formation_time': fvg['formation_time'],
-                            'fvg_low': fvg['fvg_low'],  # Keep for easy access
+                            'fvg_low': fvg['fvg_low'],
                             'fvg_high': fvg['fvg_high'],
                             'is_hp': fvg.get('is_hp', False),
-                            'is_closed_candle': True  # Mark as from closed candle
+                            'is_closed_candle': True
                         }
                         all_fvgs.append(fvg_idea)
-        
-        logger.info(f"🔍 Found {len(all_fvgs)} FVGs from CLOSED CANDLES")
         
         for fvg_idea in all_fvgs:
             fvg_direction = fvg_idea['direction']
@@ -7559,14 +7547,10 @@ class UltimateTradingSystem:
             fvg_asset = fvg_idea['asset']
             fvg_low = fvg_idea['fvg_low']
             fvg_high = fvg_idea['fvg_high']
-            fvg_formation_time = fvg_idea['formation_time']  # Get FVG formation time
+            fvg_formation_time = fvg_idea['formation_time']
             
-            # Get which SMT cycles can tap this FVG timeframe
             relevant_cycles = fvg_to_smt_cycles.get(fvg_timeframe, [])
             
-            logger.info(f"🔍 Checking FVG {fvg_idea['fvg_name']} formed at {fvg_formation_time} - Can be tapped by: {relevant_cycles}")
-            
-            # Check all active SMTs
             for smt_key, smt_feature in self.feature_box.active_features['smt'].items():
                 if self.feature_box._is_feature_expired(smt_feature):
                     continue
@@ -7574,71 +7558,51 @@ class UltimateTradingSystem:
                 smt_data = smt_feature['smt_data']
                 smt_cycle = smt_data['cycle']
                 
-                # Check if this SMT cycle is allowed to tap this FVG timeframe
                 if smt_cycle not in relevant_cycles:
                     continue
                     
-                # Check direction match
                 if smt_data['direction'] != fvg_direction:
                     continue
                 
-                # ✅ CHECK PSP REQUIREMENT FIRST
                 has_psp = smt_feature['psp_data'] is not None
                 if not has_psp:
-                    logger.info(f"⏳ Skipping FVG+SMT: {smt_cycle} SMT has no PSP confirmation")
-                    continue  # Skip SMTs without PSP
+                    continue
                 
-                # CRITICAL: Check temporal relationship BEFORE checking tap
-                # Get swing_times - it's a dictionary, not a list!
                 swing_times = smt_data.get('swing_times', {})
                 
-                # Determine which asset key to use
                 if fvg_asset == self.instruments[0]:
                     asset_key = 'asset1_curr'
                 else:
                     asset_key = 'asset2_curr'
                 
-                # Get the current swing for this asset
                 asset_curr = swing_times.get(asset_key, {})
                 
                 if not asset_curr:
-                    logger.info(f"⚠️ No swing data for {fvg_asset} in SMT {smt_cycle}")
                     continue
                 
-                # Extract second swing time (could be dict or Timestamp)
                 if isinstance(asset_curr, dict):
                     second_swing_time = asset_curr.get('time')
                 else:
-                    second_swing_time = asset_curr  # Assuming it's already a Timestamp
+                    second_swing_time = asset_curr
                 
                 if not second_swing_time:
-                    logger.info(f"⚠️ No second swing time found for {fvg_asset} in SMT {smt_cycle}")
                     continue
                 
-                # REJECT if SMT second swing is BEFORE FVG formation
                 if second_swing_time <= fvg_formation_time:
-                    logger.info(f"❌ FVG+SMT REJECTED: SMT {smt_cycle} second swing at {second_swing_time} is BEFORE FVG formation at {fvg_formation_time}")
-                    continue  # Skip this SMT
+                    continue
                 
-                # Check if SMT's second swing traded in FVG zone (CROSS-TIMEFRAME)
                 tapped = self._check_cross_tf_smt_second_swing_in_fvg(
                     smt_data, fvg_asset, fvg_low, fvg_high, fvg_direction, 
-                    fvg_timeframe, smt_cycle, fvg_formation_time  # PASS FVG FORMATION TIME!
+                    fvg_timeframe, smt_cycle, fvg_formation_time
                 )
                 
                 if tapped:
-                    # Check if only ONE asset tapped (HP FVG)
                     is_hp_fvg = self._check_hp_fvg_fix(fvg_idea, fvg_asset)
                     
-                    logger.info(f"✅ FVG+SMT TAP CONFIRMED WITH PSP: {smt_cycle} {smt_data['direction']} "
-                               f"tapped {fvg_timeframe} FVG on {fvg_asset}, HP: {is_hp_fvg}")
-                    
-                    # Send the signal
                     return self._send_fvg_smt_tap_signal(
                         fvg_idea, smt_data, has_psp, is_hp_fvg
                     )
         
-        logger.info(f"🔍 No FVG+SMT setups with PSP found")
         return False
 
     def run_entry_monitoring(self):
