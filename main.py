@@ -5824,22 +5824,30 @@ class UltimateTradingSystem:
 
     async def fetch_entry_monitoring_data(self, api_key):
         """Fetch lower timeframe data for entry monitoring"""
-        if not hasattr(self, 'entry_signal_manager') or len(self.entry_signal_manager.active_signals) == 0:
-            return
-        
-        entry_timeframes = ['M1', 'M3', 'M5', 'M10', 'M15', 'M30', 'H1']
-        tasks = []
-        
-        for instrument in self.instruments:
-            for tf in entry_timeframes:
-                task = asyncio.create_task(
-                    self._fetch_single_instrument_data(instrument, tf, 40, api_key)
-                )
-                tasks.append(task)
-        
-        if tasks:
-            await asyncio.gather(*tasks)
-            logger.info(f"📥 {self.pair_group}: Fetched entry monitoring data")
+        try:
+            if not hasattr(self, 'entry_signal_manager') or len(self.entry_signal_manager.active_signals) == 0:
+                logger.debug(f"📭 {self.pair_group}: No active signals, skipping entry data fetch")
+                return
+            
+            entry_timeframes = ['M1', 'M3', 'M5', 'M10', 'M15', 'M30', 'H1']
+            tasks = []
+            
+            logger.info(f"📥 {self.pair_group}: Fetching entry monitoring data for {len(self.entry_signal_manager.active_signals)} active signals")
+            
+            for instrument in self.instruments:
+                for tf in entry_timeframes:
+                    task = asyncio.create_task(
+                        self._fetch_single_instrument_data(instrument, tf, 40, api_key)
+                    )
+                    tasks.append(task)
+            
+            if tasks:
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                successful = sum(1 for r in results if r is True)
+                logger.info(f"✅ {self.pair_group}: Fetched entry monitoring data ({successful}/{len(tasks)} successful)")
+                
+        except Exception as e:
+            logger.error(f"❌ {self.pair_group}: Error fetching entry monitoring data: {e}")
     
     async def _fetch_single_instrument_data(self, instrument, timeframe, count, api_key):
         """Fetch data for single instrument and convert to NY_TZ"""
