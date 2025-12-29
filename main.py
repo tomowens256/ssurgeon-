@@ -4282,7 +4282,7 @@ class EntrySignalManager:
             return False
     
     def _parse_signal_message(self, message):
-        """Parse Telegram message to extract signal data - FIXED FOR YOUR FORMAT"""
+        """Parse Telegram message to extract signal data - FIXED"""
         try:
             lines = message.split('\n')
             signal_data = {
@@ -4302,65 +4302,66 @@ class EntrySignalManager:
             for line in lines:
                 line = line.strip()
                 
+                # Debug: log what we're parsing
+                # logger.debug(f"Parsing line: {line}")
+                
                 # Check signal type
-                if '*DEMAND ZONE + SMT TAP*' in line:
+                if '*FVG + SMT TAP CONFIRMED*' in line:
+                    signal_data['setup_type'] = 'FVG_SMT_TAP'
+                elif '*DEMAND ZONE + SMT TAP*' in line:
                     signal_data['setup_type'] = 'SD_SMT_TAP'
                     signal_data['zone_type'] = 'demand'
                 elif '*SUPPLY ZONE + SMT TAP*' in line:
                     signal_data['setup_type'] = 'SD_SMT_TAP'
                     signal_data['zone_type'] = 'supply'
-                elif '*FVG + SMT TAP CONFIRMED*' in line:
-                    signal_data['setup_type'] = 'FVG_SMT_TAP'
                 elif '*CRT + SMT CONFLUENCE*' in line:
                     signal_data['setup_type'] = 'CRT_SMT'
                 
-                # Parse pair group
+                # Parse pair group - FIXED: Check if colon exists
                 elif '*Pair Group:*' in line:
-                    parts = line.split(':')
+                    parts = line.split('*Pair Group:*')
                     if len(parts) > 1:
                         signal_data['pair_group'] = parts[1].strip().replace(' ', '_').lower()
                 
-                # Parse direction
+                # Parse direction - FIXED: Check if colon exists
                 elif '*Direction:*' in line:
                     if 'BULLISH' in line.upper():
                         signal_data['direction'] = 'bullish'
                     elif 'BEARISH' in line.upper():
                         signal_data['direction'] = 'bearish'
                 
-                # Parse asset
+                # Parse asset - FIXED: Safer parsing
                 elif '*Asset:*' in line:
-                    parts = line.split(':')
+                    parts = line.split('*Asset:*')
                     if len(parts) > 1:
                         signal_data['asset'] = parts[1].strip()
                 
-                # Parse timeframe
-                elif '*Timeframe:*' in line:
-                    parts = line.split(':')
-                    if len(parts) > 1:
-                        signal_data['timeframe'] = parts[1].strip()
-                elif 'FVG:' in line and 'H4' in line:
-                    signal_data['timeframe'] = 'H4'
-                elif 'FVG:' in line and 'H1' in line:
-                    signal_data['timeframe'] = 'H1'
-                elif 'FVG:' in line and '15M' in line:
-                    signal_data['timeframe'] = 'M15'
+                # Parse timeframe from "FVG: H1 at ..." or "#H1"
+                elif 'FVG:' in line:
+                    if 'H4' in line:
+                        signal_data['timeframe'] = 'H4'
+                    elif 'H1' in line:
+                        signal_data['timeframe'] = 'H1'
+                    elif '15M' in line or 'M15' in line:
+                        signal_data['timeframe'] = 'M15'
                 
-                # Parse SMT cycle
-                elif 'Cycle:' in line:
-                    if '90min' in line.lower():
-                        signal_data['smt_cycle'] = '90min'
-                    elif 'daily' in line.lower():
+                # Parse SMT cycle - FIXED: Safer parsing
+                elif 'SMT:' in line:
+                    if 'daily' in line.lower():
                         signal_data['smt_cycle'] = 'daily'
                     elif 'weekly' in line.lower():
                         signal_data['smt_cycle'] = 'weekly'
+                    elif '90min' in line.lower():
+                        signal_data['smt_cycle'] = '90min'
                 
                 # Parse PSP status
                 elif 'PSP:' in line:
-                    signal_data['has_psp'] = '✅' in line
+                    signal_data['has_psp'] = '✅' in line or 'YES' in line
                 
-                # Parse levels (for zones/FVG)
+                # Parse levels (for zones/FVG) - FIXED: Safer parsing
                 elif 'Levels:' in line:
-                    parts = line.split(':')
+                    # Example: "• Levels: 183.9460 - 184.0000"
+                    parts = line.split('Levels:')
                     if len(parts) > 1:
                         levels_text = parts[1].strip()
                         try:
@@ -4373,13 +4374,28 @@ class EntrySignalManager:
                         except:
                             pass
                 
-                # Parse detection time
+                # Parse detection time - FIXED: Safer parsing
                 elif '*Detection Time:*' in line:
-                    time_str = line.split(': ')[1].strip()
-                    try:
-                        signal_data['detection_time'] = datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S')
-                    except:
-                        signal_data['detection_time'] = datetime.now(NY_TZ)
+                    parts = line.split('*Detection Time:*')
+                    if len(parts) > 1:
+                        time_str = parts[1].strip()
+                        try:
+                            # Try with microseconds
+                            signal_data['detection_time'] = datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S')
+                        except:
+                            try:
+                                # Try without microseconds
+                                signal_data['detection_time'] = datetime.strptime(time_str, '%Y-%m-%d %H:%M')
+                            except:
+                                signal_data['detection_time'] = datetime.now(NY_TZ)
+                
+                # Check hashtags for timeframe if not found
+                elif '#H1' in line and not signal_data['timeframe']:
+                    signal_data['timeframe'] = 'H1'
+                elif '#H4' in line and not signal_data['timeframe']:
+                    signal_data['timeframe'] = 'H4'
+                elif '#M15' in line and not signal_data['timeframe']:
+                    signal_data['timeframe'] = 'M15'
             
             # Set defaults if not found
             if not signal_data['timeframe']:
@@ -4389,15 +4405,20 @@ class EntrySignalManager:
                     signal_data['timeframe'] = 'H1'
             
             if not signal_data['smt_cycle']:
-                if signal_data['setup_type'] == 'FVG_SMT_TAP':
-                    signal_data['smt_cycle'] = 'daily'
-                elif signal_data['setup_type'] == 'SD_SMT_TAP' and signal_data['timeframe'] == 'M15':
-                    signal_data['smt_cycle'] = '90min'
+                signal_data['smt_cycle'] = 'daily'
+            
+            if not signal_data['detection_time']:
+                signal_data['detection_time'] = datetime.now(NY_TZ)
+            
+            # Log what we parsed
+            logger.debug(f"✅ Parsed signal: {signal_data['setup_type']} {signal_data['timeframe']} {signal_data['direction']} {signal_data['asset']}")
             
             return signal_data
             
         except Exception as e:
             logger.error(f"❌ Error parsing signal message: {e}")
+            # Log the problematic message for debugging
+            logger.error(f"Problematic message: {message[:500]}...")
             return None
     
     # ===================== TRAFFIC LIGHT SYSTEM =====================
