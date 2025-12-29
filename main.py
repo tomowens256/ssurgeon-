@@ -2126,6 +2126,23 @@ class RealTimeFeatureBox:
         }
         
         logger.info(f"🎯 RealTimeFeatureBox initialized for {pair_group}")
+
+    def debug_sd_zones_count(self):
+        """Debug why SD zones count is wrong"""
+        total_zones = len(self.active_features['sd_zone'])
+        active_zones = 0
+        expired_zones = 0
+        
+        for zone_name, zone_feature in self.active_features['sd_zone'].items():
+            if self._is_feature_expired(zone_feature):
+                expired_zones += 1
+            else:
+                active_zones += 1
+        
+        logger.info(f"🔍 SD Zones Debug: Total={total_zones}, Active={active_zones}, Expired={expired_zones}")
+        logger.info(f"🔍 SD Zones Sample: {list(self.active_features['sd_zone'].keys())[:5] if self.active_features['sd_zone'] else 'None'}")
+        
+        return active_zones
     
         
 
