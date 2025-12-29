@@ -6478,21 +6478,24 @@ class UltimateTradingSystem:
 
     def _scan_sd_with_smt_tap(self):
         """Find Supply/Demand zones where SMT's SECOND SWING traded in the zone - USING FEATUREBOX ZONES"""
+        logger.info(f"🔍 SCANNING: Supply/Demand + SMT Tap - USING FEATUREBOX ZONES")
         
         # Timeframe mapping: SD Zone -> allowed SMT cycles
         sd_to_smt_cycles = {
-            'H4': ['weekly', 'daily','monthly'],
-            'H1': ['weekly', 'daily','90min'],
-            'M15': ['daily','90min'],
-            'M5': ['daily','90min'],
+            'H4': ['weekly', 'daily','monthly'],      # H4 Zone → Weekly (H1) or Daily (M15) SMTs
+            'H1': ['weekly', 'daily','90min'],        # H1 Zone → Weekly (H1) or Daily (M15) SMT  
+            'M15': ['daily','90min'],                 # M15 Zone → Daily (M15) SMT
+            'M5': ['daily','90min'],                  # M5 Zone → 90min (M5) SMT
             'D' : ['weekly', 'daily','monthly'],
             'W' : ['weekly', 'daily','monthly']
         }
         
         # Get all active SD zones from FeatureBox
         active_zones = self.feature_box.get_active_sd_zones()
+        logger.info(f"🔍 Found {len(active_zones)} active SD zones in FeatureBox")
         
         if not active_zones:
+            logger.info(f"❌ No active SD zones in FeatureBox")
             return False
         
         # Sort zones by timeframe importance (H4 > H1 > M15 > M5)
@@ -6501,12 +6504,15 @@ class UltimateTradingSystem:
         
         for zone in active_zones:
             zone_type = zone['type']  # 'supply' or 'demand'
-            zone_direction = 'bearish' if zone_type == 'supply' else 'bullish'
+            zone_direction = 'bearish' if zone_type == 'supply' else 'bullish'  # Convert to direction
             zone_timeframe = zone['timeframe']
             zone_asset = zone['asset']
             zone_low = zone['zone_low']
             zone_high = zone['zone_high']
             zone_formation_time = zone['formation_time']
+            
+            logger.info(f"🔍 Checking {zone_type.upper()} zone: {zone['zone_name']} "
+                       f"({zone_low:.4f} - {zone_high:.4f})")
             
             # Get which SMT cycles can tap this zone timeframe
             relevant_cycles = sd_to_smt_cycles.get(zone_timeframe, [])
@@ -6526,16 +6532,20 @@ class UltimateTradingSystem:
                 if smt_cycle not in relevant_cycles:
                     continue
                     
-                # Check direction match
+                # ✅ CRITICAL: Check direction match
+                # Supply zones need BEARISH SMTs, Demand zones need BULLISH SMTs
                 if zone_type == 'supply' and smt_data['direction'] != 'bearish':
                     continue
                 if zone_type == 'demand' and smt_data['direction'] != 'bullish':
                     continue
                 
-                # PSP is NOT required, but we note if it exists
+                # ✅ MODIFIED: PSP is NOT required, but we note if it exists
                 has_psp = smt_feature['psp_data'] is not None
+                if not has_psp:
+                    logger.info(f"⚠️ SMT {smt_cycle} has no PSP confirmation - STILL CHECKING")
+                    # Continue anyway - we don't skip!
                 
-                # Get SMT second swing details for this asset
+                # ✅ Get SMT second swing details for this asset
                 swing_times = smt_data.get('swing_times', {})
                 
                 # Determine which asset key to use
@@ -6548,6 +6558,7 @@ class UltimateTradingSystem:
                 asset_curr = swing_times.get(asset_key, {})
                 
                 if not asset_curr:
+                    logger.info(f"⚠️ No swing data for {zone_asset} in SMT {smt_cycle}")
                     continue
                 
                 # Extract second swing details
@@ -6562,35 +6573,46 @@ class UltimateTradingSystem:
                     second_swing_type = 'high' if smt_data['direction'] == 'bearish' else 'low'
                 
                 if not second_swing_time or not second_swing_price:
+                    logger.info(f"⚠️ No swing price/time found for {zone_asset} in SMT {smt_cycle}")
                     continue
                 
-                # REJECT if SMT second swing is BEFORE zone formation
+                # ✅ REJECT if SMT second swing is BEFORE zone formation
                 if second_swing_time <= zone_formation_time:
-                    continue
+                    logger.info(f"❌ SD+SMT REJECTED: SMT {smt_cycle} second swing at {second_swing_time} is BEFORE zone formation at {zone_formation_time}")
+                    continue  # Skip this SMT
                 
-                # Check if zone was invalidated BEFORE SMT swing
+                # ✅ CRITICAL: Check if zone was invalidated BEFORE SMT swing (by any candle)
+                # Get candles between zone formation and SMT swing time
                 if self._was_zone_invalidated_before_smt_swing(zone, second_swing_time):
+                    logger.info(f"❌ SD+SMT REJECTED: Zone {zone['zone_name']} was invalidated BEFORE SMT swing at {second_swing_time}")
                     continue
                 
-                # Now check if SMT swing actually tapped the zone
+                # ✅ Now check if SMT swing actually tapped the zone
                 tapped = self._check_cross_tf_smt_second_swing_in_fvg(
                     smt_data, zone_asset, zone_low, zone_high, zone_direction,
                     zone_timeframe, smt_cycle, zone_formation_time
                 )
                 
                 if tapped:
-                    # Check if SMT swing itself invalidated the zone
+                    # ✅ CRITICAL: Check if SMT swing itself invalidated the zone
                     if self._did_smt_swing_invalidate_zone(zone, smt_data, second_swing_price, second_swing_type):
+                        logger.info(f"❌ SD+SMT REJECTED: SMT {smt_cycle} swing INVALIDATED the zone {zone['zone_name']}")
                         continue
                     
                     # Check for High Probability: Zone within higher TF zone of same direction
                     is_hp_zone = self._check_hp_sd_zone(zone, zone_direction)
+                    
+                    # Log whether we have PSP or not
+                    psp_status = "WITH PSP" if has_psp else "WITHOUT PSP"
+                    logger.info(f"✅ SD+SMT TAP CONFIRMED {psp_status}: {smt_cycle} {smt_data['direction']} "
+                               f"tapped {zone_timeframe} {zone_type} on {zone_asset}")
                     
                     # Send the signal (with or without PSP)
                     return self._send_sd_smt_tap_signal(
                         zone, smt_data, has_psp, is_hp_zone
                     )
         
+        logger.info(f"🔍 No SD+SMT setups found")
         return False
 
     def _check_smt_tap_in_sd_zone(self, smt_data, asset, zone_low, zone_high, zone_direction, zone_tf, smt_cycle, zone_formation_time):
