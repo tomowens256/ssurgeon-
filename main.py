@@ -8115,24 +8115,25 @@ from datetime import datetime, timedelta
 import time
 
 class TimeManager:
-    """Precise timing for different candle intervals"""
+    """Precise timing for different candle intervals with better logging"""
     
     @staticmethod
     def calculate_next_candle_time(timeframe="M1", offset_seconds=3):
         """
-        Calculate next candle time with offset
+        Calculate next candle time with offset and log details
         
         Args:
             timeframe: M1, M5, M15, H1, H4, D
             offset_seconds: seconds to add after candle close (for data availability)
         
         Returns:
-            datetime: Next candle time with offset
+            dict: {'next_time': datetime, 'sleep_seconds': float, 'info': str}
         """
         now = datetime.now(NY_TZ)
         
         if timeframe == "M1":
             next_time = now.replace(second=0, microsecond=0) + timedelta(minutes=1)
+            info = f"Next 1-minute candle at {next_time.strftime('%H:%M:%S')}"
         
         elif timeframe == "M5":
             minutes_past = now.minute % 5
@@ -8141,6 +8142,7 @@ class TimeManager:
                 next_time = now.replace(hour=now.hour+1, minute=0, second=0, microsecond=0)
             else:
                 next_time = now.replace(minute=next_minute, second=0, microsecond=0)
+            info = f"Next 5-minute candle at {next_time.strftime('%H:%M:%S')} ({5 - minutes_past} minutes from now)"
         
         elif timeframe == "M15":
             minutes_past = now.minute % 15
@@ -8149,20 +8151,27 @@ class TimeManager:
                 next_time = now.replace(hour=now.hour+1, minute=0, second=0, microsecond=0)
             else:
                 next_time = now.replace(minute=next_minute, second=0, microsecond=0)
+            info = f"Next 15-minute candle at {next_time.strftime('%H:%M:%S')} ({15 - minutes_past} minutes from now)"
         
         elif timeframe == "H1":
+            minutes_past = now.minute
             next_time = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+            info = f"Next hourly candle at {next_time.strftime('%H:%M:%S')} ({60 - minutes_past} minutes from now)"
         
         elif timeframe == "H4":
             hour = now.hour
+            minutes_past = now.minute
+            hours_past = hour % 4
             next_hour = ((hour // 4) + 1) * 4
             if next_hour >= 24:
                 next_time = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
             else:
                 next_time = now.replace(hour=next_hour, minute=0, second=0, microsecond=0)
+            info = f"Next 4-hour candle at {next_time.strftime('%H:%M:%S')} ({4 - hours_past} hours {60 - minutes_past} minutes from now)"
         
         elif timeframe == "D":
             next_time = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+            info = f"Next daily candle at {next_time.strftime('%Y-%m-%d %H:%M')}"
         
         else:
             raise ValueError(f"Unsupported timeframe: {timeframe}")
@@ -8185,14 +8194,33 @@ class TimeManager:
             elif timeframe == "D":
                 next_time += timedelta(days=1)
         
-        return next_time
+        sleep_seconds = (next_time - now).total_seconds()
+        
+        return {
+            'next_time': next_time,
+            'sleep_seconds': sleep_seconds,
+            'info': info
+        }
     
     @staticmethod
-    def get_sleep_time_until(next_time):
-        """Calculate seconds to sleep until next_time"""
-        now = datetime.now(NY_TZ)
-        sleep_seconds = (next_time - now).total_seconds()
-        return max(0, sleep_seconds)
+    def log_sleep_info(timeframe, sleep_result):
+        """Log sleep information in a readable format"""
+        sleep_seconds = sleep_result['sleep_seconds']
+        next_time = sleep_result['next_time']
+        info = sleep_result['info']
+        
+        if sleep_seconds <= 0:
+            return "⚠️ No sleep needed - running now"
+        
+        # Convert to minutes/seconds
+        if sleep_seconds > 60:
+            minutes = int(sleep_seconds // 60)
+            seconds = int(sleep_seconds % 60)
+            sleep_str = f"{minutes}m {seconds}s"
+        else:
+            sleep_str = f"{sleep_seconds:.1f}s"
+        
+        return f"⏳ Sleeping {sleep_str} until {next_time.strftime('%H:%M:%S')} ({info})"
 
 # ================================
 # ULTIMATE MAIN MANAGER
