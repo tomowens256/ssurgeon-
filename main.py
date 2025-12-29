@@ -8423,6 +8423,154 @@ class UltimateTradingManager:
         
         return message
 
+class ParallelBotManager:
+    """Manager to run multiple trading systems in parallel with coordinated timing"""
+    
+    def __init__(self, api_key, telegram_token, telegram_chat_id):
+        self.api_key = api_key
+        self.telegram_token = telegram_token
+        self.telegram_chat_id = telegram_chat_id
+        
+        # Create trading systems for each pair group
+        self.trading_systems = {}
+        for pair_group, pair_config in TRADING_PAIRS.items():
+            self.trading_systems[pair_group] = UltimateTradingSystem(
+                pair_group, pair_config, telegram_token, telegram_chat_id
+            )
+        
+        # Thread pool for parallel execution
+        self.executor = ThreadPoolExecutor(max_workers=len(TRADING_PAIRS) * 2)
+        
+        # Event for graceful shutdown
+        self.shutdown_event = threading.Event()
+        
+        logger.info(f"🚀 ParallelBotManager initialized with {len(self.trading_systems)} systems")
+    
+    def start_all(self):
+        """Start all bots in parallel threads"""
+        threads = []
+        
+        for pair_group, system in self.trading_systems.items():
+            # Thread for main analysis (runs every 5 minutes)
+            main_thread = threading.Thread(
+                target=self._run_main_analysis_loop,
+                args=(pair_group, system),
+                name=f"MainAnalysis_{pair_group}",
+                daemon=True
+            )
+            threads.append(main_thread)
+            main_thread.start()
+            
+            # Thread for entry monitoring (runs every 1 minute)
+            entry_thread = threading.Thread(
+                target=self._run_entry_monitoring_loop,
+                args=(pair_group, system),
+                name=f"EntryMonitoring_{pair_group}",
+                daemon=True
+            )
+            threads.append(entry_thread)
+            entry_thread.start()
+        
+        return threads
+    
+    def _run_main_analysis_loop(self, pair_group, system):
+        """Run main analysis every 5 minutes"""
+        logger.info(f"⏰ Starting main analysis loop for {pair_group}")
+        
+        while not self.shutdown_event.is_set():
+            try:
+                # Calculate next 5-minute candle time
+                next_run = TimeManager.calculate_next_candle_time("M5", offset_seconds=3)
+                sleep_seconds = TimeManager.get_sleep_time_until(next_run)
+                
+                if sleep_seconds > 0:
+                    logger.info(f"⏳ {pair_group} main analysis sleeping {sleep_seconds:.1f}s until {next_run.strftime('%H:%M:%S')}")
+                    time.sleep(sleep_seconds)
+                
+                # Run analysis
+                logger.info(f"🔍 {pair_group} running main analysis")
+                
+                # Run in thread pool to avoid blocking
+                future = self.executor.submit(
+                    self._run_async_main_analysis,
+                    system
+                )
+                future.result(timeout=60)  # Wait with timeout
+                
+                logger.info(f"✅ {pair_group} main analysis completed")
+                
+            except Exception as e:
+                logger.error(f"❌ Error in {pair_group} main analysis: {e}")
+                time.sleep(30)  # Sleep on error
+    
+    def _run_entry_monitoring_loop(self, pair_group, system):
+        """Run entry monitoring every 1 minute"""
+        logger.info(f"⏰ Starting entry monitoring loop for {pair_group}")
+        
+        while not self.shutdown_event.is_set():
+            try:
+                # Calculate next 1-minute candle time
+                next_run = TimeManager.calculate_next_candle_time("M1", offset_seconds=3)
+                sleep_seconds = TimeManager.get_sleep_time_until(next_run)
+                
+                if sleep_seconds > 0:
+                    time.sleep(sleep_seconds)
+                
+                # Run entry monitoring
+                if hasattr(system, 'entry_signal_manager'):
+                    logger.debug(f"🔍 {pair_group} running entry monitoring")
+                    
+                    # Run in thread pool
+                    future = self.executor.submit(
+                        system.entry_signal_manager.run_monitoring_cycle
+                    )
+                    future.result(timeout=10)  # Quick timeout for fast monitoring
+                
+            except Exception as e:
+                logger.error(f"❌ Error in {pair_group} entry monitoring: {e}")
+                time.sleep(5)  # Short sleep on error
+    
+    def _run_async_main_analysis(self, system):
+        """Run async main analysis in thread"""
+        try:
+            # Create new event loop for this thread
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            # Run the analysis
+            result = loop.run_until_complete(
+                system.run_ultimate_analysis(self.api_key)
+            )
+            
+            loop.close()
+            return result
+            
+        except Exception as e:
+            logger.error(f"❌ Async analysis error: {e}")
+            raise
+    
+    def stop_all(self):
+        """Stop all bots gracefully"""
+        logger.info("🛑 Stopping all bots...")
+        self.shutdown_event.set()
+        self.executor.shutdown(wait=True)
+        logger.info("✅ All bots stopped")
+    
+    def get_status(self):
+        """Get status of all bots"""
+        status = {}
+        for pair_group, system in self.trading_systems.items():
+            if hasattr(system, 'entry_signal_manager'):
+                active_signals = len(system.entry_signal_manager.active_signals)
+                traffic_lights = len(system.entry_signal_manager.traffic_lights)
+                status[pair_group] = {
+                    'active_signals': active_signals,
+                    'traffic_lights': traffic_lights,
+                    'market_data': {inst: list(system.market_data[inst].keys()) 
+                                   for inst in system.instruments if inst in system.market_data}
+                }
+        return status
+
 # ================================
 # MAIN EXECUTION
 # ================================
