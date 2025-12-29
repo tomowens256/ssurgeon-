@@ -8564,13 +8564,14 @@ class ParallelBotManager:
                 }
         return status
 
+
 # ================================
-# MAIN EXECUTION
+# MAIN EXECUTION WITH PARALLEL BOTS
 # ================================
 
 async def main():
-    """Main entry point"""
-    logger.info("🛡️ Starting ULTIMATE Multi-Pair SMT Trading System")
+    """Main entry point with parallel execution"""
+    logger.info("🚀 LAUNCHING PARALLEL TRADING BOTS IN 3...2...1...")
     
     api_key = os.getenv('OANDA_API_KEY')
     telegram_token = os.getenv('TELEGRAM_BOT_TOKEN')
@@ -8582,11 +8583,55 @@ async def main():
         return
     
     try:
-        manager = UltimateTradingManager(api_key, telegram_token, telegram_chat_id)
-        await manager.run_ultimate_systems()
+        # Create parallel bot manager
+        bot_manager = ParallelBotManager(api_key, telegram_token, telegram_chat_id)
         
-    except KeyboardInterrupt:
-        logger.info("🛑 System stopped by user")
+        # Start all bots
+        threads = bot_manager.start_all()
+        
+        logger.info(f"✅ All bots started: {len(threads)} threads")
+        
+        # Send startup message
+        startup_msg = f"""
+        🤖 *PARALLEL TRADING BOTS STARTED* 🤖
+        
+        • Running {len(TRADING_PAIRS)} pair groups in parallel
+        • Main analysis: Every 5-minute candle (with 3s delay)
+        • Entry monitoring: Every 1-minute candle (with 3s delay)
+        • Each system runs in separate thread
+        • Entry signals include Fibonacci levels, SL/TP, potential TPs
+        
+        🎯 Systems active: {', '.join(TRADING_PAIRS.keys())}
+                """
+        
+        send_telegram(startup_msg, telegram_token, telegram_chat_id)
+        
+        # Monitor and log status
+        logger.info("📊 Main thread entering monitoring loop")
+        
+        while True:
+            try:
+                # Get status of all bots
+                status = bot_manager.get_status()
+                
+                # Log status
+                for pair_group, stats in status.items():
+                    if stats['active_signals'] > 0:
+                        logger.info(f"📡 {pair_group}: {stats['active_signals']} active signals, {stats['traffic_lights']} traffic lights")
+                
+                # Sleep 30 seconds
+                time.sleep(30)
+                
+            except KeyboardInterrupt:
+                logger.info("🛑 Received keyboard interrupt, shutting down...")
+                break
+            except Exception as e:
+                logger.error(f"❌ Monitoring error: {str(e)}")
+                time.sleep(30)
+        
+        # Stop all bots
+        bot_manager.stop_all()
+        
     except Exception as e:
         logger.error(f"💥 Fatal error: {str(e)}")
         import traceback
