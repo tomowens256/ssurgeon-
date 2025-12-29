@@ -5657,70 +5657,137 @@ class UltimateTradingSystem:
         
         return new_candles
     
+    # async def _fetch_all_data_parallel(self, api_key):
+    #     """Fetch data in parallel with PROVEN candle counts that WORKED"""
+    #     tasks = []
+        
+    #     # PROVEN CANDLE COUNTS FROM WORKING VERSION
+    #     proven_counts = {
+    #         # For SMT/CRT detection (keep these SHORT)
+    #         'H4': 40,   # Monthly timeframe - 40 candles (was working)
+    #         'H1': 40,   # Weekly timeframe - 40 candles (was working)  
+    #         'M15': 40,   # Daily timeframe - 40 candles (was working)
+    #         'M5': 40,    # 90min timeframe - 40 candles (was working)
+            
+    #         # For CRT only
+    #         'H1': 10, 'H4': 10,
+            
+    #         # For SD Zones ONLY - use MORE candles
+    #         'SD_H4': 100,  # For SD zones on H4
+    #         'SD_H1': 100,  # For SD zones on H1  
+    #         'SD_M15': 100, # For SD zones on M15
+    #         'SD_M5': 100,  # For SD zones on M5
+    #     }
+        
+    #     # Combine all required timeframes
+    #     required_timeframes = []
+        
+    #     # 1. Add SMT/CRT timeframes (SHORT lookback)
+    #     for cycle in self.pair_config['timeframe_mapping'].values():
+    #         if cycle not in required_timeframes:
+    #             required_timeframes.append(cycle)
+        
+    #     # 2. Add CRT timeframes
+    #     for tf in CRT_TIMEFRAMES:
+    #         if tf not in required_timeframes:
+    #             required_timeframes.append(tf)
+        
+    #     # 3. ADD SD Zone timeframes (LONG lookback - separate calls)
+    #     sd_timeframes = ['M15', 'H1', 'H4','D' , 'W']
+    #     if 'XAU_USD' in self.instruments:
+    #         sd_timeframes.append('M5')
+        
+    #     # Create fetch tasks
+    #     for instrument in self.instruments:
+    #         # FIRST: Fetch SHORT data for SMT/CRT
+    #         for tf in required_timeframes:
+    #             count = proven_counts.get(tf, 40)  # Default to 40
+    #             task = asyncio.create_task(
+    #                 self._fetch_single_instrument_data(instrument, tf, count, api_key)
+    #             )
+    #             tasks.append(task)
+            
+    #         # THEN: Fetch LONG data for SD Zones (separate calls)
+    #         for tf in sd_timeframes:
+    #             count = 40  # 40 candles for SD zones
+    #             task = asyncio.create_task(
+    #                 self._fetch_single_instrument_data(instrument, tf, count, api_key)
+    #             )
+    #             tasks.append(task)
+        
+    #     # Wait for ALL data
+    #     try:
+    #         await asyncio.wait_for(asyncio.gather(*tasks), timeout=45.0)
+    #         logger.info(f"✅ Parallel fetch: SHORT data for SMT/CRT, LONG data for SD zones")
+    #     except asyncio.TimeoutError:
+    #         logger.warning(f"⚠️ Parallel data fetch timeout for {self.pair_group}")
     async def _fetch_all_data_parallel(self, api_key):
-        """Fetch data in parallel with PROVEN candle counts that WORKED"""
+        """Fetch data in parallel with proper separation for different purposes"""
         tasks = []
         
-        # PROVEN CANDLE COUNTS FROM WORKING VERSION
-        proven_counts = {
-            # For SMT/CRT detection (keep these SHORT)
-            'H4': 40,   # Monthly timeframe - 40 candles (was working)
-            'H1': 40,   # Weekly timeframe - 40 candles (was working)  
-            'M15': 40,   # Daily timeframe - 40 candles (was working)
-            'M5': 40,    # 90min timeframe - 40 candles (was working)
-            
-            # For CRT only
-            'H1': 10, 'H4': 10,
-            
-            # For SD Zones ONLY - use MORE candles
-            'SD_H4': 100,  # For SD zones on H4
-            'SD_H1': 100,  # For SD zones on H1  
-            'SD_M15': 100, # For SD zones on M15
-            'SD_M5': 100,  # For SD zones on M5
-        }
+        # Get current time to log what we're fetching
+        logger.info(f"📥 Fetching data for {self.pair_group}")
         
-        # Combine all required timeframes
-        required_timeframes = []
+        # 1. SMT/CRT timeframes (short lookback)
+        smt_crt_timeframes = []
+        for cycle in ['weekly', 'daily', '90min']:
+            tf = self.pair_config['timeframe_mapping'][cycle]
+            if tf not in smt_crt_timeframes:
+                smt_crt_timeframes.append(tf)
         
-        # 1. Add SMT/CRT timeframes (SHORT lookback)
-        for cycle in self.pair_config['timeframe_mapping'].values():
-            if cycle not in required_timeframes:
-                required_timeframes.append(cycle)
+        # Add CRT timeframes
+        for tf in ['H1', 'H4']:
+            if tf not in smt_crt_timeframes:
+                smt_crt_timeframes.append(tf)
         
-        # 2. Add CRT timeframes
-        for tf in CRT_TIMEFRAMES:
-            if tf not in required_timeframes:
-                required_timeframes.append(tf)
-        
-        # 3. ADD SD Zone timeframes (LONG lookback - separate calls)
-        sd_timeframes = ['M15', 'H1', 'H4','D' , 'W']
+        # 2. SD Zone timeframes (longer lookback)
+        sd_timeframes = ['M15', 'H1', 'H4', 'D', 'W']
         if 'XAU_USD' in self.instruments:
             sd_timeframes.append('M5')
         
-        # Create fetch tasks
+        # 3. Entry monitoring timeframes (fast for LQ candles and pin bars)
+        entry_timeframes = ['M1', 'M3', 'M5', 'M10', 'M15', 'M30', 'H1']
+        
+        # Create tasks for SMT/CRT
+        logger.info(f"📊 SMT/CRT timeframes: {smt_crt_timeframes}")
         for instrument in self.instruments:
-            # FIRST: Fetch SHORT data for SMT/CRT
-            for tf in required_timeframes:
-                count = proven_counts.get(tf, 40)  # Default to 40
+            for tf in smt_crt_timeframes:
                 task = asyncio.create_task(
-                    self._fetch_single_instrument_data(instrument, tf, count, api_key)
-                )
-                tasks.append(task)
-            
-            # THEN: Fetch LONG data for SD Zones (separate calls)
-            for tf in sd_timeframes:
-                count = 40  # 40 candles for SD zones
-                task = asyncio.create_task(
-                    self._fetch_single_instrument_data(instrument, tf, count, api_key)
+                    self._fetch_single_instrument_data(instrument, tf, 40, api_key)
                 )
                 tasks.append(task)
         
-        # Wait for ALL data
-        try:
-            await asyncio.wait_for(asyncio.gather(*tasks), timeout=45.0)
-            logger.info(f"✅ Parallel fetch: SHORT data for SMT/CRT, LONG data for SD zones")
-        except asyncio.TimeoutError:
-            logger.warning(f"⚠️ Parallel data fetch timeout for {self.pair_group}")
+        # Create tasks for SD Zones
+        logger.info(f"📊 SD Zone timeframes: {sd_timeframes}")
+        for instrument in self.instruments:
+            for tf in sd_timeframes:
+                task = asyncio.create_task(
+                    self._fetch_single_instrument_data(instrument, tf, 50, api_key)
+                )
+                tasks.append(task)
+        
+        # Create tasks for Entry Monitoring (if we have active signals)
+        if hasattr(self, 'entry_signal_manager') and len(self.entry_signal_manager.active_signals) > 0:
+            logger.info(f"📊 Entry monitoring timeframes: {entry_timeframes}")
+            for instrument in self.instruments:
+                for tf in entry_timeframes:
+                    task = asyncio.create_task(
+                        self._fetch_single_instrument_data(instrument, tf, 20, api_key)
+                    )
+                    tasks.append(task)
+        
+        # Execute all tasks
+        if tasks:
+            try:
+                await asyncio.wait_for(asyncio.gather(*tasks), timeout=45.0)
+                logger.info(f"✅ Data fetched for {self.pair_group}: {len(tasks)} tasks")
+            except asyncio.TimeoutError:
+                logger.warning(f"⚠️ Data fetch timeout for {self.pair_group}")
+        
+        # Log what data we have
+        for instrument in self.instruments:
+            timeframes = list(self.market_data[instrument].keys())
+            logger.info(f"📦 {instrument} has data for: {timeframes}")
     
     async def _fetch_single_instrument_data(self, instrument, timeframe, count, api_key):
         """Fetch data for single instrument and convert to NY_TZ"""
