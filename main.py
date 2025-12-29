@@ -4389,7 +4389,7 @@ class EntrySignalManager:
                             except:
                                 signal_data['detection_time'] = datetime.now(NY_TZ)
                 
-                # Check hashtags for timeframe if not found
+                # Check hashtags for timeframe if not founde
                 elif '#H1' in line and not signal_data['timeframe']:
                     signal_data['timeframe'] = 'H1'
                 elif '#H4' in line and not signal_data['timeframe']:
