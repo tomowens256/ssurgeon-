@@ -5315,72 +5315,65 @@ class UltimateTradingSystem:
         return self.hybrid_timing.get_sleep_time()
     
     async def run_ultimate_analysis(self, api_key):
-        """Run analysis with prioritized scan pipeline"""
+        """Run analysis with proper data fetching for all purposes"""
         try:
-            # Cleanup expired features first
+            # Cleanup first
             self.feature_box.cleanup_expired_features()
             self.cleanup_old_signals()
             
-            # Fetch data
+            # Fetch ALL required data in parallel
             await self._fetch_all_data_parallel(api_key)
-        
+            
+            # Reset detector state
             self.reset_smt_detector_state()
-                
-                # Check if we have new candles that warrant immediate scanning
+            
+            # Check for new candles
             new_candles_detected = self._check_new_candles()
-                
+            
             if not new_candles_detected:
-                logger.info(f"⏸️ No new candles - skipping analysis")
+                logger.info(f"⏸️ {self.pair_group}: No new candles - skipping analysis")
+                
+                # Still run entry monitoring (it might have active signals)
+                if hasattr(self, 'entry_signal_manager'):
+                    self.entry_signal_manager.run_monitoring_cycle()
+                
                 return None
-                
-            logger.info(f"🎯 NEW CANDLES DETECTED - Running analysis")
-                
-                # Scan for new features and add to Feature Box
+            
+            logger.info(f"🎯 {self.pair_group}: NEW CANDLES DETECTED - Running full analysis")
+            
+            # Scan and add features
             await self._scan_and_add_features_immediate()
-                
-                # Scan for Supply/Demand zones
+            
+            # Scan for SD zones
             self._scan_and_add_sd_zones()
-                            
-            self.debug_feature_box()
-            self.debug_smt_detection()
-                
-                # Define scan pipeline in priority order
+            
+            # Run scans in priority order
             scan_pipeline = [
                 ("FVG+SMT", self._scan_fvg_with_smt_tap),
                 ("SD+SMT", self._scan_sd_with_smt_tap),
                 ("CRT/TPD", self._scan_crt_smt_confluence),
                 ("Double SMT", self._scan_double_smts_temporal)
             ]
-                
-                # Run scans in priority order with short-circuit
-            signals_found = 0
-            signal_type = None
-                
+            
+            signal_found = False
             for scan_name, scan_method in scan_pipeline:
-                logger.info(f"🔍 Running {scan_name} scan...")
-                    
-                signal_detected = scan_method()
-                if signal_detected:
-                    signals_found = 1
-                    signal_type = scan_name
-                    logger.info(f"✅ {scan_name} signal detected - stopping scan pipeline")
+                logger.info(f"🔍 {self.pair_group}: Running {scan_name} scan...")
+                
+                if scan_method():
+                    signal_found = True
+                    logger.info(f"✅ {self.pair_group}: {scan_name} signal detected")
                     break
-                
-            # Log results
-            if signal_type:
-                logger.info(f"🎯 Signal found: {signal_type}")
-            else:
-                logger.info(f"🔍 No signals detected in any scan")
-                
-            # Get feature summary
+            
+            # Get summary
             summary = self.feature_box.get_active_features_summary()
-            sd_count = len(self.feature_box.active_features['sd_zone'])
-            logger.info(f"📊 {self.pair_group} Feature Summary: {summary['smt_count']} SMTs, {sd_count} SD zones, {summary['crt_count']} CRTs, {summary['psp_count']} PSPs, {summary.get('tpd_count', 0)} TPDs")
-
-            # self.run_entry_monitoring()
-            self.entry_signal_manager.run_monitoring_cycle()
-            return None
-                
+            logger.info(f"📊 {self.pair_group} Feature Summary: {summary['smt_count']} SMTs, {summary.get('sd_zone_count', 0)} SD zones, {summary['crt_count']} CRTs, {summary['psp_count']} PSPs")
+            
+            # Run entry monitoring
+            if hasattr(self, 'entry_signal_manager'):
+                self.entry_signal_manager.run_monitoring_cycle()
+            
+            return None if not signal_found else {"pair_group": self.pair_group, "signal": "found"}
+            
         except Exception as e:
             logger.error(f"❌ Error in analysis for {self.pair_group}: {str(e)}", exc_info=True)
             return None
