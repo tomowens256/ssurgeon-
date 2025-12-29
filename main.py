@@ -5259,6 +5259,9 @@ class UltimateTradingSystem:
             self.telegram_token, 
             self.telegram_chat_id
         )
+
+        # Pass system reference to feature_box
+        self.feature_box.system = self
         
         
         # THEN create detectors and connect FeatureBox
