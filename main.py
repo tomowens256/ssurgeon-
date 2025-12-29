@@ -5458,7 +5458,21 @@ class UltimateTradingSystem:
         except Exception as e:
             logger.error(f"❌ Error in analysis for {self.pair_group}: {str(e)}", exc_info=True)
             return None
-            
+
+    def debug_entry_monitoring_data(self):
+        """Debug what data we have for entry monitoring"""
+        logger.info(f"🔍 {self.pair_group}: Checking entry monitoring data")
+        
+        entry_timeframes = ['M1', 'M3', 'M5', 'M10', 'M15', 'M30', 'H1']
+        
+        for instrument in self.instruments:
+            logger.info(f"📊 {self.pair_group}: {instrument} data:")
+            for tf in entry_timeframes:
+                data = self.market_data[instrument].get(tf)
+                if data is not None and isinstance(data, pd.DataFrame):
+                    logger.info(f"    {tf}: {len(data)} candles, latest: {data.iloc[-1]['time'] if not data.empty else 'N/A'}")
+                else:
+                    logger.info(f"    {tf}: NO DATA")
 
         async def run_optimized_analysis(self, api_key):
             """Run analysis only for timeframes that need scanning"""
