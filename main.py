@@ -2712,6 +2712,12 @@ class RealTimeFeatureBox:
         if success:
             logger.info(f"🚀 SIGNAL SENT: {signal_data['description']}")
             self.sent_signals[signal_key] = datetime.now(NY_TZ)
+            
+            # ===== ADD THIS: Pass to EntrySignalManager if available =====
+            if hasattr(self, 'system') and hasattr(self.system, 'entry_signal_manager'):
+                self.system.entry_signal_manager.add_signal_from_message(message)
+            # ============================================================
+            
             return True
         else:
             logger.error(f"❌ FAILED to send signal: {signal_key}")
