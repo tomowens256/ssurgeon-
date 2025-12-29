@@ -5460,6 +5460,25 @@ class UltimateTradingSystem:
                 logger.error(f"❌ Error in optimized analysis for {self.pair_group}: {str(e)}", exc_info=True)
                 return 60
 
+        async def fetch_entry_monitoring_data(self, api_key):
+            """Fetch lower timeframe data for entry monitoring"""
+            if not hasattr(self, 'entry_signal_manager') or len(self.entry_signal_manager.active_signals) == 0:
+                return
+            
+            entry_timeframes = ['M1', 'M3', 'M5', 'M10', 'M15', 'M30', 'H1']
+            tasks = []
+            
+            for instrument in self.instruments:
+                for tf in entry_timeframes:
+                    task = asyncio.create_task(
+                        self._fetch_single_instrument_data(instrument, tf, 40, api_key)
+                    )
+                    tasks.append(task)
+            
+            if tasks:
+                await asyncio.gather(*tasks)
+                logger.info(f"📥 Fetched entry monitoring data for {self.pair_group}")
+
 
         # Add to UltimateTradingSystem class:
         def cleanup_entry_monitoring(self):
