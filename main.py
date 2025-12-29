@@ -8448,6 +8448,10 @@ class ParallelBotManager:
         # Create trading systems for each pair group
         self.trading_systems = {}
         for pair_group, pair_config in TRADING_PAIRS.items():
+            # Setup logging for this bot
+            self._setup_bot_logging(pair_group)
+            
+            # Create system
             self.trading_systems[pair_group] = UltimateTradingSystem(
                 pair_group, pair_config, telegram_token, telegram_chat_id
             )
@@ -8458,7 +8462,35 @@ class ParallelBotManager:
         # Event for graceful shutdown
         self.shutdown_event = threading.Event()
         
-        logger.info(f"🚀 ParallelBotManager initialized with {len(self.trading_systems)} systems")
+        print(f"🚀 ParallelBotManager initialized with {len(self.trading_systems)} systems")
+    
+    def _setup_bot_logging(self, bot_name):
+        """Setup logging for a specific bot"""
+        import logging
+        
+        # Create logger for this bot
+        logger = logging.getLogger(f"bot_{bot_name}")
+        logger.setLevel(logging.INFO)
+        
+        # Don't propagate to root logger
+        logger.propagate = False
+        
+        # Create console handler with bot name prefix
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.INFO)
+        
+        # Custom formatter with bot name
+        formatter = logging.Formatter(f'%(asctime)s - [{bot_name}] - %(levelname)s - %(message)s')
+        console_handler.setFormatter(formatter)
+        
+        # Create file handler
+        file_handler = logging.FileHandler(f'logs/bot_{bot_name}.log')
+        file_handler.setLevel(logging.DEBUG)
+        file_handler.setFormatter(formatter)
+        
+        # Add handlers
+        logger.addHandler(console_handler)
+        logger.addHandler(file_handler)
     
     def start_all(self):
         """Start all bots in parallel threads"""
