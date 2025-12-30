@@ -47,6 +47,28 @@ TRADING_PAIRS = {
             '90min': 'M5'
         }
     },
+    'jpy_triad': {
+        'pair1': 'EUR_JPY',  # OLD structure
+        'pair2': 'GBP_JPY',  # OLD structure
+        'instruments': ['EUR_JPY', 'GBP_JPY'],  # NEW structure
+        'timeframe_mapping': {
+            'monthly': 'H4',
+            'weekly': 'H1',
+            'daily': 'M15',
+            '90min': 'M5'
+        }
+    },
+    'jpy_rare': {
+        'pair1': 'CAD_JPY',  # OLD structure
+        'pair2': 'USD_JPY',  # OLD structure
+        'instruments': ['CAD_JPY', 'USD_JPY'],  # NEW structure
+        'timeframe_mapping': {
+            'monthly': 'H4',
+            'weekly': 'H1',
+            'daily': 'M15',
+            '90min': 'M5'
+        }
+    },
     'fx_triad': {
         'pair1': 'GBP_USD',  # OLD structure
         'pair2': 'EUR_USD',  # OLD structure  
@@ -2104,6 +2126,23 @@ class RealTimeFeatureBox:
         }
         
         logger.info(f"🎯 RealTimeFeatureBox initialized for {pair_group}")
+
+    def debug_sd_zones_count(self):
+        """Debug why SD zones count is wrong"""
+        total_zones = len(self.active_features['sd_zone'])
+        active_zones = 0
+        expired_zones = 0
+        
+        for zone_name, zone_feature in self.active_features['sd_zone'].items():
+            if self._is_feature_expired(zone_feature):
+                expired_zones += 1
+            else:
+                active_zones += 1
+        
+        logger.info(f"🔍 SD Zones Debug: Total={total_zones}, Active={active_zones}, Expired={expired_zones}")
+        logger.info(f"🔍 SD Zones Sample: {list(self.active_features['sd_zone'].keys())[:5] if self.active_features['sd_zone'] else 'None'}")
+        
+        return active_zones
     
         
 
@@ -2690,6 +2729,12 @@ class RealTimeFeatureBox:
         if success:
             logger.info(f"🚀 SIGNAL SENT: {signal_data['description']}")
             self.sent_signals[signal_key] = datetime.now(NY_TZ)
+            
+            # ===== ADD THIS: Pass to EntrySignalManager if available =====
+            if hasattr(self, 'system') and hasattr(self.system, 'entry_signal_manager'):
+                self.system.entry_signal_manager.add_signal_from_message(message)
+            # ============================================================
+            
             return True
         else:
             logger.error(f"❌ FAILED to send signal: {signal_key}")
@@ -2948,15 +2993,50 @@ class RealTimeFeatureBox:
                     del self.active_features[feature_type][feature_key]
     
     def get_active_features_summary(self):
-        """Get summary of currently active features"""
+        """Get summary of currently active features - FIXED to include all types"""
+        # Count active (non-expired) features
+        smt_count = 0
+        crt_count = 0
+        psp_count = 0
+        sd_zone_count = 0
+        tpd_count = 0
+        
+        # Count active SMTs
+        for smt_key, smt_feature in self.active_features['smt'].items():
+            if not self._is_feature_expired(smt_feature):
+                smt_count += 1
+        
+        # Count active CRTs
+        for crt_key, crt_feature in self.active_features['crt'].items():
+            if not self._is_feature_expired(crt_feature):
+                crt_count += 1
+        
+        # Count active PSPs
+        for psp_key, psp_feature in self.active_features['psp'].items():
+            if not self._is_feature_expired(psp_feature):
+                psp_count += 1
+        
+        # Count active SD zones
+        for zone_name, zone_feature in self.active_features['sd_zone'].items():
+            if not self._is_feature_expired(zone_feature):
+                sd_zone_count += 1
+        
+        # Count active TPDs
+        for tpd_key, tpd_feature in self.active_features['tpd'].items():
+            if not self._is_feature_expired(tpd_feature):
+                tpd_count += 1
+        
         summary = {
-            'smt_count': len(self.active_features['smt']),
-            'crt_count': len(self.active_features['crt']),
-            'psp_count': len(self.active_features['psp']),
+            'smt_count': smt_count,
+            'crt_count': crt_count,
+            'psp_count': psp_count,
+            'sd_zone_count': sd_zone_count,
+            'tpd_count': tpd_count,
             'active_smts': [],
             'active_crts': []
         }
         
+        # Add SMT details
         for smt_key, smt_feature in self.active_features['smt'].items():
             if not self._is_feature_expired(smt_feature):
                 smt_data = smt_feature['smt_data']
@@ -2967,6 +3047,7 @@ class RealTimeFeatureBox:
                     'has_psp': smt_feature['psp_data'] is not None
                 })
         
+        # Add CRT details
         for crt_key, crt_feature in self.active_features['crt'].items():
             if not self._is_feature_expired(crt_feature):
                 crt_data = crt_feature['crt_data']
@@ -2974,16 +3055,6 @@ class RealTimeFeatureBox:
                     'timeframe': crt_data['timeframe'],
                     'direction': crt_data['direction'],
                     'has_psp': crt_feature['psp_data'] is not None
-                })
-
-        # TPD summary
-        for tpd_key, tpd_feature in self.active_features['tpd'].items():
-            if not self._is_feature_expired(tpd_feature):
-                tpd_data = tpd_feature['tpd_data']
-                summary['active_tpds'].append({
-                    'timeframe': tpd_data['timeframe'],
-                    'direction': tpd_data['direction'],
-                    'has_psp': tpd_data.get('psp_signal') is not None
                 })
         
         return summary
@@ -4136,6 +4207,1151 @@ class SupplyDemandDetector:
         all_zones.sort(key=lambda x: timeframe_order.get(x['timeframe'], 0), reverse=True)
         
         return all_zones
+
+
+class EntrySignalManager:
+    """Entry signal manager that monitors SENT signals for entries"""
+    
+    def __init__(self, pair_group, instruments, market_data, 
+                 telegram_token=None, telegram_chat_id=None):
+        self.pair_group = pair_group
+        self.instruments = instruments
+        self.market_data = market_data
+        self.telegram_token = telegram_token
+        self.telegram_chat_id = telegram_chat_id
+        
+        # Active signal monitoring (signals that have been SENT)
+        self.active_signals = {}  # key: signal_id, value: signal_data
+        
+        # Traffic light system
+        self.traffic_lights = {}  # key: signal_id, value: 'red'/'green'/'yellow'
+        
+        # Store found LQ candles and pin bars
+        self.lq_candles = {}  # key: signal_id, value: lq_candle_data
+        self.pin_bars_found = {}  # key: signal_id, value: list of pin_bars
+        
+        # Timeframe mappings for different setups
+        self.setup_mappings = {
+            # FVG + SMT setups
+            ('FVG_SMT_TAP', 'M15'): {
+                'lq_tf': 'M3',
+                'pin_bar_tfs': ['M5', 'M3']
+            },
+            ('FVG_SMT_TAP', 'H1'): {
+                'daily': {
+                    'lq_tf': 'M15',
+                    'pin_bar_tfs': ['M15', 'M5']
+                },
+                'weekly': {
+                    'lq_tf': 'H1',
+                    'pin_bar_tfs': ['M15', 'M30']
+                }
+            },
+            ('FVG_SMT_TAP', 'H4'): {
+                'daily': {
+                    'lq_tf': 'M15',
+                    'pin_bar_tfs': ['M15', 'M5']
+                },
+                'weekly': {
+                    'lq_tf': 'H1',
+                    'pin_bar_tfs': ['M15', 'M30']
+                }
+            },
+            # CRT + SMT setups
+            ('CRT_SMT', 'H1'): {
+                'lq_tf': 'M5',
+                'pin_bar_tfs': ['M5']
+            },
+            ('CRT_SMT', 'H4'): {
+                'lq_tf': 'M15',
+                'pin_bar_tfs': ['M15', 'M10', 'M5']
+            },
+            # SD Zone setups
+            ('SD_SMT_TAP', 'H1'): {
+                'lq_tf': ['M5', 'M15'],
+                'pin_bar_tfs': ['M15', 'M5']
+            },
+            ('SD_SMT_TAP', 'M15'): {
+                'lq_tf': ['M5', 'M3'],
+                'pin_bar_tfs': ['M5', 'M3']
+            },
+            ('SD_SMT_TAP', 'H4'): {
+                'lq_tf': 'M15',
+                'pin_bar_tfs': ['M15']
+            },
+            ('SD_SMT_TAP', 'D'): {
+                'lq_tf': 'H1',
+                'pin_bar_tfs': ['H1', 'M15']
+            }
+        }
+        
+        # Journal for data collection
+        self.journal = []
+        
+        logger.info(f"🎯 EntrySignalManager initialized for {pair_group}")
+    
+    # ===================== SIGNAL PARSING =====================
+    
+    def add_signal_from_message(self, telegram_message):
+        """Parse a sent Telegram signal and start monitoring it"""
+        try:
+            # Parse the signal message
+            signal_data = self._parse_signal_message(telegram_message)
+            if not signal_data:
+                return False
+            
+            signal_id = signal_data['signal_id']
+            
+            # Add to active signals
+            self.active_signals[signal_id] = {
+                'signal_data': signal_data,
+                'added_time': datetime.now(NY_TZ),
+                'last_check': datetime.now(NY_TZ),
+                'state': 'waiting_lq_candle',
+                'lq_candle_found': False,
+                'pin_bars_found': []
+            }
+            
+            # Start with traffic light RED (waiting for LQ candle)
+            self.traffic_lights[signal_id] = 'red'
+            
+            logger.info(f"✅ Added signal for entry monitoring: {signal_id}")
+            logger.info(f"   Setup: {signal_data['setup_type']} {signal_data['timeframe']} {signal_data['direction']}")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Error adding signal from message: {e}")
+            return False
+    
+    def _parse_signal_message(self, message):
+        """Parse Telegram message to extract signal data - CUSTOMIZED FOR YOUR SIGNAL FORMATS"""
+        try:
+            # Create basic signal data structure
+            signal_data = {
+                'signal_id': f"SIGNAL_{datetime.now(NY_TZ).strftime('%Y%m%d_%H%M%S')}",
+                'pair_group': '',
+                'setup_type': '',
+                'direction': '',
+                'asset': '',
+                'timeframe': '',
+                'detection_time': datetime.now(NY_TZ),
+                'levels': {},
+                'smt_cycle': '',
+                'has_psp': False,
+                'zone_type': '',
+            }
+            
+            # Debug: log what we're parsing
+            logger.info(f"🔍 Parsing signal message (first 500 chars): {message[:500]}")
+            
+            # Check signal type from title
+            if "FVG + SMT TAP CONFIRMED" in message:
+                signal_data['setup_type'] = 'FVG_SMT_TAP'
+                logger.info(f"✅ Detected FVG_SMT_TAP signal")
+            elif "DEMAND ZONE + SMT TAP" in message or "*DEMAND ZONE + SMT TAP*" in message:
+                signal_data['setup_type'] = 'SD_SMT_TAP'
+                signal_data['zone_type'] = 'demand'
+                logger.info(f"✅ Detected DEMAND ZONE signal")
+            elif "SUPPLY ZONE + SMT TAP" in message or "*SUPPLY ZONE + SMT TAP*" in message:
+                signal_data['setup_type'] = 'SD_SMT_TAP'
+                signal_data['zone_type'] = 'supply'
+                logger.info(f"✅ Detected SUPPLY ZONE signal")
+            elif "CRT + SMT CONFLUENCE" in message or "*CRT + SMT CONFLUENCE*" in message:
+                signal_data['setup_type'] = 'CRT_SMT'
+                logger.info(f"✅ Detected CRT_SMT signal")
+            elif "DOUBLE SMT CONFIRM" in message:
+                signal_data['setup_type'] = 'DOUBLE_SMT'
+                logger.info(f"✅ Detected DOUBLE_SMT signal")
+            else:
+                logger.warning(f"⚠️ Unknown signal type in message")
+                return None
+            
+            # Parse line by line
+            lines = message.split('\n')
+            
+            for line in lines:
+                line = line.strip()
+                
+                # Parse pair group (from your examples: "Jpy Triad", "European Indices")
+                if "*Pair Group:*" in line or "*Group:*" in line:
+                    # Extract text after the colon
+                    parts = line.split('*')
+                    for i, part in enumerate(parts):
+                        if 'Group:' in part or 'Pair Group:' in part:
+                            if i + 1 < len(parts):
+                                signal_data['pair_group'] = parts[i + 1].strip().replace(' ', '_').lower()
+                                logger.info(f"📋 Parsed pair_group: {signal_data['pair_group']}")
+                            break
+                
+                # Parse direction
+                if "*Direction:*" in line:
+                    if 'BULLISH' in line.upper():
+                        signal_data['direction'] = 'bullish'
+                    elif 'BEARISH' in line.upper():
+                        signal_data['direction'] = 'bearish'
+                    logger.info(f"📋 Parsed direction: {signal_data['direction']}")
+                
+                # Parse asset (from your examples: "EUR_JPY", "DE30_EUR")
+                if "*Asset:*" in line:
+                    # Extract text after the colon
+                    parts = line.split('*Asset:*')
+                    if len(parts) > 1:
+                        asset = parts[1].strip()
+                        # Clean up any emojis or extra spaces
+                        asset = asset.replace('🟢', '').replace('🔴', '').replace('🎯', '').strip()
+                        signal_data['asset'] = asset
+                        logger.info(f"📋 Parsed asset: {signal_data['asset']}")
+                
+                # Parse timeframe - check multiple patterns from your examples
+                if signal_data['setup_type'] == 'FVG_SMT_TAP':
+                    # Example: "• FVG: H1 at 12/29 04:00"
+                    if "• FVG:" in line:
+                        for tf in ['H4', 'H1', 'M15', 'D', 'W']:
+                            if f" {tf} " in line or f": {tf}" in line:
+                                signal_data['timeframe'] = tf
+                                break
+                
+                elif signal_data['setup_type'] == 'SD_SMT_TAP':
+                    # Example: "• Timeframe: D at 12/10 17:00"
+                    if "• Timeframe:" in line:
+                        for tf in ['H4', 'H1', 'M15', 'D', 'W']:
+                            if f" {tf} " in line or f": {tf}" in line:
+                                signal_data['timeframe'] = tf
+                                break
+                
+                elif signal_data['setup_type'] == 'CRT_SMT':
+                    # Example: "• CRT: H4 at 05:00"
+                    if "• CRT:" in line:
+                        for tf in ['H4', 'H1']:
+                            if f" {tf} " in line or f": {tf}" in line:
+                                signal_data['timeframe'] = tf
+                                break
+                
+                # Parse levels (for FVG/SD zones)
+                if "• Levels:" in line:
+                    # Example: "• Levels: 183.9460 - 184.0000"
+                    parts = line.split('• Levels:')
+                    if len(parts) > 1:
+                        levels_text = parts[1].strip()
+                        try:
+                            if ' - ' in levels_text:
+                                low, high = levels_text.split(' - ')
+                                signal_data['levels'] = {
+                                    'low': float(low),
+                                    'high': float(high)
+                                }
+                                logger.info(f"📋 Parsed levels: {signal_data['levels']}")
+                        except Exception as e:
+                            logger.warning(f"⚠️ Could not parse levels: {levels_text}, error: {e}")
+                
+                # Parse SMT cycle
+                if "• SMT:" in line or "• Cycle:" in line:
+                    line_lower = line.lower()
+                    if 'daily' in line_lower:
+                        signal_data['smt_cycle'] = 'daily'
+                    elif 'weekly' in line_lower:
+                        signal_data['smt_cycle'] = 'weekly'
+                    elif '90min' in line_lower:
+                        signal_data['smt_cycle'] = '90min'
+                    logger.info(f"📋 Parsed SMT cycle: {signal_data['smt_cycle']}")
+                
+                # Parse PSP status
+                if "• PSP:" in line:
+                    signal_data['has_psp'] = '✅' in line or 'Confirmed' in line
+                    logger.info(f"📋 Parsed PSP status: {signal_data['has_psp']}")
+                
+                # Parse detection time
+                if "*Detection Time:*" in line or "*Detection:*" in line:
+                    # Find the time part
+                    time_parts = line.split('*')
+                    for part in time_parts:
+                        if ':' in part and len(part) > 5:  # Looks like a time string
+                            time_str = part.strip()
+                            try:
+                                # Try with full datetime format
+                                signal_data['detection_time'] = datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S')
+                                logger.info(f"📋 Parsed detection time: {signal_data['detection_time']}")
+                                break
+                            except:
+                                try:
+                                    # Try with just time (HH:MM:SS)
+                                    today = datetime.now(NY_TZ).date()
+                                    time_obj = datetime.strptime(time_str, '%H:%M:%S').time()
+                                    signal_data['detection_time'] = datetime.combine(today, time_obj)
+                                    logger.info(f"📋 Parsed detection time (time only): {signal_data['detection_time']}")
+                                    break
+                                except:
+                                    pass
+            
+            # Set defaults if not found
+            if not signal_data['timeframe']:
+                if signal_data['setup_type'] == 'FVG_SMT_TAP':
+                    signal_data['timeframe'] = 'H4'
+                elif signal_data['setup_type'] == 'SD_SMT_TAP':
+                    signal_data['timeframe'] = 'H1'
+                elif signal_data['setup_type'] == 'CRT_SMT':
+                    signal_data['timeframe'] = 'H4'
+                logger.info(f"📋 Using default timeframe: {signal_data['timeframe']}")
+            
+            if not signal_data['smt_cycle']:
+                signal_data['smt_cycle'] = 'daily'
+                logger.info(f"📋 Using default SMT cycle: {signal_data['smt_cycle']}")
+            
+            if not signal_data['asset'] and signal_data['pair_group']:
+                # Try to infer asset from pair_group if available
+                # This is a fallback - you may need to adjust based on your pair_group naming
+                signal_data['asset'] = self.instruments[0] if self.instruments else ''
+                logger.info(f"📋 Using first instrument as asset: {signal_data['asset']}")
+            
+            # Validate we have the minimum required data
+            required_fields = ['setup_type', 'direction', 'asset', 'timeframe']
+            missing_fields = [field for field in required_fields if not signal_data.get(field)]
+            
+            if missing_fields:
+                logger.error(f"❌ Missing required fields: {missing_fields}")
+                logger.error(f"❌ Parsed data: {signal_data}")
+                return None
+            
+            logger.info(f"✅ Successfully parsed signal: {signal_data['setup_type']} {signal_data['timeframe']} {signal_data['direction']} {signal_data['asset']}")
+            
+            return signal_data
+            
+        except Exception as e:
+            logger.error(f"❌ Error parsing signal message: {e}")
+            logger.error(f"❌ Message that caused error: {message[:200]}...")
+            import traceback
+            logger.error(traceback.format_exc())
+            return None
+    
+    # ===================== TRAFFIC LIGHT SYSTEM =====================
+    
+    def update_traffic_light(self, signal_id, color):
+        """Update traffic light for a signal"""
+        if color not in ['red', 'yellow', 'green']:
+            return
+        
+        old_color = self.traffic_lights.get(signal_id, 'red')
+        self.traffic_lights[signal_id] = color
+        
+        if old_color != color:
+            logger.info(f"🚦 Traffic light for {signal_id}: {old_color} → {color}")
+    
+    # ===================== ENTRY MONITORING =====================
+    
+    def monitor_signals(self):
+        """Monitor all active signals for entry conditions"""
+        try:
+            current_time = datetime.now(NY_TZ)
+            
+            for signal_id, signal_info in list(self.active_signals.items()):
+                # Skip if checked too recently
+                last_check = signal_info['last_check']
+                if (current_time - last_check).total_seconds() < 1:  # Check every 1 second
+                    continue
+                
+                signal_info['last_check'] = current_time
+                signal_data = signal_info['signal_data']
+                
+                # Get traffic light state
+                traffic_color = self.traffic_lights.get(signal_id, 'red')
+                
+                # RED: Waiting for LQ candle
+                if traffic_color == 'red':
+                    self._check_for_lq_candle(signal_id, signal_data)
+                
+                # YELLOW: LQ candle found, waiting for close
+                elif traffic_color == 'yellow':
+                    self._check_for_lq_close(signal_id, signal_data)
+                
+                # GREEN: Looking for pin bars
+                elif traffic_color == 'green':
+                    self._check_for_pin_bars(signal_id, signal_data)
+                
+                # Check if signal is too old (24 hours)
+                if (current_time - signal_info['added_time']).total_seconds() > 24 * 3600:
+                    logger.info(f"🧹 Removing old signal: {signal_id}")
+                    self._remove_signal(signal_id)
+            
+        except Exception as e:
+            logger.error(f"❌ Error monitoring signals: {e}")
+    
+    def _check_for_lq_candle(self, signal_id, signal_data):
+        """Check for LQ candle (RED state)"""
+        try:
+            # Get the appropriate LQ timeframe
+            lq_tf = self._get_lq_timeframe(signal_data)
+            if not lq_tf:
+                return
+            
+            asset = signal_data['asset']
+            direction = signal_data['direction']
+            setup_type = signal_data['setup_type']
+            
+            # Get data for LQ timeframe
+            df = self.market_data[asset].get(lq_tf)
+            if df is None or df.empty:
+                return
+            
+            # Find swing highs/lows (depending on direction)
+            if direction == 'bearish':
+                # Find swing highs
+                swing_highs = self._find_swing_highs(df, lookback=20)
+                if not swing_highs:
+                    return
+                
+                # Get highest swing
+                highest_swing = max(swing_highs, key=lambda x: x['price'])
+                
+                # Find candle that took out the highest swing
+                for i in range(len(df)):
+                    candle = df.iloc[i]
+                    if candle['high'] > highest_swing['price']:
+                        # Check if it's a bullish candle (for bearish scenario)
+                        is_bullish = candle['close'] > candle['open']
+                        
+                        # Check if it mitigated the zone/FVG
+                        mitigated = self._check_candle_mitigated(candle, signal_data, direction)
+                        
+                        if is_bullish and mitigated:
+                            # Found LQ candle!
+                            lq_candle = {
+                                'tf': lq_tf,
+                                'index': i,
+                                'time': candle['time'],
+                                'open': candle['open'],
+                                'high': candle['high'],
+                                'low': candle['low'],
+                                'close': candle['close'],
+                                'swing_price': highest_swing['price'],
+                                'found_time': datetime.now(NY_TZ)
+                            }
+                            
+                            self.lq_candles[signal_id] = lq_candle
+                            self.update_traffic_light(signal_id, 'yellow')
+                            
+                            logger.info(f"✅ LQ Candle found for {signal_id}")
+                            logger.info(f"   Timeframe: {lq_tf}, Time: {candle['time'].strftime('%H:%M')}")
+                            logger.info(f"   High: {candle['high']:.4f}, Swing: {highest_swing['price']:.4f}")
+                            
+                            # Add to journal
+                            self._add_to_journal(signal_id, 'lq_candle_found', lq_candle)
+                            break
+            
+            else:  # bullish direction
+                # Find swing lows
+                swing_lows = self._find_swing_lows(df, lookback=20)
+                if not swing_lows:
+                    return
+                
+                # Get lowest swing
+                lowest_swing = min(swing_lows, key=lambda x: x['price'])
+                
+                # Find candle that took out the lowest swing
+                for i in range(len(df)):
+                    candle = df.iloc[i]
+                    if candle['low'] < lowest_swing['price']:
+                        # Check if it's a bearish candle (for bullish scenario)
+                        is_bearish = candle['close'] < candle['open']
+                        
+                        # Check if it mitigated the zone/FVG
+                        mitigated = self._check_candle_mitigated(candle, signal_data, direction)
+                        
+                        if is_bearish and mitigated:
+                            # Found LQ candle!
+                            lq_candle = {
+                                'tf': lq_tf,
+                                'index': i,
+                                'time': candle['time'],
+                                'open': candle['open'],
+                                'high': candle['high'],
+                                'low': candle['low'],
+                                'close': candle['close'],
+                                'swing_price': lowest_swing['price'],
+                                'found_time': datetime.now(NY_TZ)
+                            }
+                            
+                            self.lq_candles[signal_id] = lq_candle
+                            self.update_traffic_light(signal_id, 'yellow')
+                            
+                            logger.info(f"✅ LQ Candle found for {signal_id}")
+                            logger.info(f"   Timeframe: {lq_tf}, Time: {candle['time'].strftime('%H:%M')}")
+                            logger.info(f"   Low: {candle['low']:.4f}, Swing: {lowest_swing['price']:.4f}")
+                            
+                            # Add to journal
+                            self._add_to_journal(signal_id, 'lq_candle_found', lq_candle)
+                            break
+            
+        except Exception as e:
+            logger.error(f"❌ Error checking for LQ candle: {e}")
+    
+    def _check_for_lq_close(self, signal_id, signal_data):
+        """Check if price closed below/above LQ candle (YELLOW state)"""
+        try:
+            if signal_id not in self.lq_candles:
+                return
+            
+            lq_candle = self.lq_candles[signal_id]
+            asset = signal_data['asset']
+            direction = signal_data['direction']
+            lq_tf = lq_candle['tf']
+            
+            # Get data for LQ timeframe
+            df = self.market_data[asset].get(lq_tf)
+            if df is None or df.empty:
+                return
+            
+            # Get candles after LQ candle
+            lq_time = lq_candle['time']
+            df_after = df[df['time'] > lq_time].copy()
+            
+            if len(df_after) == 0:
+                return
+            
+            # Check each candle after LQ
+            for i in range(len(df_after)):
+                candle = df_after.iloc[i]
+                
+                if direction == 'bearish':
+                    # Check if price closed below LQ candle low
+                    if candle['close'] < lq_candle['low']:
+                        # LQ candle close confirmed!
+                        self.update_traffic_light(signal_id, 'green')
+                        
+                        logger.info(f"🟢 LQ Close confirmed for {signal_id}")
+                        logger.info(f"   Closed below at: {candle['close']:.4f}, LQ low was: {lq_candle['low']:.4f}")
+                        
+                        # Add to journal
+                        self._add_to_journal(signal_id, 'lq_close_confirmed', {
+                            'candle_time': candle['time'],
+                            'close_price': candle['close'],
+                            'lq_low': lq_candle['low']
+                        })
+                        break
+                
+                else:  # bullish
+                    # Check if price closed above LQ candle high
+                    if candle['close'] > lq_candle['high']:
+                        # LQ candle close confirmed!
+                        self.update_traffic_light(signal_id, 'green')
+                        
+                        logger.info(f"🟢 LQ Close confirmed for {signal_id}")
+                        logger.info(f"   Closed above at: {candle['close']:.4f}, LQ high was: {lq_candle['high']:.4f}")
+                        
+                        # Add to journal
+                        self._add_to_journal(signal_id, 'lq_close_confirmed', {
+                            'candle_time': candle['time'],
+                            'close_price': candle['close'],
+                            'lq_high': lq_candle['high']
+                        })
+                        break
+            
+        except Exception as e:
+            logger.error(f"❌ Error checking for LQ close: {e}")
+    
+    def _check_for_pin_bars(self, signal_id, signal_data):
+        """Check for pin bars (GREEN state)"""
+        try:
+            # Get appropriate pin bar timeframes
+            pin_bar_tfs = self._get_pin_bar_timeframes(signal_data)
+            if not pin_bar_tfs:
+                return
+            
+            asset = signal_data['asset']
+            direction = signal_data['direction']
+            
+            # Check each timeframe for pin bars
+            for tf in pin_bar_tfs:
+                df = self.market_data[asset].get(tf)
+                if df is None or df.empty:
+                    continue
+                
+                # Check last 10 candles for pin bars
+                start_idx = max(0, len(df) - 10)
+                
+                for i in range(start_idx, len(df) - 1):
+                    candle = df.iloc[i]
+                    previous_candle = df.iloc[i-1] if i > 0 else None
+                    
+                    # Convert to dict
+                    candle_dict = {
+                        'open': candle['open'],
+                        'high': candle['high'],
+                        'low': candle['low'],
+                        'close': candle['close']
+                    }
+                    
+                    # Check Case 1: Wick percentage > 60%
+                    pin_bar = self._check_pin_bar_case1(candle_dict, direction)
+                    
+                    # Check Case 2: Engulfing pattern
+                    if not pin_bar and previous_candle:
+                        prev_dict = {
+                            'open': previous_candle['open'],
+                            'high': previous_candle['high'],
+                            'low': previous_candle['low'],
+                            'close': previous_candle['close']
+                        }
+                        pin_bar = self._check_pin_bar_case2(candle_dict, prev_dict, direction)
+                    
+                    if pin_bar:
+                        # Check if pin bar is above 50% Fibonacci level
+                        if self._check_pin_bar_above_50_fib(signal_data, candle_dict, direction):
+                            # Found valid pin bar!
+                            pin_bar_data = {
+                                'tf': tf,
+                                'index': i,
+                                'time': candle['time'],
+                                'open': candle['open'],
+                                'high': candle['high'],
+                                'low': candle['low'],
+                                'close': candle['close'],
+                                'type': pin_bar['type'],
+                                'found_time': datetime.now(NY_TZ)
+                            }
+                            
+                            # Store pin bar
+                            if signal_id not in self.pin_bars_found:
+                                self.pin_bars_found[signal_id] = []
+                            self.pin_bars_found[signal_id].append(pin_bar_data)
+                            
+                            # Send entry signal immediately
+                            self._send_entry_signal(signal_id, signal_data, pin_bar_data)
+                            
+                            # Add to journal
+                            self._add_to_journal(signal_id, 'pin_bar_found', pin_bar_data)
+                            
+                            # Remove signal after sending entry
+                            self._remove_signal(signal_id)
+                            
+                            return  # Stop checking after first pin bar
+            
+        except Exception as e:
+            logger.error(f"❌ Error checking for pin bars: {e}")
+    
+    # ===================== PIN BAR DETECTION =====================
+    
+    def _check_pin_bar_case1(self, candle, direction):
+        """Case 1: Wick percentage > 60%"""
+        try:
+            o = candle['open']
+            h = candle['high']
+            l = candle['low']
+            c = candle['close']
+            
+            total_range = h - l
+            if total_range == 0:
+                return None
+            
+            if direction == 'bearish':
+                upper_wick = h - max(o, c)
+                upper_wick_pct = upper_wick / total_range
+                if upper_wick_pct > 0.6:  # 60%
+                    return {'type': 'case1', 'wick_pct': upper_wick_pct}
+            else:  # bullish
+                lower_wick = min(o, c) - l
+                lower_wick_pct = lower_wick / total_range
+                if lower_wick_pct > 0.6:  # 60%
+                    return {'type': 'case1', 'wick_pct': lower_wick_pct}
+            
+            return None
+        except:
+            return None
+    
+    def _check_pin_bar_case2(self, candle, prev_candle, direction):
+        """Case 2: Engulfing pattern with small wick"""
+        try:
+            if direction == 'bearish':
+                # Current candle took out high of previous candle
+                if candle['high'] > prev_candle['high']:
+                    # Current candle closed below low of previous candle
+                    if candle['close'] < prev_candle['low']:
+                        # Check lower wick < 25%
+                        lower_wick = min(candle['open'], candle['close']) - candle['low']
+                        total_range = candle['high'] - candle['low']
+                        if total_range > 0 and (lower_wick / total_range) < 0.25:
+                            return {'type': 'case2', 'condition': 'bearish_engulfing'}
+            else:  # bullish
+                # Current candle took out low of previous candle
+                if candle['low'] < prev_candle['low']:
+                    # Current candle closed above high of previous candle
+                    if candle['close'] > prev_candle['high']:
+                        # Check upper wick < 25%
+                        upper_wick = candle['high'] - max(candle['open'], candle['close'])
+                        total_range = candle['high'] - candle['low']
+                        if total_range > 0 and (upper_wick / total_range) < 0.25:
+                            return {'type': 'case2', 'condition': 'bullish_engulfing'}
+            
+            return None
+        except:
+            return None
+    
+    def _check_pin_bar_above_50_fib(self, signal_data, candle, direction):
+        """Check if pin bar is above 50% Fibonacci level"""
+        try:
+            # Calculate Fibonacci levels
+            fib_levels = self._calculate_fib_levels(signal_data, direction)
+            if not fib_levels or '50' not in fib_levels:
+                return True  # If can't calculate, accept pin bar
+            
+            fib_50 = fib_levels['50']
+            candle_price = candle['close']
+            
+            if direction == 'bearish':
+                # For bearish, pin bar should be above 50% level
+                return candle_price > fib_50
+            else:  # bullish
+                # For bullish, pin bar should be below 50% level
+                return candle_price < fib_50
+            
+        except:
+            return True  # If error, accept pin bar
+    
+    def _calculate_fib_levels(self, signal_data, direction):
+        """Calculate Fibonacci levels for the setup"""
+        try:
+            setup_type = signal_data['setup_type']
+            levels = signal_data.get('levels', {})
+            
+            if not levels:
+                return {}
+            
+            if setup_type == 'FVG_SMT_TAP':
+                # FVG: Swing high before FVG to lowest point
+                # For now, use FVG levels as reference
+                if 'low' in levels and 'high' in levels:
+                    high = levels['high']
+                    low = levels['low']
+                    range_ = high - low
+                    
+                    return {
+                        '0': high,
+                        '23.6': high - (range_ * 0.236),
+                        '38.2': high - (range_ * 0.382),
+                        '50': high - (range_ * 0.5),
+                        '61.8': high - (range_ * 0.618),
+                        '78.6': high - (range_ * 0.786),
+                        '100': low
+                    }
+            
+            elif setup_type == 'SD_SMT_TAP':
+                # SD Zone: High of zone to lowest point
+                if 'low' in levels and 'high' in levels:
+                    high = levels['high']
+                    low = levels['low']
+                    range_ = high - low
+                    
+                    return {
+                        '0': high,
+                        '23.6': high - (range_ * 0.236),
+                        '38.2': high - (range_ * 0.382),
+                        '50': high - (range_ * 0.5),
+                        '61.8': high - (range_ * 0.618),
+                        '78.6': high - (range_ * 0.786),
+                        '100': low
+                    }
+            
+            return {}
+        except:
+            return {}
+    
+    # ===================== HELPER METHODS =====================
+    
+    def _get_lq_timeframe(self, signal_data):
+        """Get LQ candle timeframe for a setup"""
+        setup_type = signal_data['setup_type']
+        timeframe = signal_data['timeframe']
+        smt_cycle = signal_data.get('smt_cycle', 'daily')
+        
+        if setup_type == 'FVG_SMT_TAP':
+            if timeframe == 'M15':
+                return 'M3'
+            elif timeframe == 'H1':
+                if smt_cycle == 'daily':
+                    return 'M15'
+                else:  # weekly
+                    return 'H1'
+            elif timeframe == 'H4':
+                if smt_cycle == 'daily':
+                    return 'M15'
+                else:  # weekly
+                    return 'H1'
+        
+        elif setup_type == 'CRT_SMT':
+            if timeframe == 'H1':
+                return 'M5'
+            elif timeframe == 'H4':
+                return 'M15'
+        
+        elif setup_type == 'SD_SMT_TAP':
+            if timeframe == 'H1':
+                return 'M5'  # Could also be M15
+            elif timeframe == 'M15':
+                return 'M5'  # Could also be M3
+            elif timeframe == 'H4':
+                return 'M15'
+            elif timeframe == 'D':
+                return 'H1'
+        
+        return None
+    
+    def _get_pin_bar_timeframes(self, signal_data):
+        """Get pin bar timeframes for a setup"""
+        setup_type = signal_data['setup_type']
+        timeframe = signal_data['timeframe']
+        smt_cycle = signal_data.get('smt_cycle', 'daily')
+        
+        if setup_type == 'FVG_SMT_TAP':
+            if timeframe == 'M15':
+                return ['M5', 'M3']
+            elif timeframe == 'H1':
+                if smt_cycle == 'daily':
+                    return ['M15', 'M5']
+                else:  # weekly
+                    return ['M15', 'M30']
+            elif timeframe == 'H4':
+                if smt_cycle == 'daily':
+                    return ['M15', 'M5']
+                else:  # weekly
+                    return ['M15', 'M30']
+        
+        elif setup_type == 'CRT_SMT':
+            if timeframe == 'H1':
+                return ['M5']
+            elif timeframe == 'H4':
+                return ['M15', 'M10', 'M5']
+        
+        elif setup_type == 'SD_SMT_TAP':
+            if timeframe == 'H1':
+                return ['M15', 'M5']
+            elif timeframe == 'M15':
+                return ['M5', 'M3']
+            elif timeframe == 'H4':
+                return ['M15']
+            elif timeframe == 'D':
+                return ['H1', 'M15']
+        
+        return []
+    
+    def _find_swing_highs(self, df, lookback=3):
+        """Find swing highs in data"""
+        swing_highs = []
+        
+        for i in range(lookback, len(df) - lookback):
+            current_high = df.iloc[i]['high']
+            
+            is_swing = True
+            for j in range(1, lookback + 1):
+                if current_high <= df.iloc[i - j]['high'] or \
+                   current_high <= df.iloc[i + j]['high']:
+                    is_swing = False
+                    break
+            
+            if is_swing:
+                swing_highs.append({
+                    'index': i,
+                    'time': df.iloc[i]['time'],
+                    'price': current_high
+                })
+        
+        return swing_highs
+    
+    def _find_swing_lows(self, df, lookback=3):
+        """Find swing lows in data"""
+        swing_lows = []
+        
+        for i in range(lookback, len(df) - lookback):
+            current_low = df.iloc[i]['low']
+            
+            is_swing = True
+            for j in range(1, lookback + 1):
+                if current_low >= df.iloc[i - j]['low'] or \
+                   current_low >= df.iloc[i + j]['low']:
+                    is_swing = False
+                    break
+            
+            if is_swing:
+                swing_lows.append({
+                    'index': i,
+                    'time': df.iloc[i]['time'],
+                    'price': current_low
+                })
+        
+        return swing_lows
+    
+    def _check_candle_mitigated(self, candle, signal_data, direction):
+        """Check if candle mitigated the zone/FVG"""
+        levels = signal_data.get('levels', {})
+        if 'low' not in levels or 'high' not in levels:
+            return True  # If no levels, assume mitigated
+        
+        if direction == 'bearish':
+            # Bullish candle should enter from below
+            return candle['low'] <= levels['high'] and candle['high'] >= levels['low']
+        else:  # bullish
+            # Bearish candle should enter from above
+            return candle['high'] >= levels['low'] and candle['low'] <= levels['high']
+    
+    # ===================== ENTRY SIGNAL GENERATION =====================
+    
+    def _send_entry_signal(self, signal_id, signal_data, pin_bar_data):
+        """Send entry signal for a found pin bar"""
+        try:
+            # Calculate entry price (next candle open)
+            entry_price = self._get_next_candle_open(pin_bar_data)
+            if not entry_price:
+                entry_price = pin_bar_data['close']
+            
+            # Calculate SL and TP
+            sl_price, tp_price = self._calculate_sl_tp(pin_bar_data, signal_data['direction'])
+            
+            # Get default TP
+            default_tp = self._get_default_tp(signal_data, signal_data['direction'])
+            
+            # Check if TP is beyond default TP
+            tp_beyond_default = False
+            if signal_data['direction'] == 'bearish' and tp_price < default_tp:
+                tp_beyond_default = True
+            elif signal_data['direction'] == 'bullish' and tp_price > default_tp:
+                tp_beyond_default = True
+            
+            # Get potential TP levels
+            potential_tps = self._get_potential_tp_levels(signal_data['asset'], signal_data['direction'])
+            
+            # Create entry signal message
+            message = self._format_entry_signal(
+                signal_data, pin_bar_data, entry_price, sl_price, tp_price, 
+                default_tp, tp_beyond_default, potential_tps
+            )
+            
+            # Send via Telegram
+            success = send_telegram(message, self.telegram_token, self.telegram_chat_id)
+            
+            if success:
+                logger.info(f"🚀 ENTRY SIGNAL SENT for {signal_id}")
+                
+                # Add to journal
+                self._add_to_journal(signal_id, 'entry_signal_sent', {
+                    'entry_price': entry_price,
+                    'sl_price': sl_price,
+                    'tp_price': tp_price,
+                    'default_tp': default_tp,
+                    'tp_beyond_default': tp_beyond_default,
+                    'pin_bar_data': pin_bar_data
+                })
+            
+            return success
+            
+        except Exception as e:
+            logger.error(f"❌ Error sending entry signal: {e}")
+            return False
+    
+    def _get_next_candle_open(self, pin_bar_data):
+        """Get the next candle's open price after pin bar"""
+        try:
+            asset = self.instruments[0]  # Default to first instrument
+            tf = pin_bar_data['tf']
+            pin_bar_time = pin_bar_data['time']
+            
+            df = self.market_data[asset].get(tf)
+            if df is None or df.empty:
+                return None
+            
+            # Find the pin bar index
+            for i in range(len(df)):
+                if df.iloc[i]['time'] == pin_bar_time:
+                    if i + 1 < len(df):
+                        return df.iloc[i + 1]['open']
+                    break
+            
+            return None
+        except:
+            return None
+    
+    def _calculate_sl_tp(self, pin_bar_data, direction):
+        """Calculate SL and TP based on pin bar"""
+        try:
+            candle = pin_bar_data
+            high = candle['high']
+            low = candle['low']
+            range_ = high - low
+            
+            if direction == 'bearish':
+                # SL at 1.25x above pin bar
+                sl_distance = range_ * 1.25
+                sl_price = high + sl_distance
+                
+                # TP at 4x SL distance
+                tp_distance = sl_distance * 4
+                tp_price = candle['close'] - tp_distance
+            else:  # bullish
+                # SL at 1.25x below pin bar
+                sl_distance = range_ * 1.25
+                sl_price = low - sl_distance
+                
+                # TP at 4x SL distance
+                tp_distance = sl_distance * 4
+                tp_price = candle['close'] + tp_distance
+            
+            return sl_price, tp_price
+        except:
+            return 0, 0
+    
+    def _get_default_tp(self, signal_data, direction):
+        """Get default TP level"""
+        try:
+            asset = signal_data['asset']
+            levels = signal_data.get('levels', {})
+            
+            if direction == 'bearish' and 'low' in levels:
+                return levels['low']
+            elif direction == 'bullish' and 'high' in levels:
+                return levels['high']
+            
+            # Fallback: get current price
+            df = self.market_data[asset].get('M1')
+            if df is not None and not df.empty:
+                return df.iloc[-1]['close']
+            
+            return 0
+        except:
+            return 0
+    
+    def _get_potential_tp_levels(self, asset, direction):
+        """Get potential TP levels for runners"""
+        potential_tps = []
+        
+        # Check daily high/low
+        df_daily = self.market_data[asset].get('D')
+        if df_daily is not None and not df_daily.empty:
+            daily_high = df_daily['high'].max()
+            daily_low = df_daily['low'].min()
+            
+            if direction == 'bearish':
+                potential_tps.append({'level': 'DAILY_LOW', 'price': daily_low})
+            else:
+                potential_tps.append({'level': 'DAILY_HIGH', 'price': daily_high})
+        
+        # Check 4H high/low
+        df_4h = self.market_data[asset].get('H4')
+        if df_4h is not None and not df_4h.empty:
+            h4_high = df_4h['high'].max()
+            h4_low = df_4h['low'].min()
+            
+            if direction == 'bearish':
+                potential_tps.append({'level': '4H_LOW', 'price': h4_low})
+            else:
+                potential_tps.append({'level': '4H_HIGH', 'price': h4_high})
+        
+        return potential_tps
+    
+    def _format_entry_signal(self, signal_data, pin_bar_data, entry_price, sl_price, 
+                           tp_price, default_tp, tp_beyond_default, potential_tps):
+        """Format entry signal message"""
+        direction = signal_data['direction'].upper()
+        direction_emoji = "🔴" if direction == 'BEARISH' else "🟢"
+        setup_type = signal_data['setup_type']
+        
+        # Format potential TPs
+        potential_tps_text = ""
+        for tp in potential_tps:
+            potential_tps_text += f"• {tp['level']}: {tp['price']:.4f}\n"
+        
+        if not potential_tps_text:
+            potential_tps_text = "• No additional TP levels\n"
+        
+        # TP beyond default warning
+        tp_warning = ""
+        if tp_beyond_default:
+            tp_warning = f"⚠️ *WARNING:* TP ({tp_price:.4f}) is BEYOND default TP ({default_tp:.4f})\n\n"
+        
+        message = f"""
+            🎯 *{setup_type} ENTRY SIGNAL* 🎯
+            
+            *Setup Details:*
+            • Type: {setup_type.replace('_', ' ').title()}
+            • Direction: {direction} {direction_emoji}
+            • Asset: {signal_data['asset']}
+            • Timeframe: {signal_data['timeframe']}
+            
+            *Entry Details:*
+            • Entry Price: {entry_price:.4f}
+            • Stop Loss: {sl_price:.4f}
+            • Take Profit: {tp_price:.4f}
+            • Default TP: {default_tp:.4f}
+            
+            {tp_warning}
+            *Pin Bar Details:*
+            • Timeframe: {pin_bar_data['tf']}
+            • Time: {pin_bar_data['time'].strftime('%H:%M')}
+            • Type: {pin_bar_data['type']}
+            • Close: {pin_bar_data['close']:.4f}
+            
+            *Potential TP Levels for Runners:*
+            {potential_tps_text}
+            *Signal Info:*
+            • Setup Detection: {signal_data['detection_time'].strftime('%Y-%m-%d %H:%M:%S')}
+            • Entry Detection: {datetime.now(NY_TZ).strftime('%Y-%m-%d %H:%M:%S')}
+            • Latency: {(datetime.now(NY_TZ) - signal_data['detection_time']).total_seconds():.1f} seconds
+            
+            #{signal_data['pair_group']} #{direction} #{setup_type} #EntrySignal
+                    """
+        
+        return message
+    
+    # ===================== JOURNALING =====================
+    
+    def _add_to_journal(self, signal_id, event_type, event_data):
+        """Add event to journal for data collection"""
+        journal_entry = {
+            'timestamp': datetime.now(NY_TZ),
+            'signal_id': signal_id,
+            'event_type': event_type,
+            'event_data': event_data
+        }
+        
+        self.journal.append(journal_entry)
+        
+        # Keep only last 1000 entries
+        if len(self.journal) > 1000:
+            self.journal = self.journal[-1000:]
+        
+        logger.debug(f"📒 Journal entry: {signal_id} - {event_type}")
+    
+    def _remove_signal(self, signal_id):
+        """Remove signal from monitoring"""
+        if signal_id in self.active_signals:
+            del self.active_signals[signal_id]
+        
+        if signal_id in self.traffic_lights:
+            del self.traffic_lights[signal_id]
+        
+        if signal_id in self.lq_candles:
+            del self.lq_candles[signal_id]
+        
+        if signal_id in self.pin_bars_found:
+            del self.pin_bars_found[signal_id]
+        
+        logger.info(f"🧹 Removed signal from monitoring: {signal_id}")
+    
+    # ===================== PUBLIC METHODS =====================
+    
+    def run_monitoring_cycle(self):
+        """Run one monitoring cycle"""
+        try:
+            self.monitor_signals()
+            
+            # Log status
+            active_count = len(self.active_signals)
+            red_count = sum(1 for color in self.traffic_lights.values() if color == 'red')
+            yellow_count = sum(1 for color in self.traffic_lights.values() if color == 'yellow')
+            green_count = sum(1 for color in self.traffic_lights.values() if color == 'green')
+            
+            if active_count > 0:
+                logger.info(f"📊 Entry Monitoring: {active_count} active signals | 🟢{green_count} 🟡{yellow_count} 🔴{red_count}")
+            
+        except Exception as e:
+            logger.error(f"❌ Error in monitoring cycle: {e}")
 # ================================
 # ULTIMATE TRADING SYSTEM WITH TRIPLE CONFLUENCE
 # ================================
@@ -4174,6 +5390,10 @@ class UltimateTradingSystem:
             self.telegram_token, 
             self.telegram_chat_id
         )
+
+        # Pass system reference to feature_box
+        self.feature_box.system = self
+        
         
         # THEN create detectors and connect FeatureBox
         self.smt_detector = UltimateSMTDetector(pair_config, self.timing_manager)
@@ -4203,80 +5423,103 @@ class UltimateTradingSystem:
                 'H1': ['daily'], 
                 'M15': ['daily', '90min']
             }
+        self.entry_signal_manager = EntrySignalManager(
+            pair_group=self.pair_group,
+            instruments=self.instruments,
+            market_data=self.market_data,
+            # feature_box=self.feature_box,
+            telegram_token=self.telegram_token,
+            telegram_chat_id=self.telegram_chat_id
+        )
+        
+        
         
     def get_sleep_time(self):
         """Use smart timing instead of fixed intervals"""
         return self.hybrid_timing.get_sleep_time()
     
     async def run_ultimate_analysis(self, api_key):
-        """Run analysis with prioritized scan pipeline"""
+        """Run analysis with proper data fetching for all purposes"""
         try:
-            # Cleanup expired features first
+            # Cleanup first
             self.feature_box.cleanup_expired_features()
             self.cleanup_old_signals()
             
-            # Fetch data
+            # Fetch ALL required data in parallel
             await self._fetch_all_data_parallel(api_key)
-        
+            
+            # Reset detector state
             self.reset_smt_detector_state()
-                
-                # Check if we have new candles that warrant immediate scanning
+            
+            # Check for new candles
             new_candles_detected = self._check_new_candles()
-                
+            
             if not new_candles_detected:
-                logger.info(f"⏸️ No new candles - skipping analysis")
+                logger.info(f"⏸️ {self.pair_group}: No new candles - skipping analysis")
+                
+                # Still run entry monitoring (it might have active signals)
+                if hasattr(self, 'entry_signal_manager'):
+                    self.entry_signal_manager.run_monitoring_cycle()
+                
                 return None
-                
-            logger.info(f"🎯 NEW CANDLES DETECTED - Running analysis")
-                
-                # Scan for new features and add to Feature Box
+            
+            logger.info(f"🎯 {self.pair_group}: NEW CANDLES DETECTED - Running full analysis")
+            
+            # Scan and add features
             await self._scan_and_add_features_immediate()
-                
-                # Scan for Supply/Demand zones
+            
+            # Scan for SD zones
             self._scan_and_add_sd_zones()
-                            
-            self.debug_feature_box()
-            self.debug_smt_detection()
-                
-                # Define scan pipeline in priority order
+            
+            # Run scans in priority order
             scan_pipeline = [
                 ("FVG+SMT", self._scan_fvg_with_smt_tap),
                 ("SD+SMT", self._scan_sd_with_smt_tap),
                 ("CRT/TPD", self._scan_crt_smt_confluence),
                 ("Double SMT", self._scan_double_smts_temporal)
             ]
-                
-                # Run scans in priority order with short-circuit
-            signals_found = 0
-            signal_type = None
-                
+            
+            signal_found = False
             for scan_name, scan_method in scan_pipeline:
-                logger.info(f"🔍 Running {scan_name} scan...")
-                    
-                signal_detected = scan_method()
-                if signal_detected:
-                    signals_found = 1
-                    signal_type = scan_name
-                    logger.info(f"✅ {scan_name} signal detected - stopping scan pipeline")
+                logger.info(f"🔍 {self.pair_group}: Running {scan_name} scan...")
+                
+                if scan_method():
+                    signal_found = True
+                    logger.info(f"✅ {self.pair_group}: {scan_name} signal detected")
                     break
-                
-            # Log results
-            if signal_type:
-                logger.info(f"🎯 Signal found: {signal_type}")
-            else:
-                logger.info(f"🔍 No signals detected in any scan")
-                
-            # Get feature summary
+            
+            # Get summary
             summary = self.feature_box.get_active_features_summary()
-            sd_count = len(self.feature_box.active_features['sd_zone'])
-            logger.info(f"📊 {self.pair_group} Feature Summary: {summary['smt_count']} SMTs, {sd_count} SD zones, {summary['crt_count']} CRTs, {summary['psp_count']} PSPs, {summary.get('tpd_count', 0)} TPDs")
-                
-            return None
-                
+            logger.info(f"📊 {self.pair_group} Feature Summary: {summary['smt_count']} SMTs, {summary['sd_zone_count']} SD zones, {summary['crt_count']} CRTs, {summary['psp_count']} PSPs, {summary['tpd_count']} TPDs")
+
+            # After getting summary, add:
+            sd_active_count = self.feature_box.debug_sd_zones_count()
+            logger.info(f"📊 {self.pair_group} SD Zones (debug): {sd_active_count} active")
+
+            # Run entry monitoring
+            if hasattr(self, 'entry_signal_manager'):
+                self.entry_signal_manager.run_monitoring_cycle()
+            
+            return None if not signal_found else {"pair_group": self.pair_group, "signal": "found"}
+            
         except Exception as e:
             logger.error(f"❌ Error in analysis for {self.pair_group}: {str(e)}", exc_info=True)
             return None
-            
+
+    def debug_entry_monitoring_data(self):
+        """Debug what data we have for entry monitoring"""
+        logger.info(f"🔍 {self.pair_group}: Checking entry monitoring data")
+        
+        entry_timeframes = ['M1', 'M3', 'M5', 'M10', 'M15', 'M30', 'H1']
+        
+        for instrument in self.instruments:
+            logger.info(f"📊 {self.pair_group}: {instrument} data:")
+            for tf in entry_timeframes:
+                data = self.market_data[instrument].get(tf)
+                if data is not None and isinstance(data, pd.DataFrame):
+                    logger.info(f"    {tf}: {len(data)} candles, latest: {data.iloc[-1]['time'] if not data.empty else 'N/A'}")
+                else:
+                    logger.info(f"    {tf}: NO DATA")
 
         async def run_optimized_analysis(self, api_key):
             """Run analysis only for timeframes that need scanning"""
@@ -4338,6 +5581,25 @@ class UltimateTradingSystem:
                 logger.error(f"❌ Error in optimized analysis for {self.pair_group}: {str(e)}", exc_info=True)
                 return 60
 
+
+        # Add to UltimateTradingSystem class:
+        def cleanup_entry_monitoring(self):
+            """Cleanup entry monitoring resources"""
+            if hasattr(self, 'entry_signal_manager'):
+                # Optional: Save journal to file before cleanup
+                if hasattr(self.entry_signal_manager, '_save_journal_to_file'):
+                    self.entry_signal_manager._save_journal_to_file()
+            
+        def get_entry_journal_stats(self):
+            """Get entry signal journal statistics"""
+            if hasattr(self, 'entry_signal_manager'):
+                return self.entry_signal_manager.get_journal_stats()
+            return {"total_entries": 0}
+
+        def run_entry_monitoring(self):
+            """Run entry signal monitoring"""
+            self.entry_signal_manager.run_entry_monitoring_cycle()
+
         async def _fetch_data_selective(self, timeframes_to_scan, api_key):
             """Fetch data only for timeframes that need scanning"""
             tasks = []
@@ -4390,74 +5652,53 @@ class UltimateTradingSystem:
             logger.debug(f"🧹 Cleaned up {len(signals_to_remove)} old Double SMT signals (7+ days)")
 
     def _scan_and_add_sd_zones(self):
-        """Scan for Supply/Demand zones with timezone debug"""
-        logger.info(f"🔍 SCANNING: Supply/Demand Zones")
+        """Scan for Supply/Demand zones"""
         
-        # Import NY_TZ
-        from pytz import timezone
-        NY_TZ = timezone('America/New_York')
+        # REMOVE the local import and use the global NY_TZ
+        # from pytz import timezone
+        # NY_TZ = timezone('America/New_York')
         
-        # Debug: Check timezone of data
-        for instrument in self.instruments:
-            for timeframe in ['M15', 'H1', 'H4','D' , 'W']:
-                data = self.market_data[instrument].get(timeframe)
-                if data is not None and not data.empty:
-                    sample_time = data['time'].iloc[0]
-                    if hasattr(sample_time, 'tz'):
-                        tz_info = str(sample_time.tz)
-                    else:
-                        tz_info = 'NO TIMEZONE'
-                    logger.info(f"📊 {instrument} {timeframe}: First candle at {sample_time}, TZ: {tz_info}")
-                    
-                    # Convert to NY_TZ if needed
-                    if data['time'].dt.tz is None:
-                        data['time'] = data['time'].dt.tz_localize('UTC').dt.tz_convert(NY_TZ)
-                        logger.info(f"   ↳ Converted to NY_TZ")
-        
-        timeframes_to_scan = ['M15', 'H1', 'H4','D' , 'W']
+        timeframes_to_scan = ['M15', 'H1', 'H4', 'D', 'W']
         if 'XAU_USD' in self.instruments:
             timeframes_to_scan.append('M5')
         
         zones_added = 0
         zones_invalidated = 0
         
+        # Debug log
+        logger.info(f"🔍 {self.pair_group}: Scanning for SD zones in {timeframes_to_scan}")
+        
         for instrument in self.instruments:
             for timeframe in timeframes_to_scan:
                 data = self.market_data[instrument].get(timeframe)
-                if data is not None and not data.empty:
-                    # Get OTHER instrument's data for dual validation
-                    other_instrument = [inst for inst in self.instruments if inst != instrument][0]
-                    other_data = self.market_data[other_instrument].get(timeframe)
+                
+                if data is None or data.empty:
+                    logger.debug(f"⚠️ {self.pair_group}: No data for {instrument} {timeframe}")
+                    continue
+                
+                # Get OTHER instrument's data for dual validation
+                other_instrument = [inst for inst in self.instruments if inst != instrument][0]
+                other_data = self.market_data[other_instrument].get(timeframe)
+                
+                # Scan for zones
+                zones = self.sd_detector.scan_timeframe(data, timeframe, instrument)
+                
+                logger.debug(f"🔍 {self.pair_group}: Found {len(zones)} zones for {instrument} {timeframe}")
+                
+                for zone in zones:
+                    # Check if zone is still valid
+                    is_valid = self.sd_detector.check_zone_still_valid(zone, data, other_data)
                     
-                    # Scan for zones
-                    zones = self.sd_detector.scan_timeframe(data, timeframe, instrument)
-                    logger.info(f"📊 {instrument} {timeframe}: Found {len(zones)} zones")
-                    
-                    for zone in zones:
-                        # Check if zone is still valid
-                        is_valid = self.sd_detector.check_zone_still_valid(zone, data, other_data)
-                        
-                        if is_valid:
-                            # Add to FeatureBox
-                            if self.feature_box.add_sd_zone(zone):
-                                zones_added += 1
-                                logger.info(f"📦 Added {zone['type']} zone: {zone['zone_name']}")
-                                logger.info(f"   Range: {zone['zone_low']:.4f}-{zone['zone_high']:.4f}")
-                                logger.info(f"   Formed: {zone['formation_time']}")
-                        else:
-                            zones_invalidated += 1
-                            logger.info(f"❌ Zone invalidated: {zone['zone_name']}")
+                    if is_valid:
+                        # Add to FeatureBox
+                        if self.feature_box.add_sd_zone(zone):
+                            zones_added += 1
+                            logger.info(f"📦 {self.pair_group}: Added {zone['type']} zone at {zone['zone_low']:.4f}-{zone['zone_high']:.4f}")
+                    else:
+                        zones_invalidated += 1
         
-        logger.info(f"📊 SD Zones Summary: {zones_added} added, {zones_invalidated} invalidated")
-        
-        # DEBUG: Show what's in FeatureBox
-        active_zones = self.feature_box.get_active_sd_zones()
-        logger.info(f"📦 FeatureBox now has {len(active_zones)} active SD zones")
-        
-        for zone in active_zones:
-            wick_note = f"(wick-adjusted)" if zone.get('wick_adjusted', False) else ""
-            logger.info(f"📦   {zone['zone_name']} {wick_note}: {zone['type']} at {zone['zone_low']:.4f}-{zone['zone_high']:.4f}")
-            logger.info(f"     Formed: {zone['formation_time']}")
+        if zones_added > 0:
+            logger.info(f"📊 {self.pair_group}: Added {zones_added} SD zones, invalidated {zones_invalidated}")
         
         return zones_added
 
@@ -4554,69 +5795,99 @@ class UltimateTradingSystem:
         return new_candles
     
     async def _fetch_all_data_parallel(self, api_key):
-        """Fetch data in parallel with PROVEN candle counts that WORKED"""
+        """Fetch data in parallel with proper separation for different purposes"""
         tasks = []
         
-        # PROVEN CANDLE COUNTS FROM WORKING VERSION
-        proven_counts = {
-            # For SMT/CRT detection (keep these SHORT)
-            'H4': 40,   # Monthly timeframe - 40 candles (was working)
-            'H1': 40,   # Weekly timeframe - 40 candles (was working)  
-            'M15': 40,   # Daily timeframe - 40 candles (was working)
-            'M5': 40,    # 90min timeframe - 40 candles (was working)
-            
-            # For CRT only
-            'H1': 10, 'H4': 10,
-            
-            # For SD Zones ONLY - use MORE candles
-            'SD_H4': 100,  # For SD zones on H4
-            'SD_H1': 100,  # For SD zones on H1  
-            'SD_M15': 100, # For SD zones on M15
-            'SD_M5': 100,  # For SD zones on M5
-        }
+        # Get current time to log what we're fetching
+        logger.info(f"📥 Fetching data for {self.pair_group}")
         
-        # Combine all required timeframes
-        required_timeframes = []
+        # 1. SMT/CRT timeframes (short lookback)
+        smt_crt_timeframes = []
+        for cycle in ['weekly', 'daily', '90min']:
+            tf = self.pair_config['timeframe_mapping'][cycle]
+            if tf not in smt_crt_timeframes:
+                smt_crt_timeframes.append(tf)
         
-        # 1. Add SMT/CRT timeframes (SHORT lookback)
-        for cycle in self.pair_config['timeframe_mapping'].values():
-            if cycle not in required_timeframes:
-                required_timeframes.append(cycle)
+        # Add CRT timeframes
+        for tf in ['H1', 'H4']:
+            if tf not in smt_crt_timeframes:
+                smt_crt_timeframes.append(tf)
         
-        # 2. Add CRT timeframes
-        for tf in CRT_TIMEFRAMES:
-            if tf not in required_timeframes:
-                required_timeframes.append(tf)
-        
-        # 3. ADD SD Zone timeframes (LONG lookback - separate calls)
-        sd_timeframes = ['M15', 'H1', 'H4','D' , 'W']
+        # 2. SD Zone timeframes (longer lookback)
+        sd_timeframes = ['M15', 'H1', 'H4', 'D', 'W']
         if 'XAU_USD' in self.instruments:
             sd_timeframes.append('M5')
         
-        # Create fetch tasks
+        # 3. Entry monitoring timeframes (fast for LQ candles and pin bars)
+        entry_timeframes = ['M1', 'M3', 'M5', 'M10', 'M15', 'M30', 'H1']
+        
+        # Create tasks for SMT/CRT
+        logger.info(f"📊 SMT/CRT timeframes: {smt_crt_timeframes}")
         for instrument in self.instruments:
-            # FIRST: Fetch SHORT data for SMT/CRT
-            for tf in required_timeframes:
-                count = proven_counts.get(tf, 40)  # Default to 40
+            for tf in smt_crt_timeframes:
                 task = asyncio.create_task(
-                    self._fetch_single_instrument_data(instrument, tf, count, api_key)
-                )
-                tasks.append(task)
-            
-            # THEN: Fetch LONG data for SD Zones (separate calls)
-            for tf in sd_timeframes:
-                count = 40  # 40 candles for SD zones
-                task = asyncio.create_task(
-                    self._fetch_single_instrument_data(instrument, tf, count, api_key)
+                    self._fetch_single_instrument_data(instrument, tf, 40, api_key)
                 )
                 tasks.append(task)
         
-        # Wait for ALL data
+        # Create tasks for SD Zones
+        logger.info(f"📊 SD Zone timeframes: {sd_timeframes}")
+        for instrument in self.instruments:
+            for tf in sd_timeframes:
+                task = asyncio.create_task(
+                    self._fetch_single_instrument_data(instrument, tf, 50, api_key)
+                )
+                tasks.append(task)
+        
+        # Create tasks for Entry Monitoring (if we have active signals)
+        if hasattr(self, 'entry_signal_manager') and len(self.entry_signal_manager.active_signals) > 0:
+            logger.info(f"📊 Entry monitoring timeframes: {entry_timeframes}")
+            for instrument in self.instruments:
+                for tf in entry_timeframes:
+                    task = asyncio.create_task(
+                        self._fetch_single_instrument_data(instrument, tf, 20, api_key)
+                    )
+                    tasks.append(task)
+        
+        # Execute all tasks
+        if tasks:
+            try:
+                await asyncio.wait_for(asyncio.gather(*tasks), timeout=45.0)
+                logger.info(f"✅ Data fetched for {self.pair_group}: {len(tasks)} tasks")
+            except asyncio.TimeoutError:
+                logger.warning(f"⚠️ Data fetch timeout for {self.pair_group}")
+        
+        # Log what data we have
+        for instrument in self.instruments:
+            timeframes = list(self.market_data[instrument].keys())
+            logger.info(f"📦 {instrument} has data for: {timeframes}")
+
+    async def fetch_entry_monitoring_data(self, api_key):
+        """Fetch lower timeframe data for entry monitoring"""
         try:
-            await asyncio.wait_for(asyncio.gather(*tasks), timeout=45.0)
-            logger.info(f"✅ Parallel fetch: SHORT data for SMT/CRT, LONG data for SD zones")
-        except asyncio.TimeoutError:
-            logger.warning(f"⚠️ Parallel data fetch timeout for {self.pair_group}")
+            if not hasattr(self, 'entry_signal_manager') or len(self.entry_signal_manager.active_signals) == 0:
+                logger.debug(f"📭 {self.pair_group}: No active signals, skipping entry data fetch")
+                return
+            
+            entry_timeframes = ['M1', 'M3', 'M5', 'M10', 'M15', 'M30', 'H1']
+            tasks = []
+            
+            logger.info(f"📥 {self.pair_group}: Fetching entry monitoring data for {len(self.entry_signal_manager.active_signals)} active signals")
+            
+            for instrument in self.instruments:
+                for tf in entry_timeframes:
+                    task = asyncio.create_task(
+                        self._fetch_single_instrument_data(instrument, tf, 40, api_key)
+                    )
+                    tasks.append(task)
+            
+            if tasks:
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                successful = sum(1 for r in results if r is True)
+                logger.info(f"✅ {self.pair_group}: Fetched entry monitoring data ({successful}/{len(tasks)} successful)")
+                
+        except Exception as e:
+            logger.error(f"❌ {self.pair_group}: Error fetching entry monitoring data: {e}")
     
     async def _fetch_single_instrument_data(self, instrument, timeframe, count, api_key):
         """Fetch data for single instrument and convert to NY_TZ"""
@@ -5260,11 +6531,11 @@ class UltimateTradingSystem:
         # Timeframe mapping: SD Zone -> allowed SMT cycles
         sd_to_smt_cycles = {
             'H4': ['weekly', 'daily','monthly'],      # H4 Zone → Weekly (H1) or Daily (M15) SMTs
-            'H1': ['weekly', 'daily','90min'],      # H1 Zone → Weekly (H1) or Daily (M15) SMT  
-            'M15': ['daily','90min'],               # M15 Zone → Daily (M15) SMT
-            'M5': ['daily','90min'],                 # M5 Zone → 90min (M5) SMT
-            'D' :['weekly', 'daily','monthly'],
-            'W' :['weekly', 'daily','monthly']
+            'H1': ['weekly', 'daily','90min'],        # H1 Zone → Weekly (H1) or Daily (M15) SMT  
+            'M15': ['daily','90min'],                 # M15 Zone → Daily (M15) SMT
+            'M5': ['daily','90min'],                  # M5 Zone → 90min (M5) SMT
+            'D' : ['weekly', 'daily','monthly'],
+            'W' : ['weekly', 'daily','monthly']
         }
         
         # Get all active SD zones from FeatureBox
@@ -5316,25 +6587,75 @@ class UltimateTradingSystem:
                 if zone_type == 'demand' and smt_data['direction'] != 'bullish':
                     continue
                 
-                # Check PSP requirement
+                # ✅ MODIFIED: PSP is NOT required, but we note if it exists
                 has_psp = smt_feature['psp_data'] is not None
                 if not has_psp:
+                    logger.info(f"⚠️ SMT {smt_cycle} has no PSP confirmation - STILL CHECKING")
+                    # Continue anyway - we don't skip!
+                
+                # ✅ Get SMT second swing details for this asset
+                swing_times = smt_data.get('swing_times', {})
+                
+                # Determine which asset key to use
+                if zone_asset == self.instruments[0]:
+                    asset_key = 'asset1_curr'
+                else:
+                    asset_key = 'asset2_curr'
+                
+                # Get the current swing for this asset
+                asset_curr = swing_times.get(asset_key, {})
+                
+                if not asset_curr:
+                    logger.info(f"⚠️ No swing data for {zone_asset} in SMT {smt_cycle}")
                     continue
                 
-                # ✅ USE THE SAME FUNCTION AS FVG!
+                # Extract second swing details
+                if isinstance(asset_curr, dict):
+                    second_swing_time = asset_curr.get('time')
+                    second_swing_price = asset_curr.get('price')
+                    second_swing_type = asset_curr.get('type', 'high' if smt_data['direction'] == 'bearish' else 'low')
+                else:
+                    # Fallback: try to get price from other fields
+                    second_swing_time = asset_curr
+                    second_swing_price = smt_data.get('price')
+                    second_swing_type = 'high' if smt_data['direction'] == 'bearish' else 'low'
+                
+                if not second_swing_time or not second_swing_price:
+                    logger.info(f"⚠️ No swing price/time found for {zone_asset} in SMT {smt_cycle}")
+                    continue
+                
+                # ✅ REJECT if SMT second swing is BEFORE zone formation
+                if second_swing_time <= zone_formation_time:
+                    logger.info(f"❌ SD+SMT REJECTED: SMT {smt_cycle} second swing at {second_swing_time} is BEFORE zone formation at {zone_formation_time}")
+                    continue  # Skip this SMT
+                
+                # ✅ CRITICAL: Check if zone was invalidated BEFORE SMT swing (by any candle)
+                # Get candles between zone formation and SMT swing time
+                if self._was_zone_invalidated_before_smt_swing(zone, second_swing_time):
+                    logger.info(f"❌ SD+SMT REJECTED: Zone {zone['zone_name']} was invalidated BEFORE SMT swing at {second_swing_time}")
+                    continue
+                
+                # ✅ Now check if SMT swing actually tapped the zone
                 tapped = self._check_cross_tf_smt_second_swing_in_fvg(
                     smt_data, zone_asset, zone_low, zone_high, zone_direction,
                     zone_timeframe, smt_cycle, zone_formation_time
                 )
                 
                 if tapped:
+                    # ✅ CRITICAL: Check if SMT swing itself invalidated the zone
+                    if self._did_smt_swing_invalidate_zone(zone, smt_data, second_swing_price, second_swing_type):
+                        logger.info(f"❌ SD+SMT REJECTED: SMT {smt_cycle} swing INVALIDATED the zone {zone['zone_name']}")
+                        continue
+                    
                     # Check for High Probability: Zone within higher TF zone of same direction
                     is_hp_zone = self._check_hp_sd_zone(zone, zone_direction)
                     
-                    logger.info(f"✅ SD+SMT TAP CONFIRMED: {smt_cycle} {smt_data['direction']} "
+                    # Log whether we have PSP or not
+                    psp_status = "WITH PSP" if has_psp else "WITHOUT PSP"
+                    logger.info(f"✅ SD+SMT TAP CONFIRMED {psp_status}: {smt_cycle} {smt_data['direction']} "
                                f"tapped {zone_timeframe} {zone_type} on {zone_asset}")
                     
-                    # Send the signal
+                    # Send the signal (with or without PSP)
                     return self._send_sd_smt_tap_signal(
                         zone, smt_data, has_psp, is_hp_zone
                     )
@@ -5488,6 +6809,7 @@ class UltimateTradingSystem:
         message = self._format_sd_smt_tap_message(idea)
         
         if self._send_telegram_message(message):
+            self.entry_signal_manager.add_signal_from_message(message)
             # Store in BOTH dictionaries based on type
             self.sd_zone_sent[signal_id] = datetime.now(NY_TZ)
             if is_hp_zone:
@@ -5799,41 +7121,31 @@ class UltimateTradingSystem:
     
     def _scan_fvg_with_smt_tap(self):
         """Find FVGs where SMT's SECOND SWING traded in FVG zone - USING CLOSED CANDLES ONLY"""
-        logger.info(f"🔍 SCANNING: FVG + SMT Second Swing Tap (Cross-TF) - PSP REQUIRED - CLOSED CANDLES ONLY")
         
         # CORRECT CROSS-TIMEFRAME MAPPING
         fvg_to_smt_cycles = {
-            'H4': ['weekly', 'daily'],    # H4 FVG → Weekly (H1) or Daily (M15) SMT
-            'H1': ['daily'],              # H1 FVG → Daily (M15) SMT
-            'M15': ['daily', '90min']     # M15 FVG → Daily (M15) or 90min (M5) SMT
+            'H4': ['weekly', 'daily'],
+            'H1': ['daily'],
+            'M15': ['daily', '90min']
         }
         
-        # We need to get FVGs from FVGDetector, not from _find_zone_fvgs (which uses Fibonacci)
-        # Let's scan for FVGs using FVGDetector with ONLY CLOSED CANDLES
         all_fvgs = []
         
         for instrument in self.instruments:
-            for fvg_tf in ['H4', 'H1', 'M15']:  # Only these FVG timeframes
+            for fvg_tf in ['H4', 'H1', 'M15']:
                 data = self.market_data[instrument].get(fvg_tf)
                 if data is not None and not data.empty:
-                    # ✅ NEW: Use only CLOSED candles for FVG detection
                     if 'complete' in data.columns:
                         closed_data = data[data['complete'] == True].copy()
-                        logger.info(f"📊 {instrument} {fvg_tf}: {len(data)} total candles, {len(closed_data)} closed candles")
                         
-                        if len(closed_data) < 5:  # Need at least 5 closed candles
-                            logger.warning(f"⚠️ Not enough closed candles for {instrument} {fvg_tf}: {len(closed_data)}")
+                        if len(closed_data) < 5:
                             continue
                         
-                        # Use FVGDetector to get FVGs from CLOSED CANDLES ONLY
                         fvgs = self.fvg_detector.scan_tf(closed_data, fvg_tf, instrument)
                     else:
-                        # Fallback if no 'complete' column
-                        logger.warning(f"⚠️ No 'complete' column in {instrument} {fvg_tf} data")
                         fvgs = self.fvg_detector.scan_tf(data, fvg_tf, instrument)
                     
                     for fvg in fvgs:
-                        # Convert FVGDetector format to the format expected by this method
                         fvg_idea = {
                             'fvg_name': f"{instrument}_{fvg_tf}_{fvg['formation_time'].strftime('%m%d%H%M')}",
                             'fvg_levels': f"{fvg['fvg_low']:.4f} - {fvg['fvg_high']:.4f}",
@@ -5841,14 +7153,12 @@ class UltimateTradingSystem:
                             'timeframe': fvg_tf,
                             'asset': instrument,
                             'formation_time': fvg['formation_time'],
-                            'fvg_low': fvg['fvg_low'],  # Keep for easy access
+                            'fvg_low': fvg['fvg_low'],
                             'fvg_high': fvg['fvg_high'],
                             'is_hp': fvg.get('is_hp', False),
-                            'is_closed_candle': True  # Mark as from closed candle
+                            'is_closed_candle': True
                         }
                         all_fvgs.append(fvg_idea)
-        
-        logger.info(f"🔍 Found {len(all_fvgs)} FVGs from CLOSED CANDLES")
         
         for fvg_idea in all_fvgs:
             fvg_direction = fvg_idea['direction']
@@ -5856,14 +7166,10 @@ class UltimateTradingSystem:
             fvg_asset = fvg_idea['asset']
             fvg_low = fvg_idea['fvg_low']
             fvg_high = fvg_idea['fvg_high']
-            fvg_formation_time = fvg_idea['formation_time']  # Get FVG formation time
+            fvg_formation_time = fvg_idea['formation_time']
             
-            # Get which SMT cycles can tap this FVG timeframe
             relevant_cycles = fvg_to_smt_cycles.get(fvg_timeframe, [])
             
-            logger.info(f"🔍 Checking FVG {fvg_idea['fvg_name']} formed at {fvg_formation_time} - Can be tapped by: {relevant_cycles}")
-            
-            # Check all active SMTs
             for smt_key, smt_feature in self.feature_box.active_features['smt'].items():
                 if self.feature_box._is_feature_expired(smt_feature):
                     continue
@@ -5871,72 +7177,69 @@ class UltimateTradingSystem:
                 smt_data = smt_feature['smt_data']
                 smt_cycle = smt_data['cycle']
                 
-                # Check if this SMT cycle is allowed to tap this FVG timeframe
                 if smt_cycle not in relevant_cycles:
                     continue
                     
-                # Check direction match
                 if smt_data['direction'] != fvg_direction:
                     continue
                 
-                # ✅ CHECK PSP REQUIREMENT FIRST
                 has_psp = smt_feature['psp_data'] is not None
                 if not has_psp:
-                    logger.info(f"⏳ Skipping FVG+SMT: {smt_cycle} SMT has no PSP confirmation")
-                    continue  # Skip SMTs without PSP
+                    continue
                 
-                # CRITICAL: Check temporal relationship BEFORE checking tap
-                # Get swing_times - it's a dictionary, not a list!
                 swing_times = smt_data.get('swing_times', {})
                 
-                # Determine which asset key to use
                 if fvg_asset == self.instruments[0]:
                     asset_key = 'asset1_curr'
                 else:
                     asset_key = 'asset2_curr'
                 
-                # Get the current swing for this asset
                 asset_curr = swing_times.get(asset_key, {})
                 
                 if not asset_curr:
-                    logger.info(f"⚠️ No swing data for {fvg_asset} in SMT {smt_cycle}")
                     continue
                 
-                # Extract second swing time (could be dict or Timestamp)
                 if isinstance(asset_curr, dict):
                     second_swing_time = asset_curr.get('time')
                 else:
-                    second_swing_time = asset_curr  # Assuming it's already a Timestamp
+                    second_swing_time = asset_curr
                 
                 if not second_swing_time:
-                    logger.info(f"⚠️ No second swing time found for {fvg_asset} in SMT {smt_cycle}")
                     continue
                 
-                # REJECT if SMT second swing is BEFORE FVG formation
                 if second_swing_time <= fvg_formation_time:
-                    logger.info(f"❌ FVG+SMT REJECTED: SMT {smt_cycle} second swing at {second_swing_time} is BEFORE FVG formation at {fvg_formation_time}")
-                    continue  # Skip this SMT
+                    continue
                 
-                # Check if SMT's second swing traded in FVG zone (CROSS-TIMEFRAME)
                 tapped = self._check_cross_tf_smt_second_swing_in_fvg(
                     smt_data, fvg_asset, fvg_low, fvg_high, fvg_direction, 
-                    fvg_timeframe, smt_cycle, fvg_formation_time  # PASS FVG FORMATION TIME!
+                    fvg_timeframe, smt_cycle, fvg_formation_time
                 )
                 
                 if tapped:
-                    # Check if only ONE asset tapped (HP FVG)
                     is_hp_fvg = self._check_hp_fvg_fix(fvg_idea, fvg_asset)
                     
-                    logger.info(f"✅ FVG+SMT TAP CONFIRMED WITH PSP: {smt_cycle} {smt_data['direction']} "
-                               f"tapped {fvg_timeframe} FVG on {fvg_asset}, HP: {is_hp_fvg}")
-                    
-                    # Send the signal
                     return self._send_fvg_smt_tap_signal(
                         fvg_idea, smt_data, has_psp, is_hp_fvg
                     )
         
-        logger.info(f"🔍 No FVG+SMT setups with PSP found")
         return False
+
+    def run_entry_monitoring(self):
+        """Run entry signal monitoring after analysis"""
+        try:
+            # Process new signals from the analysis
+            self.entry_signal_manager.process_new_signals()
+            
+            # Monitor for entry conditions
+            self.entry_signal_manager.run_entry_monitoring_cycle()
+            
+            # Log status
+            active_setups = len(self.entry_signal_manager.monitored_setups)
+            traffic_lights = len(self.entry_signal_manager.traffic_lights)
+            logger.info(f"📊 Entry Monitoring: {active_setups} setups, {traffic_lights} traffic lights")
+            
+        except Exception as e:
+            logger.error(f"❌ Error in entry monitoring: {e}")
 
     def _check_cross_tf_smt_second_swing_in_fvg(self, smt_data, asset, fvg_low, fvg_high, fvg_direction, fvg_tf, smt_cycle, fvg_formation_time):
         """Check if SMT's second swing (on lower TF) entered FVG zone (on higher TF)"""
@@ -6474,6 +7777,7 @@ class UltimateTradingSystem:
         message = self._format_fvg_smt_tap_message(idea)
         
         if self._send_telegram_message(message):
+            self.entry_signal_manager.add_signal_from_message(message)
             # Record when we sent this signal
             if not hasattr(self, 'fvg_smt_tap_sent'):
                 self.fvg_smt_tap_sent = {}
@@ -6764,7 +8068,7 @@ class UltimateTradingSystem:
             logger.info(f"🔍 {self.pair_group}: No triad confluence (only {len(signals)} signals)")
             return None
         
-        # Count directions - FIXED: Properly unpack the signals
+        # Count directions - FIXED: Properly unpack the signalz
         bullish_count = 0
         bearish_count = 0
         signal_details = []
@@ -6911,252 +8215,381 @@ class UltimateTradingSystem:
         if psp_updates > 0:
             logger.info(f"🔄 Updated {psp_updates} SMTs with PSP confirmation")
 
-# ================================
-# ULTIMATE MAIN MANAGER
-# ================================
 
-class UltimateTradingManager:
-    def __init__(self, api_key, telegram_token, chat_id):
+import asyncio
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta
+import time
+
+class TimeManager:
+    """Precise timing for different candle intervals with better logging"""
+    
+    @staticmethod
+    def calculate_next_candle_time(timeframe="M1", offset_seconds=3):
+        """
+        Calculate next candle time with offset and log details
+        
+        Args:
+            timeframe: M1, M5, M15, H1, H4, D
+            offset_seconds: seconds to add after candle close (for data availability)
+        
+        Returns:
+            dict: {'next_time': datetime, 'sleep_seconds': float, 'info': str}
+        """
+        now = datetime.now(NY_TZ)
+        
+        if timeframe == "M1":
+            next_time = now.replace(second=0, microsecond=0) + timedelta(minutes=1)
+            info = f"Next 1-minute candle at {next_time.strftime('%H:%M:%S')}"
+        
+        elif timeframe == "M5":
+            minutes_past = now.minute % 5
+            next_minute = now.minute - minutes_past + 5
+            if next_minute >= 60:
+                next_time = now.replace(hour=now.hour+1, minute=0, second=0, microsecond=0)
+            else:
+                next_time = now.replace(minute=next_minute, second=0, microsecond=0)
+            info = f"Next 5-minute candle at {next_time.strftime('%H:%M:%S')} ({5 - minutes_past} minutes from now)"
+        
+        elif timeframe == "M15":
+            minutes_past = now.minute % 15
+            next_minute = now.minute - minutes_past + 15
+            if next_minute >= 60:
+                next_time = now.replace(hour=now.hour+1, minute=0, second=0, microsecond=0)
+            else:
+                next_time = now.replace(minute=next_minute, second=0, microsecond=0)
+            info = f"Next 15-minute candle at {next_time.strftime('%H:%M:%S')} ({15 - minutes_past} minutes from now)"
+        
+        elif timeframe == "H1":
+            minutes_past = now.minute
+            next_time = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+            info = f"Next hourly candle at {next_time.strftime('%H:%M:%S')} ({60 - minutes_past} minutes from now)"
+        
+        elif timeframe == "H4":
+            hour = now.hour
+            minutes_past = now.minute
+            hours_past = hour % 4
+            next_hour = ((hour // 4) + 1) * 4
+            if next_hour >= 24:
+                next_time = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+            else:
+                next_time = now.replace(hour=next_hour, minute=0, second=0, microsecond=0)
+            info = f"Next 4-hour candle at {next_time.strftime('%H:%M:%S')} ({4 - hours_past} hours {60 - minutes_past} minutes from now)"
+        
+        elif timeframe == "D":
+            next_time = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+            info = f"Next daily candle at {next_time.strftime('%Y-%m-%d %H:%M')}"
+        
+        else:
+            raise ValueError(f"Unsupported timeframe: {timeframe}")
+        
+        # Add offset for data availability
+        next_time += timedelta(seconds=offset_seconds)
+        
+        # If we're already past this time (shouldn't happen with offset), add one more period
+        if now >= next_time:
+            if timeframe == "M1":
+                next_time += timedelta(minutes=1)
+            elif timeframe == "M5":
+                next_time += timedelta(minutes=5)
+            elif timeframe == "M15":
+                next_time += timedelta(minutes=15)
+            elif timeframe == "H1":
+                next_time += timedelta(hours=1)
+            elif timeframe == "H4":
+                next_time += timedelta(hours=4)
+            elif timeframe == "D":
+                next_time += timedelta(days=1)
+        
+        sleep_seconds = (next_time - now).total_seconds()
+        
+        return {
+            'next_time': next_time,
+            'sleep_seconds': sleep_seconds,
+            'info': info
+        }
+    
+    @staticmethod
+    def log_sleep_info(timeframe, sleep_result):
+        """Log sleep information in a readable format"""
+        sleep_seconds = sleep_result['sleep_seconds']
+        next_time = sleep_result['next_time']
+        info = sleep_result['info']
+        
+        if sleep_seconds <= 0:
+            return "⚠️ No sleep needed - running now"
+        
+        # Convert to minutes/seconds
+        if sleep_seconds > 60:
+            minutes = int(sleep_seconds // 60)
+            seconds = int(sleep_seconds % 60)
+            sleep_str = f"{minutes}m {seconds}s"
+        else:
+            sleep_str = f"{sleep_seconds:.1f}s"
+        
+        return f"⏳ Sleeping {sleep_str} until {next_time.strftime('%H:%M:%S')} ({info})"
+
+
+
+class ParallelBotManager:
+    """Manager to run multiple trading systems in parallel with coordinated timing"""
+    
+    def __init__(self, api_key, telegram_token, telegram_chat_id):
         self.api_key = api_key
         self.telegram_token = telegram_token
-        self.chat_id = chat_id
+        self.telegram_chat_id = telegram_chat_id
+        
+        # Create trading systems for each pair group
         self.trading_systems = {}
-        
         for pair_group, pair_config in TRADING_PAIRS.items():
-            self.trading_systems[pair_group] = UltimateTradingSystem(pair_group, pair_config)
+            # Setup logging for this bot
+            self._setup_bot_logging(pair_group)
+            
+            # Create system
+            self.trading_systems[pair_group] = UltimateTradingSystem(
+                pair_group, pair_config, telegram_token, telegram_chat_id
+            )
         
-        logger.info(f"🎯 Initialized ULTIMATE trading manager with {len(self.trading_systems)} pair groups")
+        # Thread pool for parallel execution
+        self.executor = ThreadPoolExecutor(max_workers=len(TRADING_PAIRS) * 2)
         
-
-    def _format_ultimate_signal_message(self, signal):
-        """Format ultimate signal for Telegram - NOW WITH TRIAD SUPPORT"""
+        # Event for graceful shutdown
+        self.shutdown_event = threading.Event()
         
-        # Check if this is a TRIAD signal (has confluence_strength)
-        if 'confluence_strength' in signal:
-            return self._format_triad_signal_message(signal)
-        else:
-            # This is a regular pair signal - use your existing formatting
-            pair_group = signal.get('pair_group', 'Unknown')
-            direction = signal.get('direction', 'UNKNOWN').upper()
-            strength = signal.get('strength', 0)
-            path = signal.get('path', 'UNKNOWN')
-            description = signal.get('description', '')
-            bull_strength = signal.get('bullish_strength', 0)
-            bear_strength = signal.get('bearish_strength', 0)
-            has_conflict = signal.get('has_conflict', False)
-            
-            message = f"🛡️ *ULTIMATE TRADING SIGNAL* 🛡️\n\n"
-            message += f"*Pair Group:* {pair_group.replace('_', ' ').title()}\n"
-            message += f"*Direction:* {direction}\n"
-            message += f"*Strength:* {strength}/9\n"
-            message += f"*Path:* {path}\n"
-            message += f"*Bullish SMTs:* {bull_strength}\n"
-            message += f"*Bearish SMTs:* {bear_strength}\n"
-            message += f"*Conflict Detected:* {'YES ⚠️' if has_conflict else 'NO ✅'}\n"
-            message += f"*Description:* {description}\n\n"
-            
-            if 'criteria' in signal:
-                message += "*Signal Criteria:*\n"
-                # Remove duplicate criteria before displaying
-                unique_criteria = []
-                for criterion in signal['criteria']:
-                    if criterion not in unique_criteria:
-                        unique_criteria.append(criterion)
-                        message += f"• {criterion}\n"
-            
-            # Show CRT+PSP confluence if present
-            if signal.get('psp_for_crt'):
-                psp = signal['psp_for_crt']
-                psp_time = psp['formation_time'].strftime('%H:%M')
-                message += f"• CRT with PSP on {psp['timeframe']} at {psp_time}\n"
-            
-            if 'all_smts' in signal and signal['all_smts']:
-                message += f"\n*SMT Swing Details:*\n"
-                for cycle, smt in signal['all_smts'].items():
-                    psp_status = "✅ WITH PSP" if cycle in signal.get('psp_smts', {}) else "⏳ Waiting PSP"
-                    message += f"• {cycle}: {smt['direction']} {smt['quarters']} {psp_status}\n"
-                    message += f"  📍 {smt['asset1_action']}\n"
-                    message += f"  📍 {smt['asset2_action']}\n"
-                    
-                    # Add PSP timeframe and time if available
-                    if cycle in signal.get('psp_smts', {}):
-                        psp = signal['psp_smts'][cycle]
-                        psp_time = psp['formation_time'].strftime('%H:%M')
-                        message += f"  🕒 PSP on {psp['timeframe']} at {psp_time}\n"
-            
-            message += f"\n*Detection Time:* {signal['timestamp'].strftime('%Y-%m-%d %H:%M:%S %Z')}\n"
-            
-            if 'TRIPLE' in path:
-                message += f"\n*🎯 ULTIMATE TRIPLE CONFLUENCE: CRT + PSP + SMT - HIGHEST PROBABILITY*\n"
-            elif 'OVERRIDE' in path:
-                message += f"\n*🎯 CYCLE OVERRIDE: Multiple smaller cycles overriding higher timeframes*\n"
-            elif has_conflict:
-                message += f"\n*⚠️ NOTE: Trading with caution due to conflicting signals*\n"
-            
-            message += f"\n#UltimateSignal #{pair_group} #{path}"
-            
-            return message
+        print(f"🚀 ParallelBotManager initialized with {len(self.trading_systems)} systems")
     
-    def _format_triad_signal_message(self, signal):
-        """Format triad confluence signal for Telegram"""
-        pair_group = signal.get('pair_group', 'Unknown')
-        direction = signal.get('direction', 'UNKNOWN').upper()
-        confluence = signal.get('confluence_strength', 0)
-        total_pairs = signal.get('total_pairs', 0)
-        instruments = signal.get('instruments', [])
-        details = signal.get('signal_details', [])
+    def _setup_bot_logging(self, bot_name):
+        """Setup logging for a specific bot"""
+        import logging
         
-        message = f"🔄 *TRIAD CONFLUENCE SIGNAL* 🔄\n\n"
-        message += f"*Group:* {pair_group.replace('_', ' ').title()}\n"
-        message += f"*Direction:* {direction}\n"
-        message += f"*Confluence:* {confluence}/{total_pairs} pairs\n"
-        message += f"*Instruments:* {', '.join(instruments)}\n\n"
+        # Create logger for this bot
+        logger = logging.getLogger(f"bot_{bot_name}")
+        logger.setLevel(logging.INFO)
         
-        message += "*Pair Signals:*\n"
-        for detail in details:
-            message += f"• {detail}\n"
+        # Don't propagate to root logger
+        logger.propagate = False
         
-        message += f"\n*Detection Time:* {signal['timestamp'].strftime('%Y-%m-%d %H:%M:%S %Z')}\n"
+        # Create console handler with bot name prefix
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.INFO)
         
-        if confluence == 3:
-            message += f"\n*🎯 PERFECT TRIAD CONFLUENCE: All 3 pairs agreeing!*\n"
-        elif confluence == 2:
-            message += f"\n*✅ STRONG TRIAD CONFLUENCE: 2/3 pairs agreeing*\n"
+        # Custom formatter with bot name
+        formatter = logging.Formatter(f'%(asctime)s - [{bot_name}] - %(levelname)s - %(message)s')
+        console_handler.setFormatter(formatter)
         
-        message += f"\n#TriadConfluence #{pair_group} #{direction}"
+        # Create file handler
+        file_handler = logging.FileHandler(f'logs/bot_{bot_name}.log')
+        file_handler.setLevel(logging.DEBUG)
+        file_handler.setFormatter(formatter)
         
-        return message
+        # Add handlers
+        logger.addHandler(console_handler)
+        logger.addHandler(file_handler)
     
-    async def run_ultimate_systems(self):
-        """Run all trading systems with ultimate decision making"""
-        logger.info("🎯 Starting ULTIMATE Multi-Pair Trading System...")
-        test_proven_quarter_patch()
-        api_key = os.getenv('OANDA_API_KEY')
-        telegram_token = os.getenv('TELEGRAM_BOT_TOKEN')
+    def start_all(self):
+        """Start all bots in parallel threads"""
+        threads = []
         
-        while True:
+        for pair_group, system in self.trading_systems.items():
+            # Thread for main analysis (runs every 5 minutes)
+            main_thread = threading.Thread(
+                target=self._run_main_analysis_loop,
+                args=(pair_group, system),
+                name=f"MainAnalysis_{pair_group}",
+                daemon=True
+            )
+            threads.append(main_thread)
+            main_thread.start()
+            
+            # Thread for entry monitoring (runs every 1 minute)
+            entry_thread = threading.Thread(
+                target=self._run_entry_monitoring_loop,
+                args=(pair_group, system),
+                name=f"EntryMonitoring_{pair_group}",
+                daemon=True
+            )
+            threads.append(entry_thread)
+            entry_thread.start()
+        
+        return threads
+    
+    def _run_main_analysis_loop(self, pair_group, system):
+        """Run main analysis every 5 minutes with better sleep logging"""
+        bot_logger = logging.getLogger(f"bot_{pair_group}")
+        bot_logger.info(f"⏰ Starting main analysis loop (5-minute intervals)")
+        
+        while not self.shutdown_event.is_set():
             try:
-                tasks = []
-                sleep_times = []
+                # Calculate next run time
+                sleep_info = TimeManager.calculate_next_candle_time("M5", offset_seconds=3)
                 
-                for pair_group, system in self.trading_systems.items():
-                    task = asyncio.create_task(
-                        system.run_ultimate_analysis(self.api_key),
-                        name=f"ultimate_analysis_{pair_group}"
-                    )
-                    tasks.append(task)
-                    
-                    # Get sleep time for the fastest cycle (usually '90min')
-                    sleep_time = system.get_sleep_time_for_cycle('90min')  # or whichever cycle type you want
-                    sleep_times.append(sleep_time)
+                if sleep_info['sleep_seconds'] > 0:
+                    sleep_msg = TimeManager.log_sleep_info("M5", sleep_info)
+                    bot_logger.info(f"⏰ {pair_group}: {sleep_msg}")
+                    time.sleep(sleep_info['sleep_seconds'])
                 
-                results = await asyncio.gather(*tasks, return_exceptions=True)
+                # Run analysis
+                bot_logger.info(f"🔍 Running main analysis...")
+                start_time = time.time()
                 
-                signals = []
-                for i, result in enumerate(results):
-                    pair_group = list(self.trading_systems.keys())[i]
-                    if isinstance(result, Exception):
-                        logger.error(f"❌ Ultimate analysis task failed for {pair_group}: {str(result)}")
-                    elif result is not None:
-                        signals.append(result)
-                        logger.info(f"🎯 ULTIMATE SIGNAL FOUND for {pair_group}")
+                future = self.executor.submit(self._run_async_main_analysis, system)
                 
-                if signals:
-                    await self._process_ultimate_signals(signals)
-                
-                sleep_time = min(sleep_times) if sleep_times else BASE_INTERVAL
-                logger.info(f"⏰ Ultimate cycle complete. Sleeping for {sleep_time:.1f} seconds")
-                await asyncio.sleep(sleep_time)
+                try:
+                    result = future.result(timeout=60)
+                    elapsed = time.time() - start_time
+                    bot_logger.info(f"✅ Main analysis completed in {elapsed:.1f}s")
+                except TimeoutError:
+                    bot_logger.warning(f"⚠️ Main analysis timed out after 60s")
                 
             except Exception as e:
-                logger.error(f"❌ Error in ultimate main loop: {str(e)}")
-                await asyncio.sleep(60)
+                bot_logger.error(f"❌ Error in main analysis: {e}")
+                time.sleep(30)
     
-    async def _process_ultimate_signals(self, signals):
-        """Process and send ultimate signals to Telegram"""
-        for signal in signals:
+    def _run_entry_monitoring_loop(self, pair_group, system):
+        """Run entry monitoring every 30 seconds with data fetching"""
+        bot_logger = logging.getLogger(f"bot_{pair_group}")
+        bot_logger.info(f"⏰ {pair_group}: Starting entry monitoring loop (30-second intervals)")
+        
+        cycle_count = 0
+        
+        while not self.shutdown_event.is_set():
             try:
-                message = self._format_ultimate_signal_message(signal)
-                success = send_telegram(message, self.telegram_token, self.chat_id)
+                cycle_count += 1
                 
-                if success:
-                    logger.info(f"📤 Ultimate signal sent to Telegram for {signal['pair_group']}")
+                # Sleep 30 seconds between checks
+                if cycle_count % 5 == 1:  # Log every 5th cycle
+                    bot_logger.debug(f"⏳ {pair_group}: Entry monitoring sleeping 30s")
+                time.sleep(30)
+                
+                # Check if system has entry_signal_manager
+                if not hasattr(system, 'entry_signal_manager'):
+                    if cycle_count % 10 == 1:
+                        bot_logger.debug(f"⚠️ {pair_group}: No entry_signal_manager found")
+                    continue
+                
+                active_signals = len(system.entry_signal_manager.active_signals)
+                
+                if active_signals > 0:
+                    if cycle_count % 3 == 1:  # Log less frequently but still visible
+                        bot_logger.info(f"📡 {pair_group}: Monitoring {active_signals} active signal(s)")
+                    
+                    # DEBUG: Log what timeframes we need
+                    try:
+                        # Check what data we have
+                        available_data = {}
+                        for inst in system.instruments:
+                            available_data[inst] = list(system.market_data.get(inst, {}).keys())
+                        
+                        bot_logger.debug(f"📊 {pair_group}: Available data: {available_data}")
+                        
+                        # Fetch entry monitoring data
+                        bot_logger.info(f"📥 {pair_group}: Starting entry data fetch...")
+                        fetch_future = self.executor.submit(
+                            self._fetch_entry_monitoring_data, system
+                        )
+                        
+                        try:
+                            fetch_future.result(timeout=20)
+                            bot_logger.info(f"✅ {pair_group}: Entry data fetch completed")
+                        except TimeoutError:
+                            bot_logger.warning(f"⚠️ {pair_group}: Entry data fetch timed out after 20s")
+                            continue
+                        
+                        # Run monitoring
+                        start_time = time.time()
+                        bot_logger.debug(f"🔍 {pair_group}: Running entry monitoring cycle...")
+                        
+                        monitor_future = self.executor.submit(
+                            system.entry_signal_manager.run_monitoring_cycle
+                        )
+                        
+                        try:
+                            monitor_future.result(timeout=15)
+                            elapsed = time.time() - start_time
+                            bot_logger.info(f"✅ {pair_group}: Entry monitoring completed in {elapsed:.1f}s")
+                        except TimeoutError:
+                            bot_logger.warning(f"⚠️ {pair_group}: Entry monitoring timed out after 15s")
+                            
+                    except Exception as e:
+                        bot_logger.error(f"❌ {pair_group}: Error in entry monitoring cycle: {e}")
+                        
                 else:
-                    logger.error(f"❌ Failed to send ultimate signal for {signal['pair_group']}")
-                    
-            except Exception as e:
-                logger.error(f"❌ Error processing ultimate signal: {str(e)}")
-    
-    def _format_ultimate_signal_message(self, signal):
-        """Format ultimate signal for Telegram - NOW INCLUDES TRIPLE CONFLUENCE"""
-        pair_group = signal.get('pair_group', 'Unknown')
-        direction = signal.get('direction', 'UNKNOWN').upper()
-        strength = signal.get('strength', 0)
-        path = signal.get('path', 'UNKNOWN')
-        description = signal.get('description', '')
-        bull_strength = signal.get('bullish_strength', 0)
-        bear_strength = signal.get('bearish_strength', 0)
-        has_conflict = signal.get('has_conflict', False)
-        
-        message = f"🛡️ *ULTIMATE TRADING SIGNAL* 🛡️\n\n"
-        message += f"*Pair Group:* {pair_group.replace('_', ' ').title()}\n"
-        message += f"*Direction:* {direction}\n"
-        message += f"*Strength:* {strength}/9\n"
-        message += f"*Path:* {path}\n"
-        message += f"*Bullish SMTs:* {bull_strength}\n"
-        message += f"*Bearish SMTs:* {bear_strength}\n"
-        message += f"*Conflict Detected:* {'YES ⚠️' if has_conflict else 'NO ✅'}\n"
-        message += f"*Description:* {description}\n\n"
-        
-        if 'criteria' in signal:
-            message += "*Signal Criteria:*\n"
-            # Remove duplicate criteria before displaying
-            unique_criteria = []
-            for criterion in signal['criteria']:
-                if criterion not in unique_criteria:
-                    unique_criteria.append(criterion)
-                    message += f"• {criterion}\n"
-        
-        # NEW: Show CRT+PSP confluence if present
-        if signal.get('psp_for_crt'):
-            psp = signal['psp_for_crt']
-            psp_time = psp['formation_time'].strftime('%H:%M')
-            message += f"• CRT with PSP on {psp['timeframe']} at {psp_time}\n"
-        
-        if 'all_smts' in signal and signal['all_smts']:
-            message += f"\n*SMT Swing Details:*\n"
-            for cycle, smt in signal['all_smts'].items():
-                psp_status = "✅ WITH PSP" if cycle in signal.get('psp_smts', {}) else "⏳ Waiting PSP"
-                message += f"• {cycle}: {smt['direction']} {smt['quarters']} {psp_status}\n"
-                message += f"  📍 {smt['asset1_action']}\n"
-                message += f"  📍 {smt['asset2_action']}\n"
+                    if cycle_count % 20 == 1:
+                        bot_logger.debug(f"📭 {pair_group}: No active signals to monitor")
                 
-                # Add PSP timeframe and time if available
-                if cycle in signal.get('psp_smts', {}):
-                    psp = signal['psp_smts'][cycle]
-                    psp_time = psp['formation_time'].strftime('%H:%M')
-                    message += f"  🕒 PSP on {psp['timeframe']} at {psp_time}\n"
-        
-        message += f"\n*Detection Time:* {signal['timestamp'].strftime('%Y-%m-%d %H:%M:%S %Z')}\n"
-        
-        if 'TRIPLE' in path:
-            message += f"\n*🎯 ULTIMATE TRIPLE CONFLUENCE: CRT + PSP + SMT - HIGHEST PROBABILITY*\n"
-        elif 'OVERRIDE' in path:
-            message += f"\n*🎯 CYCLE OVERRIDE: Multiple smaller cycles overriding higher timeframes*\n"
-        elif has_conflict:
-            message += f"\n*⚠️ NOTE: Trading with caution due to conflicting signals*\n"
-        
-        message += f"\n#UltimateSignal #{pair_group} #{path}"
-        
-        return message
+            except Exception as e:
+                bot_logger.error(f"❌ {pair_group}: Critical error in entry monitoring loop: {e}")
+                time.sleep(10)
+    
+    def _run_async_main_analysis(self, system):
+        """Run async main analysis in thread"""
+        try:
+            # Create new event loop for this thread
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            # Run the analysis
+            result = loop.run_until_complete(
+                system.run_ultimate_analysis(self.api_key)
+            )
+            
+            loop.close()
+            return result
+            
+        except Exception as e:
+            logger.error(f"❌ Async analysis error: {e}")
+            raise
+    
+    def stop_all(self):
+        """Stop all bots gracefully"""
+        logger.info("🛑 Stopping all bots...")
+        self.shutdown_event.set()
+        self.executor.shutdown(wait=True)
+        logger.info("✅ All bots stopped")
+
+    def _fetch_entry_monitoring_data(self, system):
+        """Fetch entry monitoring data for a system"""
+        try:
+            # Create new event loop for this thread
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            # Run the data fetch
+            result = loop.run_until_complete(
+                system.fetch_entry_monitoring_data(self.api_key)
+            )
+            
+            loop.close()
+            return result
+            
+        except Exception as e:
+            logger.error(f"❌ Error fetching entry monitoring data: {e}")
+            raise
+    
+    def get_status(self):
+        """Get status of all bots"""
+        status = {}
+        for pair_group, system in self.trading_systems.items():
+            if hasattr(system, 'entry_signal_manager'):
+                active_signals = len(system.entry_signal_manager.active_signals)
+                traffic_lights = len(system.entry_signal_manager.traffic_lights)
+                status[pair_group] = {
+                    'active_signals': active_signals,
+                    'traffic_lights': traffic_lights,
+                    'market_data': {inst: list(system.market_data[inst].keys()) 
+                                   for inst in system.instruments if inst in system.market_data}
+                }
+        return status
+
 
 # ================================
-# MAIN EXECUTION
+# MAIN EXECUTION WITH PARALLEL BOTS
 # ================================
 
 async def main():
-    """Main entry point"""
-    logger.info("🛡️ Starting ULTIMATE Multi-Pair SMT Trading System")
+    """Main entry point with parallel execution"""
+    logger.info("🚀 LAUNCHING PARALLEL TRADING BOTS IN 3...2...1...")
     
     api_key = os.getenv('OANDA_API_KEY')
     telegram_token = os.getenv('TELEGRAM_BOT_TOKEN')
@@ -7168,11 +8601,55 @@ async def main():
         return
     
     try:
-        manager = UltimateTradingManager(api_key, telegram_token, telegram_chat_id)
-        await manager.run_ultimate_systems()
+        # Create parallel bot manager
+        bot_manager = ParallelBotManager(api_key, telegram_token, telegram_chat_id)
         
-    except KeyboardInterrupt:
-        logger.info("🛑 System stopped by user")
+        # Start all bots
+        threads = bot_manager.start_all()
+        
+        logger.info(f"✅ All bots started: {len(threads)} threads")
+        
+        # Send startup message
+        startup_msg = f"""
+        🤖 *PARALLEL TRADING BOTS STARTED* 🤖
+        
+        • Running {len(TRADING_PAIRS)} pair groups in parallel
+        • Main analysis: Every 5-minute candle (with 3s delay)
+        • Entry monitoring: Every 1-minute candle (with 3s delay)
+        • Each system runs in separate thread
+        • Entry signals include Fibonacci levels, SL/TP, potential TPs
+        
+        🎯 Systems active: {', '.join(TRADING_PAIRS.keys())}
+                """
+        
+        send_telegram(startup_msg, telegram_token, telegram_chat_id)
+        
+        # Monitor and log status
+        logger.info("📊 Main thread entering monitoring loop")
+        
+        while True:
+            try:
+                # Get status of all bots
+                status = bot_manager.get_status()
+                
+                # Log status
+                for pair_group, stats in status.items():
+                    if stats['active_signals'] > 0:
+                        logger.info(f"📡 {pair_group}: {stats['active_signals']} active signals, {stats['traffic_lights']} traffic lights")
+                
+                # Sleep 30 seconds
+                time.sleep(30)
+                
+            except KeyboardInterrupt:
+                logger.info("🛑 Received keyboard interrupt, shutting down...")
+                break
+            except Exception as e:
+                logger.error(f"❌ Monitoring error: {str(e)}")
+                time.sleep(30)
+        
+        # Stop all bots
+        bot_manager.stop_all()
+        
     except Exception as e:
         logger.error(f"💥 Fatal error: {str(e)}")
         import traceback
