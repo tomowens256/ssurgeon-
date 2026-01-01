@@ -136,8 +136,8 @@ def parse_oanda_time(time_str):
 # FIBONACCI UTILITY FUNCTIONS
 # ========================
 
-def calculate_fibonacci_levels(high_price, low_price, levels=None):
-    """Calculate Fibonacci retracement and extension levels"""
+def calculate_fibonacci_levels(high_price, low_price, levels=None, direction='bearish'):
+    """Calculate Fibonacci retracement and extension levels with direction awareness"""
     if levels is None:
         # Standard Fibonacci levels plus your custom ones
         levels = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0, 1.272, 1.414, 1.618, 2.0, 2.618]
@@ -145,17 +145,33 @@ def calculate_fibonacci_levels(high_price, low_price, levels=None):
     price_range = high_price - low_price
     fib_levels = {}
     
-    for level in levels:
-        if level <= 1.0:  # Retracement
-            price = high_price - (price_range * level)
-        else:  # Extension
-            price = low_price + (price_range * (level - 1.0))
-        fib_levels[level] = price
-    
-    # Add your specific levels
-    fib_levels[0.67] = high_price - (price_range * 0.67)
-    fib_levels[1.25] = low_price + (price_range * 0.25)  # For SL in 0.67-1 zone
-    fib_levels[1.5] = low_price + (price_range * 0.5)   # For SL in 0.5-0.67 zone
+    if direction == 'bearish':
+        # For bearish: 0 = highest_high, 1 = lowest_low
+        for level in levels:
+            if level <= 1.0:  # Retracement
+                price = high_price - (price_range * level)
+            else:  # Extension
+                price = low_price + (price_range * (level - 1.0))
+            fib_levels[level] = price
+        
+        # Add your specific levels
+        fib_levels[0.67] = high_price - (price_range * 0.67)
+        fib_levels[1.25] = low_price + (price_range * 0.25)  # For SL in 0.67-1 zone
+        fib_levels[1.5] = low_price + (price_range * 0.5)   # For SL in 0.5-0.67 zone
+        
+    else:  # bullish
+        # For bullish: 0 = lowest_low, 1 = highest_high
+        for level in levels:
+            if level <= 1.0:  # Retracement
+                price = low_price + (price_range * level)
+            else:  # Extension
+                price = high_price + (price_range * (level - 1.0))
+            fib_levels[level] = price
+        
+        # Add your specific levels
+        fib_levels[0.67] = low_price + (price_range * 0.67)
+        fib_levels[1.25] = high_price - (price_range * 0.25)  # For SL in 0.67-1 zone
+        fib_levels[1.5] = high_price - (price_range * 0.5)   # For SL in 0.5-0.67 zone
     
     return fib_levels
 
