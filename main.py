@@ -6346,14 +6346,33 @@ class UltimateTradingSystem:
                 if tapped:
                     # Check if only ONE asset tapped (HP FVG)
                     is_hp_fvg = self._check_hp_fvg_fix(fvg_idea, fvg_asset)
+                    try:
+                        # Prepare trigger data for hammer scanner
+                        trigger_data = {
+                            'type': 'FVG+SMT',
+                            'direction': fvg_direction,
+                            'instrument': fvg_asset,
+                            'formation_time': fvg_formation_time,
+                            'signal_data': {
+                                'fvg_idea': fvg_idea,
+                                'smt_data': smt_data,
+                                'is_hp_fvg': is_hp_fvg,
+                                'has_psp': has_psp
+                            }
+                        }
+                        
+                        # Trigger hammer scanner
+                        if self.hammer_scanner:
+                            self.hammer_scanner.on_signal_detected(trigger_data)
+                            
+                    except Exception as e:
+                        logger.error(f"Error triggering hammer scanner: {str(e)}")
                     
-                    logger.info(f"✅ FVG+SMT TAP CONFIRMED WITH PSP: {smt_cycle} {smt_data['direction']} "
-                               f"tapped {fvg_timeframe} FVG on {fvg_asset}, HP: {is_hp_fvg}")
-                    
-                    # Send the signal
+                    # Send the signal (existing code)
                     return self._send_fvg_smt_tap_signal(
                         fvg_idea, smt_data, has_psp, is_hp_fvg
                     )
+                    
         
         logger.info(f"🔍 No FVG+SMT setups with PSP found")
         return False
