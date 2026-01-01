@@ -5312,6 +5312,33 @@ class UltimateTradingSystem:
                             
                             # Check PSP
                             has_psp = smt_feature['psp_data'] is not None
+                        if smt_data and has_psp:
+                            # ✅ TRIGGER HAMMER SCANNER (ADD THIS SECTION)
+                            try:
+                                signal_result = self._send_crt_smt_signal(crt_signal, smt_data, has_psp, instrument)
+                                
+                                if signal_result:
+                                    trigger_data = {
+                                        'type': 'CRT+SMT',
+                                        'direction': crt_direction,
+                                        'instrument': instrument,
+                                        'trigger_timeframe': crt_tf,
+                                        'formation_time': datetime.now(NY_TZ),  # CRT is current candle
+                                        'signal_data': {
+                                            'crt_signal': crt_signal,
+                                            'smt_data': smt_data,
+                                            'has_psp': has_psp
+                                        }
+                                    }
+                                    
+                                    if hasattr(self, 'hammer_scanner') and self.hammer_scanner:
+                                        logger.info(f"🔨 Triggering hammer scanner for {instrument}")
+                                        self.hammer_scanner.on_signal_detected(trigger_data)
+                                        
+                            except Exception as e:
+                                logger.error(f"Error triggering hammer scanner: {str(e)}")
+                            
+                            return signal_result
                             
                             logger.info(f"✅ CRT-SMT CONFLUENCE: {crt_tf} CRT + {smt_cycle} SMT "
                                        f"({crt_direction}, PSP: {has_psp})")
