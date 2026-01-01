@@ -325,6 +325,82 @@ def fetch_candles(instrument, timeframe, count=100, api_key=None, since=None):
     logger.error(f"Failed to fetch candles for {instrument} after {MAX_RETRIES} attempts")
     return pd.DataFrame()
 
+# ========================
+# HUMOR GENERATOR FOR SIGNALS
+# ========================
+
+def get_humorous_phrase(direction, pattern_type):
+    """Generate humorous phrases for signals"""
+    import random
+    
+    bullish_phrases = [
+        "Yoo bro, bulls are charging! 🐂",
+        "Ain't no stopping this train! 🚂",
+        "To the moon we go! 🚀",
+        "Green candles incoming! 💚",
+        "Bulls be like: 'Hold my beer' 🍻",
+        "Wake up sleeping bulls, dinner is served! 🍽️",
+        "This setup is smoother than butter on a bald monkey! 🐒🧈",
+        "Bulls are back in town! 🏙️🐂",
+        "Time to ride the lightning! ⚡",
+        "If this was a movie, we'd be buying popcorn right now! 🍿"
+    ]
+    
+    bearish_phrases = [
+        "Yoo bro, bears are waking up! 🐻",
+        "Gravity is about to kick in! ⬇️",
+        "Time to short the hopium! 📉",
+        "Red alert! Bears are hungry! 🚨",
+        "Bears be like: 'Not on my watch' ⌚🐻",
+        "Pack your bags bears, it's hunting season! 🎒",
+        "This drop gonna be steeper than my ex's standards! 📉",
+        "Bears are throwing a party and everyone's invited! 🎉",
+        "Get ready for the slide! 🛝",
+        "If bears had a DJ, they'd be dropping the bass! 🎵"
+    ]
+    
+    if direction == 'bullish':
+        phrases = bullish_phrases
+    else:
+        phrases = bearish_phrases
+    
+    # Add pattern-specific humor
+    if pattern_type == 'FVG+SMT':
+        phrases.append("FVG + SMT = Profit Party! 🎊")
+    elif pattern_type == 'SD+SMT':
+        phrases.append("Supply/Demand zones never looked so good! 🗺️")
+    elif pattern_type == 'CRT+SMT':
+        phrases.append("CRT confluence? More like CRT confetti! 🎉")
+    
+    return random.choice(phrases)
+
+def get_hammer_humor(direction, timeframe):
+    """Humorous phrases for hammer signals"""
+    hammer_jokes = [
+        "Hammer time! Can't touch this! 🎵🔨",
+        "When life gives you hammers, make profits! 🔨💰",
+        "This hammer's hitting harder than my morning coffee! ☕🔨",
+        "Not just any hammer - this is the Mjolnir of trading! ⚡🔨",
+        "If this hammer was any better, it would have its own reality show! 📺🔨",
+        "Warning: This hammer may cause profit explosions! 💥🔨",
+        "Hammer so fresh, it came with a receipt! 🧾🔨",
+        "This setup is hammerific! 🎯🔨",
+        "When you see this hammer, you know what time it is... Profit o'clock! ⏰🔨",
+        "Hammer detected: Proceed to profit extraction! 🏗️🔨"
+    ]
+    
+    if timeframe == 'M1':
+        hammer_jokes.append("1-minute hammer? That's quicker than my coffee break! ⚡🔨")
+    elif timeframe == 'M3':
+        hammer_jokes.append("3-minute hammer - perfect for microwave traders! 🍿🔨")
+    elif timeframe == 'M5':
+        hammer_jokes.append("5-minute hammer: Faster than fast food profits! 🍔🔨")
+    elif timeframe == 'M15':
+        hammer_jokes.append("15-minute hammer: Take a breather, but not too long! 😮‍💨🔨")
+    
+    import random
+    return random.choice(hammer_jokes)
+
 # ================================
 # ENHANCED TIMING MANAGER
 # ================================
