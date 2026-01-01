@@ -4525,36 +4525,64 @@ class HammerPatternScanner:
             return ['M5', 'M15']  # Safe default
     
     def send_hammer_signal(self, instrument, timeframe, direction, trigger_type, 
-                          entry_price, sl_price, tp_price, sl_distance, 
-                          tp_distance, rr_ratio, fib_zone, hammer_data, 
-                          fib_levels, formation_time):
-        """Send hammer entry signal to Telegram"""
+                      trigger_timeframe, entry_price, sl_price, tp_price, sl_distance, 
+                      tp_distance, rr_ratio, fib_zone, hammer_data, fib_levels, 
+                      formation_time, potential_level):
+        """Send hammer entry signal to Telegram with humor"""
         try:
             direction_emoji = "🔴" if direction == 'bearish' else "🟢"
             direction_text = "SELL" if direction == 'bearish' else "BUY"
             
-            message = f"🔨 *HAMMER ENTRY SIGNAL*\n\n"
-            message += f"*Trigger:* {trigger_type}\n"
-            message += f"*Instrument:* {instrument}\n"
-            message += f"*Timeframe:* {timeframe}\n"
-            message += f"*Direction:* {direction_text} {direction_emoji}\n"
-            message += f"*Entry:* {entry_price:.5f}\n"
-            message += f"*SL:* {sl_price:.5f} ({sl_distance:.1f} pips)\n"
-            message += f"*TP:* {tp_price:.5f} ({tp_distance:.1f} pips)\n"
-            message += f"*RR:* 1:{rr_ratio:.1f}\n"
-            message += f"*Fibonacci Zone:* {fib_zone}\n"
-            message += f"*Hammer Wick:* Upper={hammer_data['upper_wick_ratio']:.2f}, Lower={hammer_data['lower_wick_ratio']:.2f}\n"
-            message += f"*Entry Time:* {datetime.now(NY_TZ).strftime('%H:%M:%S')}\n"
-            message += f"*Trigger Time:* {formation_time.strftime('%Y-%m-%d %H:%M')}\n\n"
+            # Get humorous phrases
+            trigger_humor = get_humorous_phrase(direction, trigger_type)
+            hammer_humor = get_hammer_humor(direction, timeframe)
             
-            # Add Fibonacci levels context
-            message += f"*Fibonacci Levels:*\n"
-            message += f"• 0.0: {fib_levels[0]:.5f}\n"
-            message += f"• 0.5: {fib_levels[0.5]:.5f}\n"
-            message += f"• 0.67: {fib_levels[0.67]:.5f}\n"
-            message += f"• 1.0: {fib_levels[1.0]:.5f}\n\n"
+            # Build the message with humor
+            message = f"🔨 *HAMMER TIME!* 🔨\n\n"
+            message += f"{trigger_humor}\n"
+            message += f"{hammer_humor}\n\n"
             
-            message += f"#HammerEntry #{instrument.replace('_', '')} #{trigger_type.replace('+', '_')}"
+            message += f"*Yoo bro, check this setup!*\n\n"
+            
+            message += f"*📊 TRIGGER DETAILS:*\n"
+            message += f"• Type: {trigger_type}\n"
+            message += f"• Instrument: {instrument}\n"
+            message += f"• Trigger TF: {trigger_timeframe}\n"
+            message += f"• Direction: {direction_text} {direction_emoji}\n\n"
+            
+            message += f"*🎯 HAMMER ENTRY:*\n"
+            message += f"• Timeframe: {timeframe}\n"
+            message += f"• Entry Price: {entry_price:.5f}\n"
+            message += f"• Stop Loss: {sl_price:.5f} ({sl_distance:.1f} pips)\n"
+            message += f"• Take Profit: {tp_price:.5f} ({tp_distance:.1f} pips)\n"
+            message += f"• Risk/Reward: 1:{rr_ratio:.1f}\n"
+            message += f"• Zone: {fib_zone}\n\n"
+            
+            message += f"*🔧 HAMMER STATS:*\n"
+            message += f"• Upper Wick: {hammer_data['upper_wick_ratio']:.2f}\n"
+            message += f"• Lower Wick: {hammer_data['lower_wick_ratio']:.2f}\n"
+            message += f"• Volume: {hammer_data['volume']:,}\n\n"
+            
+            if trigger_type != 'CRT+SMT':
+                message += f"*📈 FIBONACCI LEVELS:*\n"
+                message += f"• 0.0: {fib_levels[0]:.5f}\n"
+                message += f"• 0.5: {fib_levels[0.5]:.5f}\n"
+                message += f"• 0.67: {fib_levels[0.67]:.5f}\n"
+                message += f"• 1.0: {fib_levels[1.0]:.5f}\n\n"
+            
+            message += f"*🎯 POTENTIAL LEVEL:*\n"
+            if direction == 'bearish':
+                message += f"• Support: {potential_level:.5f}\n"
+            else:
+                message += f"• Resistance: {potential_level:.5f}\n\n"
+            
+            message += f"*⏰ TIMING:*\n"
+            message += f"• Entry Time: {datetime.now(NY_TZ).strftime('%H:%M:%S')}\n"
+            message += f"• Trigger Time: {formation_time.strftime('%Y-%m-%d %H:%M')}\n\n"
+            
+            message += f"*💭 REMEMBER:* This ain't financial advice, just two bros spotting patterns! 🤙\n\n"
+            
+            message += f"#{instrument.replace('_', '')} #{trigger_type.replace('+', '_')} #{timeframe}Hammer #{direction_text}Signal"
             
             success = send_telegram(
                 message,
@@ -4564,6 +4592,7 @@ class HammerPatternScanner:
             
             if success:
                 self.logger.info(f"📤 Hammer entry signal sent for {instrument} {timeframe}")
+                self.logger.info(f"🎭 Humor injected: {hammer_humor}")
             else:
                 self.logger.error(f"❌ Failed to send hammer signal")
                 
