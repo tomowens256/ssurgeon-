@@ -4326,33 +4326,37 @@ class HammerPatternScanner:
             return False, 0, 0
     
     def scan_fibonacci_hammer(self, trigger_data):
-        """Main scanning logic for hammer patterns in Fibonacci zones"""
+        """Main scanning logic for hammer patterns with timeframe alignment"""
         try:
             self.logger.info(f"🔨 Starting hammer scan for trigger: {trigger_data.get('type')}")
             
             # Extract trigger information
             instrument = trigger_data.get('instrument')
             direction = trigger_data.get('direction')
+            trigger_timeframe = trigger_data.get('trigger_timeframe')
             formation_time = trigger_data.get('formation_time')
             trigger_type = trigger_data.get('type')
             
-            if not all([instrument, direction, formation_time]):
+            if not all([instrument, direction, trigger_timeframe, formation_time]):
                 self.logger.error("Missing required trigger data")
-                return
+                return False
             
             # Check cooldown
             if self._is_in_cooldown(instrument):
                 self.logger.info(f"⏳ {instrument} is in cooldown, skipping hammer scan")
-                return
+                return False
             
-            # Get timeframes to scan
-            timeframes = self.timeframe_config.get(instrument, self.timeframe_config['default'])
+            # Get appropriate timeframes based on alignment rules
+            timeframes = self.get_aligned_timeframes(instrument, trigger_type, trigger_timeframe)
+            self.logger.info(f"🎯 Scanning {instrument} on timeframes: {timeframes}")
             
             # Fetch data since formation time
             data_by_tf = {}
             for tf in timeframes:
-                # We need more data for Fibonacci calculation
-                df = fetch_candles(instrument, tf, count=200, api_key=self.credentials['oanda_api_key'])
+                # We need enough data for Fibonacci calculation
+                count = 100 if tf in ['M1', 'M3', 'M5'] else 50
+                df = fetch_candles(instrument, tf, count=count, api_key=self.credentials['oanda_api_key'])
+                
                 if not df.empty:
                     # Filter data from formation time onward
                     df = df[df['time'] >= formation_time]
@@ -4362,7 +4366,7 @@ class HammerPatternScanner:
             
             if not data_by_tf:
                 self.logger.warning(f"No data available for {instrument}")
-                return
+                return False
             
             # Calculate Fibonacci levels from formation time to now
             all_highs = []
@@ -4376,7 +4380,7 @@ class HammerPatternScanner:
             
             if not highest_high or not lowest_low:
                 self.logger.warning("Could not determine price extremes")
-                return
+                return False
             
             self.logger.info(f"📈 Fibonacci range: Low={lowest_low:.5f}, High={highest_high:.5f}")
             
@@ -4395,15 +4399,21 @@ class HammerPatternScanner:
                 if not is_hammer:
                     continue
                 
-                # Check if hammer is in valid Fibonacci zone (0.5-0.67 or 0.67-1)
-                hammer_close = prev_candle['close']
-                zone_name, zone_low, zone_high = find_fibonacci_zone(hammer_close, fib_levels)
-                
-                if not zone_name or zone_name == "0-0.5":
-                    self.logger.info(f"⚠️ Hammer in {instrument} {tf} not in valid Fibonacci zone ({zone_name})")
-                    continue
-                
-                self.logger.info(f"✅ HAMMER FOUND in {instrument} {tf} at zone {zone_name}")
+                # For CRT+SMT, we can scan anywhere initially (as you mentioned)
+                if trigger_type == 'CRT+SMT':
+                    # Just log that we found a hammer in CRT context
+                    self.logger.info(f"✅ HAMMER FOUND in {instrument} {tf} (CRT context)")
+                    zone_name = "CRT_ZONE"  # Placeholder
+                else:
+                    # Check if hammer is in valid Fibonacci zone (0.5-0.67 or 0.67-1)
+                    hammer_close = prev_candle['close']
+                    zone_name, zone_low, zone_high = find_fibonacci_zone(hammer_close, fib_levels)
+                    
+                    if not zone_name or zone_name == "0-0.5":
+                        self.logger.info(f"⚠️ Hammer in {instrument} {tf} not in valid Fibonacci zone ({zone_name})")
+                        continue
+                    
+                    self.logger.info(f"✅ HAMMER FOUND in {instrument} {tf} at zone {zone_name}")
                 
                 # Get current candle for entry
                 current_candle = df.iloc[-1]
@@ -4416,7 +4426,7 @@ class HammerPatternScanner:
                 
                 if direction == 'bearish':
                     # For bearish hammer, SL above hammer high
-                    if zone_name == "0.67-1":
+                    if zone_name == "0.67-1" or trigger_type == 'CRT+SMT':
                         sl_price = hammer_high + (hammer_range * 0.25)  # 1.25 extension
                     else:  # 0.5-0.67
                         sl_price = hammer_high + (hammer_range * 0.5)   # 1.5 extension
@@ -4429,7 +4439,7 @@ class HammerPatternScanner:
                     
                 else:  # bullish
                     # For bullish hammer, SL below hammer low
-                    if zone_name == "0.67-1":
+                    if zone_name == "0.67-1" or trigger_type == 'CRT+SMT':
                         sl_price = hammer_low - (hammer_range * 0.25)  # 1.25 extension
                     else:  # 0.5-0.67
                         sl_price = hammer_low - (hammer_range * 0.5)   # 1.5 extension
@@ -4441,28 +4451,26 @@ class HammerPatternScanner:
                     potential_resistance = highest_high
                 
                 # Calculate distances in pips
-                if 'USD' in instrument:
-                    pip_multiplier = 10000  # For XXX/USD pairs
-                else:
-                    pip_multiplier = 100  # For others
+                pip_multiplier = 10000 if 'USD' in instrument else 100
                 
                 sl_distance = abs(entry_price - sl_price) * pip_multiplier
                 tp_distance = abs(tp_price - entry_price) * pip_multiplier
                 rr_ratio = tp_distance / sl_distance if sl_distance > 0 else 0
                 
-                # Send hammer entry signal
+                # Send hammer entry signal with humor
                 self.send_hammer_signal(
                     instrument=instrument,
                     timeframe=tf,
                     direction=direction,
                     trigger_type=trigger_type,
+                    trigger_timeframe=trigger_timeframe,
                     entry_price=entry_price,
                     sl_price=sl_price,
                     tp_price=tp_price,
                     sl_distance=sl_distance,
                     tp_distance=tp_distance,
                     rr_ratio=rr_ratio,
-                    fib_zone=zone_name,
+                    fib_zone=zone_name if trigger_type != 'CRT+SMT' else "CRT Zone",
                     hammer_data={
                         'high': hammer_high,
                         'low': hammer_low,
@@ -4472,7 +4480,8 @@ class HammerPatternScanner:
                         'volume': prev_candle.get('volume', 0)
                     },
                     fib_levels=fib_levels,
-                    formation_time=formation_time
+                    formation_time=formation_time,
+                    potential_level=potential_support if direction == 'bearish' else potential_resistance
                 )
                 
                 # Set cooldown for this instrument
@@ -4485,6 +4494,35 @@ class HammerPatternScanner:
         except Exception as e:
             self.logger.error(f"❌ Error in hammer scan: {str(e)}", exc_info=True)
             return False
+    
+    def get_aligned_timeframes(self, instrument, trigger_type, trigger_tf):
+        """Get appropriate hammer timeframes based on trigger timeframe"""
+        try:
+            # Get the right config for this instrument
+            if instrument == 'XAU_USD':
+                config = self.timeframe_alignment['XAU_USD']
+            else:
+                config = self.timeframe_alignment['default']
+            
+            # Get the mapping for this trigger type
+            trigger_mapping = config.get(trigger_type, {})
+            
+            # Get the timeframes for this trigger timeframe
+            timeframes = trigger_mapping.get(trigger_tf, [])
+            
+            # Fallback to default if no mapping found
+            if not timeframes:
+                self.logger.warning(f"No timeframe mapping for {trigger_type} {trigger_tf}, using default")
+                if instrument == 'XAU_USD':
+                    timeframes = ['M3', 'M5', 'M15']
+                else:
+                    timeframes = ['M5', 'M15']
+            
+            return timeframes
+            
+        except Exception as e:
+            self.logger.error(f"Error getting aligned timeframes: {str(e)}")
+            return ['M5', 'M15']  # Safe default
     
     def send_hammer_signal(self, instrument, timeframe, direction, trigger_type, 
                           entry_price, sl_price, tp_price, sl_distance, 
