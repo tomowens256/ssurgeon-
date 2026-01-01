@@ -5812,7 +5812,7 @@ class UltimateTradingSystem:
         """Find Supply/Demand zones where SMT's SECOND SWING traded in the zone - USING FEATUREBOX ZONES"""
         logger.info(f"🔍 SCANNING: Supply/Demand + SMT Tap - USING FEATUREBOX ZONES")
         
-        # Timeframe mapping: SD Zone -> allowed SMT cycles
+        # Timeframe mapping: SD Zone -> allowed SMT cycless
         sd_to_smt_cycles = {
             'H4': ['weekly', 'daily','monthly'],      # H4 Zone → Weekly (H1) or Daily (M15) SMTs
             'H1': ['weekly', 'daily','90min'],      # H1 Zone → Weekly (H1) or Daily (M15) SMT  
