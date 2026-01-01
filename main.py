@@ -4613,6 +4613,16 @@ class UltimateTradingSystem:
                 'H1': ['daily'], 
                 'M15': ['daily', '90min']
             }
+        # Initialize Hammer Pattern Scanner
+        hammer_credentials = {
+            'telegram_token': telegram_token,
+            'telegram_chat_id': telegram_chat_id,
+            'oanda_api_key': os.getenv('OANDA_API_KEY')
+        }
+        self.hammer_scanner = HammerPatternScanner(hammer_credentials)
+        self.hammer_scanner.start()
+        
+        logger.info(f"🔨 Hammer Pattern Scanner initialized for {pair_group}")
         
     def get_sleep_time(self):
         """Use smart timing instead of fixed intervals"""
