@@ -4231,6 +4231,47 @@ class HammerPatternScanner:
         
         # Fibonacci levels for scanning
         self.fib_levels = [0, 0.5, 0.67, 1.0]
+        # Timeframe alignment: Trigger TF -> Hammer TFs to scan
+        self.timeframe_alignment = {
+            # For Gold (XAU_USD) specific
+            'XAU_USD': {
+                'FVG+SMT': {
+                    'M15': ['M1', 'M3', 'M5'],  # 15min FVG+SMT → scan 1,3,5 min hammers
+                    'H1': ['M5', 'M15'],        # 1hr FVG+SMT → scan 5,15 min hammers
+                    'H4': ['M15', 'M30']        # 4hr FVG+SMT → scan 15,30 min hammers
+                },
+                'SD+SMT': {
+                    'M15': ['M1', 'M3', 'M5'],
+                    'H1': ['M5', 'M15'],
+                    'H4': ['M15', 'M30'],
+                    'D': ['M30', 'H1'],
+                    'W': ['H1', 'H4']
+                },
+                'CRT+SMT': {
+                    'H1': ['M5', 'M15'],  # 1hr CRT+SMT → scan 5,15 min hammers
+                    'H4': ['M15', 'M30']  # 4hr CRT+SMT → scan 15,30 min hammers
+                }
+            },
+            # Default for other pairs
+            'default': {
+                'FVG+SMT': {
+                    'M15': ['M3', 'M5'],   # No M1 for non-Gold
+                    'H1': ['M5', 'M15'],
+                    'H4': ['M15', 'M30']
+                },
+                'SD+SMT': {
+                    'M15': ['M3', 'M5'],
+                    'H1': ['M5', 'M15'],
+                    'H4': ['M15', 'M30'],
+                    'D': ['M30', 'H1'],
+                    'W': ['H1', 'H4']
+                },
+                'CRT+SMT': {
+                    'H1': ['M5', 'M15'],
+                    'H4': ['M15', 'M30']
+                }
+            }
+        }
         
         self.logger.info(f"🔨 Hammer Pattern Scanner initialized for {len(self.pair_groups)} pair groups")
     
