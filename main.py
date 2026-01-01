@@ -7616,7 +7616,7 @@ class UltimateTradingManager:
 
 async def main():
     """Main entry point"""
-    logger.info("🛡️ Starting ULTIMATE Multi-Pair SMT Trading System")
+    logger.info("HEY TOM'S SNIPER JUST WOKE UP")
     
     api_key = os.getenv('OANDA_API_KEY')
     telegram_token = os.getenv('TELEGRAM_BOT_TOKEN')
@@ -7629,10 +7629,16 @@ async def main():
     
     try:
         manager = UltimateTradingManager(api_key, telegram_token, telegram_chat_id)
+        
+        
         await manager.run_ultimate_systems()
         
     except KeyboardInterrupt:
         logger.info("🛑 System stopped by user")
+        # Stop all hammer scanners
+        for pair_group, system in manager.trading_systems.items():
+            if hasattr(system, 'hammer_scanner'):
+                system.hammer_scanner.stop()
     except Exception as e:
         logger.error(f"💥 Fatal error: {str(e)}")
         import traceback
