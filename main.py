@@ -5750,6 +5750,27 @@ class UltimateTradingSystem:
                 if tapped:
                     # Check for High Probability: Zone within higher TF zone of same direction
                     is_hp_zone = self._check_hp_sd_zone(zone, zone_direction)
+                    try:
+                        # Prepare trigger data for hammer scanner
+                        trigger_data = {
+                            'type': 'FVG+SMT',
+                            'direction': fvg_direction,
+                            'instrument': fvg_asset,
+                            'formation_time': fvg_formation_time,
+                            'signal_data': {
+                                'fvg_idea': fvg_idea,
+                                'smt_data': smt_data,
+                                'is_hp_fvg': is_hp_fvg,
+                                'has_psp': has_psp
+                            }
+                        }
+                        
+                        # Trigger hammer scanner
+                        if self.hammer_scanner:
+                            self.hammer_scanner.on_signal_detected(trigger_data)
+                            
+                    except Exception as e:
+                        logger.error(f"Error triggering hammer scanner: {str(e)}")
                     
                     logger.info(f"✅ SD+SMT TAP CONFIRMED: {smt_cycle} {smt_data['direction']} "
                                f"tapped {zone_timeframe} {zone_type} on {zone_asset}")
