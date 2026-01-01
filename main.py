@@ -132,6 +132,73 @@ def parse_oanda_time(time_str):
         logger.error(f"Error parsing time {time_str}: {str(e)}")
         return datetime.now(NY_TZ)
 
+# ========================
+# FIBONACCI UTILITY FUNCTIONS
+# ========================
+
+def calculate_fibonacci_levels(high_price, low_price, levels=None):
+    """Calculate Fibonacci retracement and extension levels"""
+    if levels is None:
+        # Standard Fibonacci levels plus your custom ones
+        levels = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0, 1.272, 1.414, 1.618, 2.0, 2.618]
+    
+    price_range = high_price - low_price
+    fib_levels = {}
+    
+    for level in levels:
+        if level <= 1.0:  # Retracement
+            price = high_price - (price_range * level)
+        else:  # Extension
+            price = low_price + (price_range * (level - 1.0))
+        fib_levels[level] = price
+    
+    # Add your specific levels
+    fib_levels[0.67] = high_price - (price_range * 0.67)
+    fib_levels[1.25] = low_price + (price_range * 0.25)  # For SL in 0.67-1 zone
+    fib_levels[1.5] = low_price + (price_range * 0.5)   # For SL in 0.5-0.67 zone
+    
+    return fib_levels
+
+def get_price_at_fib_level(high_price, low_price, fib_level):
+    """Get price at specific Fibonacci level"""
+    price_range = high_price - low_price
+    if fib_level <= 1.0:
+        return high_price - (price_range * fib_level)
+    else:
+        return low_price + (price_range * (fib_level - 1.0))
+
+def find_fibonacci_zone(price, fib_levels):
+    """Determine which Fibonacci zone a price is in"""
+    zones = [
+        (0.67, 1.0, "0.67-1"),
+        (0.5, 0.67, "0.5-0.67"),
+        (0, 0.5, "0-0.5")
+    ]
+    
+    for low_level, high_level, zone_name in zones:
+        if low_level in fib_levels and high_level in fib_levels:
+            zone_low = fib_levels[high_level]  # Note: reversed because Fibonacci goes from high to low
+            zone_high = fib_levels[low_level]
+            if zone_low <= price <= zone_high:
+                return zone_name, fib_levels[low_level], fib_levels[high_level]
+    
+    return None, None, None
+
+def get_extreme_prices(df, since_time=None):
+    """Get highest high and lowest low from data since specific time"""
+    if since_time:
+        filtered_df = df[df['time'] >= since_time]
+    else:
+        filtered_df = df
+    
+    if filtered_df.empty:
+        return None, None
+    
+    highest_high = filtered_df['high'].max()
+    lowest_low = filtered_df['low'].min()
+    
+    return highest_high, lowest_low
+
 def send_telegram(message, token=None, chat_id=None):
     """Send formatted message to Telegram"""
     if not token or not chat_id:
