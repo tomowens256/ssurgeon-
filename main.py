@@ -4203,6 +4203,349 @@ class SupplyDemandDetector:
         all_zones.sort(key=lambda x: timeframe_order.get(x['timeframe'], 0), reverse=True)
         
         return all_zones
+
+# ========================
+# HAMMER PATTERN SCANNER - CONCURRENT ENTRY SYSTEM
+# ========================
+
+class HammerPatternScanner:
+    """Concurrent hammer pattern scanner that activates on main system signals"""
+    
+    def __init__(self, credentials, pair_groups=None):
+        self.credentials = credentials
+        self.pair_groups = pair_groups or list(TRADING_PAIRS.keys())
+        self.running = False
+        self.scanner_thread = None
+        self.active_scans = {}  # Track active scans by signal key
+        self.logger = logging.getLogger('HammerScanner')
+        
+        # Cooldown tracking
+        self.cooldown_until = {}  # instrument -> timestamp when cooldown ends
+        self.cooldown_minutes = 30  # Don't scan same instrument for 30 minutes
+        
+        # Timeframes to scan for each instrument type
+        self.timeframe_config = {
+            'XAU_USD': ['M1', 'M3', 'M5', 'M15'],
+            'default': ['M3', 'M5', 'M15']
+        }
+        
+        # Fibonacci levels for scanning
+        self.fib_levels = [0, 0.5, 0.67, 1.0]
+        
+        self.logger.info(f"🔨 Hammer Pattern Scanner initialized for {len(self.pair_groups)} pair groups")
+    
+    def calculate_next_candle_time(self, timeframe):
+        """Calculate when next candle will open for given timeframe"""
+        now = datetime.now(NY_TZ)
+        
+        if timeframe.startswith('M'):
+            minutes = int(timeframe[1:])
+            minutes_past = now.minute % minutes
+            next_minute = now.minute - minutes_past + minutes
+            if next_minute >= 60:
+                next_time = now.replace(hour=now.hour + 1, minute=0, second=0, microsecond=0)
+            else:
+                next_time = now.replace(minute=next_minute, second=0, microsecond=0)
+        else:
+            # For hourly or larger timeframes (not used for hammer scanning)
+            next_time = now + timedelta(minutes=1)
+        
+        # Add 5 seconds for data to be available
+        next_time += timedelta(seconds=5)
+        
+        return next_time
+    
+    def is_hammer_candle(self, candle, direction):
+        """Check if candle is a hammer based on wick ratios"""
+        try:
+            candle_range = candle['high'] - candle['low']
+            if candle_range == 0:
+                return False, 0, 0
+            
+            body_size = abs(candle['close'] - candle['open'])
+            upper_wick = candle['high'] - max(candle['close'], candle['open'])
+            lower_wick = min(candle['close'], candle['open']) - candle['low']
+            
+            upper_wick_ratio = upper_wick / candle_range
+            lower_wick_ratio = lower_wick / candle_range
+            
+            if direction == 'bearish':
+                # Bearish hammer: Upper wick > 50% of range
+                if upper_wick_ratio > 0.5 and lower_wick_ratio < 0.3:
+                    return True, upper_wick_ratio, lower_wick_ratio
+            elif direction == 'bullish':
+                # Bullish hammer: Lower wick > 50% of range
+                if lower_wick_ratio > 0.5 and upper_wick_ratio < 0.3:
+                    return True, upper_wick_ratio, lower_wick_ratio
+            
+            return False, upper_wick_ratio, lower_wick_ratio
+            
+        except Exception as e:
+            self.logger.error(f"Error checking hammer: {str(e)}")
+            return False, 0, 0
+    
+    def scan_fibonacci_hammer(self, trigger_data):
+        """Main scanning logic for hammer patterns in Fibonacci zones"""
+        try:
+            self.logger.info(f"🔨 Starting hammer scan for trigger: {trigger_data.get('type')}")
+            
+            # Extract trigger information
+            instrument = trigger_data.get('instrument')
+            direction = trigger_data.get('direction')
+            formation_time = trigger_data.get('formation_time')
+            trigger_type = trigger_data.get('type')
+            
+            if not all([instrument, direction, formation_time]):
+                self.logger.error("Missing required trigger data")
+                return
+            
+            # Check cooldown
+            if self._is_in_cooldown(instrument):
+                self.logger.info(f"⏳ {instrument} is in cooldown, skipping hammer scan")
+                return
+            
+            # Get timeframes to scan
+            timeframes = self.timeframe_config.get(instrument, self.timeframe_config['default'])
+            
+            # Fetch data since formation time
+            data_by_tf = {}
+            for tf in timeframes:
+                # We need more data for Fibonacci calculation
+                df = fetch_candles(instrument, tf, count=200, api_key=self.credentials['oanda_api_key'])
+                if not df.empty:
+                    # Filter data from formation time onward
+                    df = df[df['time'] >= formation_time]
+                    if not df.empty:
+                        data_by_tf[tf] = df
+                        self.logger.info(f"📊 {instrument} {tf}: {len(df)} candles since {formation_time}")
+            
+            if not data_by_tf:
+                self.logger.warning(f"No data available for {instrument}")
+                return
+            
+            # Calculate Fibonacci levels from formation time to now
+            all_highs = []
+            all_lows = []
+            for df in data_by_tf.values():
+                all_highs.append(df['high'].max())
+                all_lows.append(df['low'].min())
+            
+            highest_high = max(all_highs) if all_highs else None
+            lowest_low = min(all_lows) if all_lows else None
+            
+            if not highest_high or not lowest_low:
+                self.logger.warning("Could not determine price extremes")
+                return
+            
+            self.logger.info(f"📈 Fibonacci range: Low={lowest_low:.5f}, High={highest_high:.5f}")
+            
+            # Calculate Fibonacci levels
+            fib_levels = calculate_fibonacci_levels(highest_high, lowest_low, levels=self.fib_levels)
+            
+            # Scan each timeframe for hammers
+            for tf, df in data_by_tf.items():
+                if len(df) < 2:
+                    continue
+                
+                # Check previous candle (index -2) for hammer
+                prev_candle = df.iloc[-2]
+                is_hammer, upper_wick_ratio, lower_wick_ratio = self.is_hammer_candle(prev_candle, direction)
+                
+                if not is_hammer:
+                    continue
+                
+                # Check if hammer is in valid Fibonacci zone (0.5-0.67 or 0.67-1)
+                hammer_close = prev_candle['close']
+                zone_name, zone_low, zone_high = find_fibonacci_zone(hammer_close, fib_levels)
+                
+                if not zone_name or zone_name == "0-0.5":
+                    self.logger.info(f"⚠️ Hammer in {instrument} {tf} not in valid Fibonacci zone ({zone_name})")
+                    continue
+                
+                self.logger.info(f"✅ HAMMER FOUND in {instrument} {tf} at zone {zone_name}")
+                
+                # Get current candle for entry
+                current_candle = df.iloc[-1]
+                entry_price = current_candle['open']
+                
+                # Calculate SL based on Fibonacci extension of hammer range
+                hammer_high = prev_candle['high']
+                hammer_low = prev_candle['low']
+                hammer_range = hammer_high - hammer_low
+                
+                if direction == 'bearish':
+                    # For bearish hammer, SL above hammer high
+                    if zone_name == "0.67-1":
+                        sl_price = hammer_high + (hammer_range * 0.25)  # 1.25 extension
+                    else:  # 0.5-0.67
+                        sl_price = hammer_high + (hammer_range * 0.5)   # 1.5 extension
+                    
+                    risk = sl_price - entry_price
+                    tp_price = entry_price - (risk * 4)  # 1:4 RR
+                    
+                    # Potential support level (lowest point in sliced data)
+                    potential_support = lowest_low
+                    
+                else:  # bullish
+                    # For bullish hammer, SL below hammer low
+                    if zone_name == "0.67-1":
+                        sl_price = hammer_low - (hammer_range * 0.25)  # 1.25 extension
+                    else:  # 0.5-0.67
+                        sl_price = hammer_low - (hammer_range * 0.5)   # 1.5 extension
+                    
+                    risk = entry_price - sl_price
+                    tp_price = entry_price + (risk * 4)  # 1:4 RR
+                    
+                    # Potential resistance level (highest point in sliced data)
+                    potential_resistance = highest_high
+                
+                # Calculate distances in pips
+                if 'USD' in instrument:
+                    pip_multiplier = 10000  # For XXX/USD pairs
+                else:
+                    pip_multiplier = 100  # For others
+                
+                sl_distance = abs(entry_price - sl_price) * pip_multiplier
+                tp_distance = abs(tp_price - entry_price) * pip_multiplier
+                rr_ratio = tp_distance / sl_distance if sl_distance > 0 else 0
+                
+                # Send hammer entry signal
+                self.send_hammer_signal(
+                    instrument=instrument,
+                    timeframe=tf,
+                    direction=direction,
+                    trigger_type=trigger_type,
+                    entry_price=entry_price,
+                    sl_price=sl_price,
+                    tp_price=tp_price,
+                    sl_distance=sl_distance,
+                    tp_distance=tp_distance,
+                    rr_ratio=rr_ratio,
+                    fib_zone=zone_name,
+                    hammer_data={
+                        'high': hammer_high,
+                        'low': hammer_low,
+                        'close': hammer_close,
+                        'upper_wick_ratio': upper_wick_ratio,
+                        'lower_wick_ratio': lower_wick_ratio,
+                        'volume': prev_candle.get('volume', 0)
+                    },
+                    fib_levels=fib_levels,
+                    formation_time=formation_time
+                )
+                
+                # Set cooldown for this instrument
+                self._set_cooldown(instrument)
+                return True  # Found hammer, stop scanning
+            
+            self.logger.info(f"🔍 No valid hammers found for {instrument}")
+            return False
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error in hammer scan: {str(e)}", exc_info=True)
+            return False
+    
+    def send_hammer_signal(self, instrument, timeframe, direction, trigger_type, 
+                          entry_price, sl_price, tp_price, sl_distance, 
+                          tp_distance, rr_ratio, fib_zone, hammer_data, 
+                          fib_levels, formation_time):
+        """Send hammer entry signal to Telegram"""
+        try:
+            direction_emoji = "🔴" if direction == 'bearish' else "🟢"
+            direction_text = "SELL" if direction == 'bearish' else "BUY"
+            
+            message = f"🔨 *HAMMER ENTRY SIGNAL*\n\n"
+            message += f"*Trigger:* {trigger_type}\n"
+            message += f"*Instrument:* {instrument}\n"
+            message += f"*Timeframe:* {timeframe}\n"
+            message += f"*Direction:* {direction_text} {direction_emoji}\n"
+            message += f"*Entry:* {entry_price:.5f}\n"
+            message += f"*SL:* {sl_price:.5f} ({sl_distance:.1f} pips)\n"
+            message += f"*TP:* {tp_price:.5f} ({tp_distance:.1f} pips)\n"
+            message += f"*RR:* 1:{rr_ratio:.1f}\n"
+            message += f"*Fibonacci Zone:* {fib_zone}\n"
+            message += f"*Hammer Wick:* Upper={hammer_data['upper_wick_ratio']:.2f}, Lower={hammer_data['lower_wick_ratio']:.2f}\n"
+            message += f"*Entry Time:* {datetime.now(NY_TZ).strftime('%H:%M:%S')}\n"
+            message += f"*Trigger Time:* {formation_time.strftime('%Y-%m-%d %H:%M')}\n\n"
+            
+            # Add Fibonacci levels context
+            message += f"*Fibonacci Levels:*\n"
+            message += f"• 0.0: {fib_levels[0]:.5f}\n"
+            message += f"• 0.5: {fib_levels[0.5]:.5f}\n"
+            message += f"• 0.67: {fib_levels[0.67]:.5f}\n"
+            message += f"• 1.0: {fib_levels[1.0]:.5f}\n\n"
+            
+            message += f"#HammerEntry #{instrument.replace('_', '')} #{trigger_type.replace('+', '_')}"
+            
+            success = send_telegram(
+                message,
+                self.credentials['telegram_token'],
+                self.credentials['telegram_chat_id']
+            )
+            
+            if success:
+                self.logger.info(f"📤 Hammer entry signal sent for {instrument} {timeframe}")
+            else:
+                self.logger.error(f"❌ Failed to send hammer signal")
+                
+            return success
+            
+        except Exception as e:
+            self.logger.error(f"Error sending hammer signal: {str(e)}")
+            return False
+    
+    def _is_in_cooldown(self, instrument):
+        """Check if instrument is in cooldown period"""
+        if instrument in self.cooldown_until:
+            cooldown_end = self.cooldown_until[instrument]
+            if datetime.now(NY_TZ) < cooldown_end:
+                remaining = (cooldown_end - datetime.now(NY_TZ)).total_seconds() / 60
+                return True, remaining
+        return False, 0
+    
+    def _set_cooldown(self, instrument):
+        """Set cooldown for instrument"""
+        self.cooldown_until[instrument] = datetime.now(NY_TZ) + timedelta(minutes=self.cooldown_minutes)
+        self.logger.info(f"⏳ Cooldown set for {instrument} - {self.cooldown_minutes} minutes")
+    
+    def on_signal_detected(self, signal_data):
+        """Called when main system detects a signal (trigger for hammer scanner)"""
+        try:
+            self.logger.info(f"🎯 Signal detected: {signal_data.get('type')} for {signal_data.get('instrument')}")
+            
+            # Start hammer scan in a separate thread to avoid blocking
+            scan_thread = threading.Thread(
+                target=self.scan_fibonacci_hammer,
+                args=(signal_data,),
+                name=f"HammerScan_{signal_data.get('instrument')}",
+                daemon=True
+            )
+            scan_thread.start()
+            
+            # Store active scan for potential management
+            signal_key = f"{signal_data.get('instrument')}_{signal_data.get('type')}_{datetime.now(NY_TZ).strftime('%H%M%S')}"
+            self.active_scans[signal_key] = {
+                'thread': scan_thread,
+                'started': datetime.now(NY_TZ),
+                'data': signal_data
+            }
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error starting hammer scan: {str(e)}")
+            return False
+    
+    def start(self):
+        """Start the hammer scanner (minimal background monitoring)"""
+        self.running = True
+        self.logger.info("🔨 Hammer Pattern Scanner started (trigger-based)")
+        return True
+    
+    def stop(self):
+        """Stop the hammer scanner"""
+        self.running = False
+        self.logger.info("🔨 Hammer Pattern Scanner stopped")
 # ================================
 # ULTIMATE TRADING SYSTEM WITH TRIPLE CONFLUENCE
 # ================================
