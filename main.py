@@ -6656,9 +6656,9 @@ class UltimateTradingSystem:
             time_diffs = abs(smt_price_data['time'] - second_swing_time)
             closest_idx = time_diffs.idxmin()
             
-            # Check 5 candles before and after (adjust as needed)
-            start_idx = max(0, closest_idx - 5)
-            end_idx = min(len(smt_price_data) - 1, closest_idx + 5)
+            # Check 2 candles before  (adjust as needed)
+            start_idx = max(0, closest_idx - 2)
+            end_idx = min(len(smt_price_data) - 1, closest_idx + 0)
             
             logger.info(f"🔍 Cross-TF Tap: {smt_cycle}({smt_tf}) → {fvg_tf} FVG at {fvg_low:.4f}-{fvg_high:.4f}")
             logger.info(f"   Checking {smt_tf} candles around {second_swing_time.strftime('%H:%M')}")
