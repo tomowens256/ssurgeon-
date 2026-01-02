@@ -4827,6 +4827,11 @@ class UltimateTradingSystem:
             'telegram_chat_id': telegram_chat_id,
             'oanda_api_key': os.getenv('OANDA_API_KEY')
         }
+        self.hammer_scanner = HammerPatternScanner(
+            hammer_credentials,
+            csv_base_path='/content/drive/MyDrive/hammer_trades',
+            logger=logger  # Pass the main logger
+        )
         self.hammer_scanner = HammerPatternScanner(hammer_credentials)
         self.hammer_scanner.start()
         
