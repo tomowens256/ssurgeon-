@@ -4482,7 +4482,7 @@ class HammerPatternScanner:
         return trigger_map.get(trigger_tf, ['M5', 'M15'])
     
     def scan_fibonacci_hammer(self, trigger_data):
-        """Main scanning logic with minimal features"""
+        """Main scanning logic with price levels and risk management"""
         try:
             # Extract trigger data
             instrument = trigger_data.get('instrument')
@@ -4536,21 +4536,41 @@ class HammerPatternScanner:
                 hammer_low = prev_candle['low']
                 hammer_range = hammer_high - hammer_low
                 
+                # Determine pip multiplier
+                pip_multiplier = 100 if 'JPY' in instrument else 10000
+                
+                # Calculate price levels
                 if direction == 'bearish':
                     sl_price = hammer_high + (hammer_range * 0.25)  # 1.25 extension
-                    risk = sl_price - entry_price
+                    tp_1_4_price = entry_price - (4 * (sl_price - entry_price))  # 4:1 RR
                 else:  # bullish
                     sl_price = hammer_low - (hammer_range * 0.25)  # 1.25 extension
-                    risk = entry_price - sl_price
+                    tp_1_4_price = entry_price + (4 * (entry_price - sl_price))  # 4:1 RR
                 
-                # Calculate TP distances in pips
-                tp_distances = {}
-                pip_multiplier = 10000 if 'JPY' not in instrument else 100
+                # Calculate distances in pips
                 sl_distance_pips = abs(entry_price - sl_price) * pip_multiplier
                 
+                # Calculate TP distances in pips (1:1 to 1:10)
+                tp_distances = {}
                 for i in range(1, 11):
                     tp_distance_pips = sl_distance_pips * i
                     tp_distances[f'tp_1_{i}_distance'] = round(tp_distance_pips, 1)
+                
+                # RISK MANAGEMENT: Calculate lot sizes for different risk amounts
+                # Assuming 1 pip = $10 for standard lot on most pairs
+                # For micro lots: 1 pip = $0.10, mini lots: 1 pip = $1, standard: 1 pip = $10
+                
+                # Calculate pips per dollar for different account sizes
+                # Risk $10: (10 / sl_distance_pips) * 1000 = micro lots
+                # Risk $100: (100 / sl_distance_pips) * 1000 = micro lots
+                
+                if sl_distance_pips > 0:
+                    # For micro lots (0.01 = 1 micro lot)
+                    risk_10_lots = round((10 / sl_distance_pips) * 1000, 2)  # Micro lots for $10 risk
+                    risk_100_lots = round((100 / sl_distance_pips) * 1000, 2)  # Micro lots for $100 risk
+                else:
+                    risk_10_lots = 0
+                    risk_100_lots = 0
                 
                 # Generate trade ID
                 trade_id = self._generate_trade_id(instrument, tf)
@@ -4580,9 +4600,17 @@ class HammerPatternScanner:
                     'entry_time': current_time.strftime('%Y-%m-%d %H:%M:%S'),
                     'entry_price': round(entry_price, 5),
                     
-                    # Trade Levels (distances only)
+                    # Price Levels (NEW)
+                    'sl_price': round(sl_price, 5),
+                    'tp_1_4_price': round(tp_1_4_price, 5),
+                    
+                    # Trade Levels (distances in pips)
                     'sl_distance_pips': round(sl_distance_pips, 1),
                     **tp_distances,
+                    
+                    # Risk Management Lots (NEW)
+                    'risk_10_lots': risk_10_lots,
+                    'risk_100_lots': risk_100_lots,
                     
                     # Trigger Criteria & Context
                     'criteria': criteria,
