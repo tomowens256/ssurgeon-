@@ -4291,7 +4291,11 @@ class HammerPatternScanner:
         self.running = False
         self.scanner_thread = None
         self.active_scans = {}
-        self.logger = logging.getLogger('HammerScanner')
+        # Use passed logger or create new one
+        if logger:
+            self.logger = logger
+        else:
+            self.logger = logging.getLogger('HammerScanner')
         
         # CSV configuration
         self.csv_base_path = csv_base_path
