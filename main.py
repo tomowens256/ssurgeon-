@@ -325,7 +325,7 @@ def fetch_candles(instrument, timeframe, count=100, api_key=None, since=None):
             if since:
                 df = df[df['time'] > since]
            
-            logger.info(f"Successfully fetched {len(df)} candles for {instrument} {timeframe}")
+            # logger.info(f"Successfully fetched {len(df)} candles for {instrument} {timeframe}")
             return df
            
         except Exception as e:
