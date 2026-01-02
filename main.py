@@ -6871,10 +6871,10 @@ class UltimateTradingSystem:
             
             # CRITICAL FIX: Check if second swing happens AFTER FVG formation
             if fvg_formation and second_swing_time <= fvg_formation:
-                logger.info(f"❌ TRACE TAP REJECTED: SMT second swing at {second_swing_time} is BEFORE FVG formation at {fvg_formation}")
+                # logger.info(f"❌ TRACE TAP REJECTED: SMT second swing at {second_swing_time} is BEFORE FVG formation at {fvg_formation}")
                 return False
             
-            logger.info(f"TRACE TAP {smt_data['cycle']} on {asset} FVG: 2nd swing {second_swing_time.strftime('%H:%M')} price {second_swing_price:.4f}")
+            # logger.info(f"TRACE TAP {smt_data['cycle']} on {asset} FVG: 2nd swing {second_swing_time.strftime('%H:%M')} price {second_swing_price:.4f}")
             
             # Post-formation filter
             if fvg_formation:
