@@ -3288,14 +3288,14 @@ class HybridTimingSystem:
             if config['next_scan']:
                 time_until = (config['next_scan'] - now).total_seconds()
                 if time_until > 0:
-                    next_scan_times.append(time_until)
+                    next_scan_times.append(30)
         
         if not next_scan_times:
-            return 60  # Default 1 minute
+            return 20  # Default 1 minute
         
         # Return the shortest time until next scan
         min_sleep = min(next_scan_times)
-        return max(5, min(min_sleep, 300))  # Between 5 and 300 seconds
+        return max(5, min(min_sleep, 90))  # Between 5 and 300 seconds
     
     def mark_scanned(self, timeframe):
         """Mark a timeframe as scanned (for manual updates)"""
