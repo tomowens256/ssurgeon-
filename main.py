@@ -3362,7 +3362,7 @@ class FVGDetector:
             post_count = len(df[df['time'] > min_form])
         else:
             post_count = 0
-        logger.info(f"🔍 Active FVGs {tf}: {len(active)} (scanned {post_count} post-formation candles)")
+        # logger.info(f"🔍 Active FVGs {tf}: {len(active)} (scanned {post_count} post-formation candles)")
         return active
 
     def _create_fvg(self, direction, low, high, time, asset, tf, candle_b):
@@ -3382,9 +3382,8 @@ class FVGDetector:
                 data = self.market_data[instrument].get(tf)
                 if data is not None and not data.empty:
                     fvgs = self.fvg_detector.scan_tf(data, tf, instrument)
-                    logger.info(f"Test {instrument} {tf}: Found {len(fvgs)} FVGs")
-                    for fvg in fvgs:
-                        logger.info(f"  - {fvg['direction']} FVG at {fvg['fvg_low']:.4f}-{fvg['fvg_high']:.4f}")
+                    # FVGs are detected and stored in the 'fvgs' variable #
+                    
 
     def _is_invalidated(self, fvg, post_df):
         """Your rule: Bull: close < B low OR close > B high + 4*std. Flip bear."""
@@ -3393,24 +3392,19 @@ class FVGDetector:
             close = candle['close']
             if fvg['direction'] == 'bullish':
                 if close < fvg['fvg_low']:  # Breach
-                    logger.info(f"❌ Bull FVG invalidated: Close {close:.4f} < B low {fvg['candle_b_low']:.4f}")
                     return True
                 if close > (fvg['candle_b_high'] + threshold):  # Over-extend up
-                    logger.info(f"❌ Bull FVG invalidated: Over-extend {close:.4f} > B high +4std {fvg['candle_b_high'] + threshold:.4f}")
                     return True
             else:  # Bearish
                 if close > fvg['fvg_high']:  # Breach
-                    logger.info(f"❌ Bear FVG invalidated: Close {close:.4f} > B high {fvg['candle_b_high']:.4f}")
                     return True
                 if close < (fvg['candle_b_low'] - threshold):  # Over-extend down
-                    logger.info(f"❌ Bear FVG invalidated: Over-extend {close:.4f} < B low -4std {fvg['candle_b_low'] - threshold:.4f}")
                     return True
         return False
 
     def _is_over_mitigated(self, fvg, recent_df):
         """6+ candles in zone *post-formation* only."""
         if recent_df is None or recent_df.empty:
-            logger.warning(f"⚠️ Over-mit check: Empty DF for {fvg['asset']} {fvg['tf']}")
             return False
         
         # Filter post-formation if not already
@@ -3422,7 +3416,6 @@ class FVGDetector:
             if fvg['direction'] == 'bearish' and candle['high'] >= fvg['fvg_low']:
                 in_count += 1
         fvg['in_zone_candles'] = in_count
-        logger.info(f"🔍 Over-mit {fvg['asset']} {fvg['tf']}: {in_count} post-formation in-zone (threshold 6)")
         return in_count >= 6
 
     def _merge_fvgs(self, old, new):
