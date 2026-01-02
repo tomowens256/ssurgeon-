@@ -4358,27 +4358,40 @@ class HammerPatternScanner:
                 self.logger.error("Missing required trigger data")
                 return False
             
+            self.logger.info(f"🔨 Starting hammer scan for {instrument} ({criteria}, {direction})")
+            
             # Check cooldown
             if self._is_in_cooldown(instrument):
+                self.logger.info(f"⏳ {instrument} is in cooldown, skipping hammer scan")
                 return False
             
             # Generate signal ID (same for all hammers from this trigger)
             signal_id = self._generate_signal_id(trigger_data)
+            self.logger.info(f"🔨 Signal ID: {signal_id}")
             
             # Get aligned timeframes
             timeframes = self.get_aligned_timeframes(instrument, criteria, trigger_timeframe)
+            self.logger.info(f"🔨 Aligned timeframes for {instrument}: {timeframes}")
             
             # Fetch data since formation time for each timeframe
             for tf in timeframes:
+                self.logger.info(f"🔨 Checking {tf} timeframe for hammer pattern...")
+                
                 # Wait for candle open (3 second delay)
                 if not self.wait_for_candle_open(tf):
+                    self.logger.info(f"⏳ Waiting for {tf} candle to open...")
                     continue
+                
+                self.logger.info(f"🔨 Fetching data for {instrument} {tf}...")
                 
                 # Fetch minimal data
                 df = fetch_candles(instrument, tf, count=30, api_key=self.credentials['oanda_api_key'])
                 
                 if df.empty or len(df) < 3:
+                    self.logger.warning(f"⚠️ No data for {instrument} {tf}")
                     continue
+                
+                self.logger.info(f"✅ Got {len(df)} candles for {instrument} {tf}")
                 
                 # Get previous candle for hammer check
                 prev_candle = df.iloc[-2]
@@ -4388,7 +4401,10 @@ class HammerPatternScanner:
                 is_hammer, upper_ratio, lower_ratio = self.is_hammer_candle(prev_candle, direction)
                 
                 if not is_hammer:
+                    self.logger.info(f"❌ No hammer pattern found on {tf} (upper: {upper_ratio:.2f}, lower: {lower_ratio:.2f})")
                     continue
+                
+                self.logger.info(f"✅ HAMMER FOUND on {tf}! (upper: {upper_ratio:.2f}, lower: {lower_ratio:.2f})")
                 
                 # Entry price (current candle open)
                 entry_price = current_candle['open']
@@ -4405,12 +4421,15 @@ class HammerPatternScanner:
                 if direction == 'bearish':
                     sl_price = hammer_high + (hammer_range * 0.25)  # 1.25 extension
                     tp_1_4_price = entry_price - (4 * (sl_price - entry_price))  # 4:1 RR
+                    self.logger.info(f"📊 Bearish setup: Entry={entry_price:.5f}, SL={sl_price:.5f}, TP 1:4={tp_1_4_price:.5f}")
                 else:  # bullish
                     sl_price = hammer_low - (hammer_range * 0.25)  # 1.25 extension
                     tp_1_4_price = entry_price + (4 * (entry_price - sl_price))  # 4:1 RR
+                    self.logger.info(f"📊 Bullish setup: Entry={entry_price:.5f}, SL={sl_price:.5f}, TP 1:4={tp_1_4_price:.5f}")
                 
                 # Calculate distances in pips
                 sl_distance_pips = abs(entry_price - sl_price) * pip_multiplier
+                self.logger.info(f"📏 SL Distance: {sl_distance_pips:.1f} pips")
                 
                 # Calculate TP distances in pips (1:1 to 1:10)
                 tp_distances = {}
@@ -4419,17 +4438,11 @@ class HammerPatternScanner:
                     tp_distances[f'tp_1_{i}_distance'] = round(tp_distance_pips, 1)
                 
                 # RISK MANAGEMENT: Calculate lot sizes for different risk amounts
-                # Assuming 1 pip = $10 for standard lot on most pairs
-                # For micro lots: 1 pip = $0.10, mini lots: 1 pip = $1, standard: 1 pip = $10
-                
-                # Calculate pips per dollar for different account sizes
-                # Risk $10: (10 / sl_distance_pips) * 1000 = micro lots
-                # Risk $100: (100 / sl_distance_pips) * 1000 = micro lots
-                
                 if sl_distance_pips > 0:
                     # For micro lots (0.01 = 1 micro lot)
                     risk_10_lots = round((10 / sl_distance_pips) * 1000, 2)  # Micro lots for $10 risk
                     risk_100_lots = round((100 / sl_distance_pips) * 1000, 2)  # Micro lots for $100 risk
+                    self.logger.info(f"💰 Risk Management: ${risk_10_lots:.2f} lots for $10 risk, ${risk_100_lots:.2f} lots for $100 risk")
                 else:
                     risk_10_lots = 0
                     risk_100_lots = 0
@@ -4445,10 +4458,12 @@ class HammerPatternScanner:
                 
                 # Calculate simple technicals
                 indicators = self.calculate_simple_indicators(df, -2)  # Hammer candle
+                self.logger.info(f"📈 Indicators: RSI={indicators.get('rsi', 50):.1f}, MACD={indicators.get('macd_line', 0):.6f}")
                 
                 # Get session color
                 current_time = datetime.now(NY_TZ)
                 session_color = self.get_session_color(current_time)
+                self.logger.info(f"🎨 Session: {session_color}")
                 
                 # Prepare trade data for CSV
                 trade_data = {
@@ -4498,17 +4513,23 @@ class HammerPatternScanner:
                     'tp_level_hit': 0
                 }
                 
+                self.logger.info(f"📋 Trade data prepared for CSV: {trade_id}")
+                
                 # SEND SIGNAL FIRST (low latency)
+                self.logger.info(f"📤 Sending Telegram signal...")
                 self.send_hammer_signal(trade_data, trigger_data)
                 
                 # THEN save to CSV
+                self.logger.info(f"💾 Saving trade to CSV...")
                 self.save_trade_to_csv(trade_data)
                 
                 # Set cooldown
                 self._set_cooldown(instrument)
+                self.logger.info(f"⏳ Cooldown set for {instrument} ({self.cooldown_minutes} minutes)")
                 
                 return True
             
+            self.logger.info(f"🔨 No hammer patterns found for {instrument}")
             return False
             
         except Exception as e:
