@@ -6553,7 +6553,7 @@ class UltimateTradingSystem:
             # Get which SMT cycles can tap this FVG timeframe
             relevant_cycles = fvg_to_smt_cycles.get(fvg_timeframe, [])
             
-            logger.info(f"🔍 Checking FVG {fvg_idea['fvg_name']} formed at {fvg_formation_time} - Can be tapped by: {relevant_cycles}")
+            # logger.info(f"🔍 Checking FVG {fvg_idea['fvg_name']} formed at {fvg_formation_time} - Can be tapped by: {relevant_cycles}")
             
             # Check all active SMTs
             for smt_key, smt_feature in self.feature_box.active_features['smt'].items():
@@ -6573,9 +6573,9 @@ class UltimateTradingSystem:
                 
                 # ✅ CHECK PSP REQUIREMENT FIRST
                 has_psp = smt_feature['psp_data'] is not None
-                if not has_psp:
-                    logger.info(f"⏳ Skipping FVG+SMT: {smt_cycle} SMT has no PSP confirmation")
-                    continue  # Skip SMTs without PSP
+                # if not has_psp:
+                #     logger.info(f"⏳ Skipping FVG+SMT: {smt_cycle} SMT has no PSP confirmation")
+                #     continue  # Skip SMTs without PSP
                 
                 # CRITICAL: Check temporal relationship BEFORE checking tap
                 # Get swing_times - it's a dictionary, not a list!
@@ -6605,9 +6605,9 @@ class UltimateTradingSystem:
                     continue
                 
                 # REJECT if SMT second swing is BEFORE FVG formation
-                if second_swing_time <= fvg_formation_time:
-                    logger.info(f"❌ FVG+SMT REJECTED: SMT {smt_cycle} second swing at {second_swing_time} is BEFORE FVG formation at {fvg_formation_time}")
-                    continue  # Skip this SMT
+                # if second_swing_time <= fvg_formation_time:
+                #     logger.info(f"❌ FVG+SMT REJECTED: SMT {smt_cycle} second swing at {second_swing_time} is BEFORE FVG formation at {fvg_formation_time}")
+                #     continue  # Skip this SMT
                 
                 # Check if SMT's second swing traded in FVG zone (CROSS-TIMEFRAME)
                 tapped = self._check_cross_tf_smt_second_swing_in_fvg(
