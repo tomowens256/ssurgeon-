@@ -5386,7 +5386,7 @@ class UltimateTradingSystem:
                 if df['time'].dt.tz is None:
                     # Assume UTC and convert to NY_TZ
                     df['time'] = df['time'].dt.tz_localize('UTC').dt.tz_convert(NY_TZ)
-                    logger.debug(f"📅 Converted {instrument} {timeframe} to NY_TZ")
+                    # logger.debug(f"📅 Converted {instrument} {timeframe} to NY_TZ")
                 
                 self.market_data[instrument][timeframe] = df
                 return True
