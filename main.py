@@ -4286,11 +4286,12 @@ class SupplyDemandDetector:
 class HammerPatternScanner:
     """Concurrent hammer pattern scanner with minimal features"""
     
-    def __init__(self, credentials, csv_base_path='/content/drive/MyDrive/hammer_trades'):
+    def __init__(self, credentials, csv_base_path='/content/drive/MyDrive/hammer_trades', logger=None):  # ADD logger parameter here
         self.credentials = credentials
         self.running = False
         self.scanner_thread = None
         self.active_scans = {}
+        
         # Use passed logger or create new one
         if logger:
             self.logger = logger
