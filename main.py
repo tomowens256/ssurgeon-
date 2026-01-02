@@ -3314,9 +3314,6 @@ class FVGDetector:
         if 'complete' in df.columns:
             # Get only closed candles
             df = df[df['complete'] == True].copy()
-            logger.info(f"🔍 FVG Scan {asset} {tf}: Using {len(df)} closed candles")
-        else:
-            logger.warning(f"⚠️ FVG Scan {asset} {tf}: No 'complete' column - using all candles")
         recent = df.tail(38).reset_index(drop=True)
         fvgs = []
         for i in range(2, len(recent)):
@@ -3356,13 +3353,6 @@ class FVGDetector:
             if not self._is_invalidated(f, post_df) and not self._is_over_mitigated(f, post_df):
                 active.append(f)
         self.active_fvgs[tf] = active
-        # Fixed log (no nested min glitch)
-        if self.active_fvgs[tf]:
-            min_form = min(f['formation_time'] for f in self.active_fvgs[tf])
-            post_count = len(df[df['time'] > min_form])
-        else:
-            post_count = 0
-        # logger.info(f"🔍 Active FVGs {tf}: {len(active)} (scanned {post_count} post-formation candles)")
         return active
 
     def _create_fvg(self, direction, low, high, time, asset, tf, candle_b):
@@ -3374,16 +3364,6 @@ class FVGDetector:
             'candle_b_low': candle_b['low'], 'candle_b_high': candle_b['high'], 'candle_b_std': std_b,
             'taps': 0, 'in_zone_candles': 0, 'is_hp': False
         }
-
-    def test_fvg_detection(self):
-        """Test FVG detection"""
-        for instrument in self.instruments:
-            for tf in ['M15', 'H1', 'H4']:
-                data = self.market_data[instrument].get(tf)
-                if data is not None and not data.empty:
-                    fvgs = self.fvg_detector.scan_tf(data, tf, instrument)
-                    # FVGs are detected and stored in the 'fvgs' variable #
-                    
 
     def _is_invalidated(self, fvg, post_df):
         """Your rule: Bull: close < B low OR close > B high + 4*std. Flip bear."""
@@ -3436,6 +3416,7 @@ class FVGDetector:
                 if abs((f2['formation_time'] - f1['formation_time']).total_seconds()) < 300:
                     f2['is_hp'] = False
                     break
+
 
 
 class HybridTimingSystem:
