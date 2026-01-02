@@ -6618,33 +6618,45 @@ class UltimateTradingSystem:
                 if tapped:
                     # Check if only ONE asset tapped (HP FVG)
                     is_hp_fvg = self._check_hp_fvg_fix(fvg_idea, fvg_asset)
+                    
+                    logger.info(f"✅ FVG+SMT TAP CONFIRMED WITH PSP: {smt_cycle} {smt_data['direction']} "
+                               f"tapped {fvg_timeframe} FVG on {fvg_asset}, HP: {is_hp_fvg}")
+                    
+                    # ✅ TRIGGER HAMMER SCANNER (CORRECTED VERSION)
                     try:
-                        # Prepare trigger data for hammer scanner
-                        trigger_data = {
-                            'type': 'FVG+SMT',
-                            'direction': fvg_direction,
-                            'instrument': fvg_asset,
-                            'formation_time': fvg_formation_time,
-                            'signal_data': {
-                                'fvg_idea': fvg_idea,
-                                'smt_data': smt_data,
-                                'is_hp_fvg': is_hp_fvg,
-                                'has_psp': has_psp
-                            }
-                        }
+                        # Send the original signal first
+                        signal_result = self._send_fvg_smt_tap_signal(
+                            fvg_idea, smt_data, has_psp, is_hp_fvg
+                        )
                         
-                        # Trigger hammer scanner
-                        if self.hammer_scanner:
-                            self.hammer_scanner.on_signal_detected(trigger_data)
+                        if signal_result:
+                            # Prepare trigger data for hammer scanner
+                            trigger_data = {
+                                'type': 'FVG+SMT',
+                                'direction': fvg_direction,
+                                'instrument': fvg_asset,
+                                'trigger_timeframe': fvg_timeframe,
+                                'formation_time': fvg_formation_time,
+                                'signal_data': {
+                                    'fvg_idea': fvg_idea,
+                                    'smt_data': smt_data,
+                                    'is_hp_fvg': is_hp_fvg,
+                                    'has_psp': has_psp
+                                }
+                            }
                             
+                            # Trigger hammer scanner
+                            if hasattr(self, 'hammer_scanner') and self.hammer_scanner:
+                                logger.info(f"🔨 Triggering hammer scanner for {fvg_asset}")
+                                self.hammer_scanner.on_signal_detected(trigger_data)
+                            else:
+                                logger.warning(f"⚠️ Hammer scanner not available for {self.pair_group}")
+                                
                     except Exception as e:
                         logger.error(f"Error triggering hammer scanner: {str(e)}")
+                        signal_result = False
                     
-                    # Send the signal (existing code)
-                    return self._send_fvg_smt_tap_signal(
-                        fvg_idea, smt_data, has_psp, is_hp_fvg
-                    )
-                    
+                    return signal_result
         
         logger.info(f"🔍 No FVG+SMT setups with PSP found")
         return False
