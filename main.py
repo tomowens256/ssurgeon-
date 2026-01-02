@@ -4339,7 +4339,7 @@ class HammerPatternScanner:
                 'direction', 'entry_time', 'entry_price',
                 
                 # Price Levels
-                'sl_price', 'tp_1_4_price',  # NEW: Actual price levels
+                'sl_price', 'tp_1_4_price',
                 
                 # Trade Levels (distances in pips)
                 'sl_distance_pips', 'tp_1_1_distance', 'tp_1_2_distance', 'tp_1_3_distance',
@@ -4347,7 +4347,7 @@ class HammerPatternScanner:
                 'tp_1_8_distance', 'tp_1_9_distance', 'tp_1_10_distance',
                 
                 # Risk Management Lots
-                'risk_10_lots', 'risk_100_lots',  # NEW: Position sizing
+                'risk_10_lots', 'risk_100_lots',
                 
                 # Trigger Criteria & Context
                 'criteria', 'trigger_timeframe',
@@ -4385,8 +4385,9 @@ class HammerPatternScanner:
                             writer = csv.writer(f)
                             writer.writerow(headers)
                         self.logger.info(f"📁 Corrupted file backed up and recreated")
-                self.logger.info(f"📁 CSV file exists, will append")
-                
+                    else:
+                        self.logger.info(f"📁 CSV file exists, will append")
+                        
         except Exception as e:
             self.logger.error(f"❌ Failed to initialize CSV: {str(e)}")
             # Create file anyway with headers
