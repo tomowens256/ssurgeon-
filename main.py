@@ -5928,7 +5928,7 @@ class UltimateTradingSystem:
         """Find Supply/Demand zones where SMT's SECOND SWING traded in the zone - USING FEATUREBOX ZONES"""
         logger.info(f"🔍 SCANNING: Supply/Demand + SMT Tap - USING FEATUREBOX ZONES")
         
-        # Timeframe mapping: SD Zone -> allowed SMT cycless
+        # Timeframe mapping: SD Zone -> allowed SMT cycles
         sd_to_smt_cycles = {
             'H4': ['weekly', 'daily','monthly'],      # H4 Zone → Weekly (H1) or Daily (M15) SMTs
             'H1': ['weekly', 'daily','90min'],      # H1 Zone → Weekly (H1) or Daily (M15) SMT  
@@ -5959,8 +5959,8 @@ class UltimateTradingSystem:
             zone_high = zone['zone_high']
             zone_formation_time = zone['formation_time']
             
-            # logger.info(f"🔍 Checking {zone_type.upper()} zone: {zone['zone_name']} "
-                       # f"({zone_low:.4f} - {zone_high:.4f})")
+            logger.info(f"🔍 Checking {zone_type.upper()} zone: {zone['zone_name']} "
+                       f"({zone_low:.4f} - {zone_high:.4f})")
             
             # Get which SMT cycles can tap this zone timeframe
             relevant_cycles = sd_to_smt_cycles.get(zone_timeframe, [])
@@ -6001,35 +6001,45 @@ class UltimateTradingSystem:
                 if tapped:
                     # Check for High Probability: Zone within higher TF zone of same direction
                     is_hp_zone = self._check_hp_sd_zone(zone, zone_direction)
-                    try:
-                        # Prepare trigger data for hammer scanner
-                        trigger_data = {
-                            'type': 'FVG+SMT',
-                            'direction': fvg_direction,
-                            'instrument': fvg_asset,
-                            'formation_time': fvg_formation_time,
-                            'signal_data': {
-                                'fvg_idea': fvg_idea,
-                                'smt_data': smt_data,
-                                'is_hp_fvg': is_hp_fvg,
-                                'has_psp': has_psp
-                            }
-                        }
-                        
-                        # Trigger hammer scanner
-                        if self.hammer_scanner:
-                            self.hammer_scanner.on_signal_detected(trigger_data)
-                            
-                    except Exception as e:
-                        logger.error(f"Error triggering hammer scanner: {str(e)}")
                     
                     logger.info(f"✅ SD+SMT TAP CONFIRMED: {smt_cycle} {smt_data['direction']} "
                                f"tapped {zone_timeframe} {zone_type} on {zone_asset}")
                     
-                    # Send the signal
-                    return self._send_sd_smt_tap_signal(
-                        zone, smt_data, has_psp, is_hp_zone
-                    )
+                    # ✅ TRIGGER HAMMER SCANNER (CORRECTED VERSION)
+                    try:
+                        # Send the original signal first
+                        signal_result = self._send_sd_smt_tap_signal(
+                            zone, smt_data, has_psp, is_hp_zone
+                        )
+                        
+                        if signal_result:
+                            # Prepare trigger data for hammer scanner
+                            trigger_data = {
+                                'type': 'SD+SMT',
+                                'direction': zone_direction,
+                                'instrument': zone_asset,
+                                'trigger_timeframe': zone_timeframe,
+                                'formation_time': zone_formation_time,
+                                'signal_data': {
+                                    'zone': zone,
+                                    'smt_data': smt_data,
+                                    'is_hp_zone': is_hp_zone,
+                                    'has_psp': has_psp
+                                }
+                            }
+                            
+                            # Trigger hammer scanner
+                            if hasattr(self, 'hammer_scanner') and self.hammer_scanner:
+                                logger.info(f"🔨 Triggering hammer scanner for {zone_asset}")
+                                self.hammer_scanner.on_signal_detected(trigger_data)
+                            else:
+                                logger.warning(f"⚠️ Hammer scanner not available for {self.pair_group}")
+                                
+                    except Exception as e:
+                        logger.error(f"Error triggering hammer scanner: {str(e)}")
+                        signal_result = False
+                    
+                    return signal_result
         
         logger.info(f"🔍 No SD+SMT setups found")
         return False
