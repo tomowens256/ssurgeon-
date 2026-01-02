@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-
+import csv
 import asyncio
 import traceback
 import logging
@@ -19,9 +19,10 @@ from oandapyV20 import API
 from oandapyV20.exceptions import V20Error
 from oandapyV20.endpoints import instruments
 from pytz import timezone
-NY_TZ = timezone('America/New_York')  # automatically handles EST/EDT
+# NY_TZ = timezone('America/New_York')  # automatically handles EST/EDT
 
-
+# Define NY_TZ globally
+NY_TZ = pytz.timezone('America/New_York')
 
 # ================================
 # CONFIGURATION - BACKWARD COMPATIBLE
