@@ -19,10 +19,9 @@ from oandapyV20 import API
 from oandapyV20.exceptions import V20Error
 from oandapyV20.endpoints import instruments
 from pytz import timezone
-# NY_TZ = timezone('America/New_York')  # automatically handles EST/EDT
+from zoneinfo import ZoneInfo
+NY_TZ = ZoneInfo("America/New_York")
 
-# Define NY_TZ globally
-NY_TZ = pytz.timezone('America/New_York')
 
 # ================================
 # CONFIGURATION - BACKWARD COMPATIBLE
