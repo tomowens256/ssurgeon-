@@ -5962,8 +5962,8 @@ class UltimateTradingSystem:
             zone_high = zone['zone_high']
             zone_formation_time = zone['formation_time']
             
-            logger.info(f"🔍 Checking {zone_type.upper()} zone: {zone['zone_name']} "
-                       f"({zone_low:.4f} - {zone_high:.4f})")
+            # logger.info(f"🔍 Checking {zone_type.upper()} zone: {zone['zone_name']} "
+                       # f"({zone_low:.4f} - {zone_high:.4f})")
             
             # Get which SMT cycles can tap this zone timeframe
             relevant_cycles = sd_to_smt_cycles.get(zone_timeframe, [])
