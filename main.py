@@ -5801,7 +5801,7 @@ class UltimateTradingSystem:
                 len(df) >= 10)
 
     def _find_smt_confluence_for_fvg(self, fvg_idea):
-        """Find SMTs that match the FVG's direction and timeframe - WITH TAP DEBUG"""
+        """Find SMTs that match the FVG's direction and timeframe - WITH the  TAP DEBUG"""
         confluence = {
             'has_confluence': False,
             'smts': [],
