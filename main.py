@@ -6700,8 +6700,8 @@ class UltimateTradingSystem:
             start_idx = max(0, closest_idx - 2)
             end_idx = min(len(smt_price_data) - 1, closest_idx + 0)
             
-            logger.info(f"🔍 Cross-TF Tap: {smt_cycle}({smt_tf}) → {fvg_tf} FVG at {fvg_low:.4f}-{fvg_high:.4f}")
-            logger.info(f"   Checking {smt_tf} candles around {second_swing_time.strftime('%H:%M')}")
+            # logger.info(f"🔍 Cross-TF Tap: {smt_cycle}({smt_tf}) → {fvg_tf} FVG at {fvg_low:.4f}-{fvg_high:.4f}")
+            # logger.info(f"   Checking {smt_tf} candles around {second_swing_time.strftime('%H:%M')}")
             
             for idx in range(start_idx, end_idx + 1):
                 candle = smt_price_data.iloc[idx]
@@ -6712,19 +6712,19 @@ class UltimateTradingSystem:
                     # Zone tapped if candle's low <= fvg_high AND candle's high >= fvg_low
                     if candle['low'] <= fvg_high and candle['high'] >= fvg_low:
                         entry_price = candle['low']  # Price entered from bottom
-                        logger.info(f"✅ CROSS-TF TAP: {smt_tf} candle at {candle['time'].strftime('%H:%M')} "
-                                   f"entered bullish FVG zone (low: {candle['low']:.4f} <= {fvg_high:.4f})")
+                        # logger.info(f"✅ CROSS-TF TAP: {smt_tf} candle at {candle['time'].strftime('%H:%M')} "
+                                   # f"entered bullish FVG zone (low: {candle['low']:.4f} <= {fvg_high:.4f})")
                         return True
                 else:  # bearish
                     # Bearish FVG: zone is below, price enters from above  
                     # Zone tapped if candle's high >= fvg_low AND candle's low <= fvg_high
                     if candle['high'] >= fvg_low and candle['low'] <= fvg_high:
                         entry_price = candle['high']  # Price entered from top
-                        logger.info(f"✅ CROSS-TF TAP: {smt_tf} candle at {candle['time'].strftime('%H:%M')} "
-                                   f"entered bearish FVG zone (high: {candle['high']:.4f} >= {fvg_low:.4f})")
+                        # logger.info(f"✅ CROSS-TF TAP: {smt_tf} candle at {candle['time'].strftime('%H:%M')} "
+                                   # f"entered bearish FVG zone (high: {candle['high']:.4f} >= {fvg_low:.4f})")
                         return True
             
-            logger.info(f"❌ No {smt_tf} candle entered FVG zone around second swing")
+            # logger.info(f"❌ No {smt_tf} candle entered FVG zone around second swing")
             return False
             
         except Exception as e:
