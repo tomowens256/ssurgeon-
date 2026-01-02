@@ -4047,196 +4047,350 @@ class HammerPatternScanner:
         return trigger_map.get(trigger_tf, ['M5', 'M15'])
     
     def scan_fibonacci_hammer(self, trigger_data):
-        """Main scanning logic with price levels and risk management"""
+        """Continuous hammer scanning on lower timeframes until invalidation"""
         try:
             # Extract trigger data
             instrument = trigger_data.get('instrument')
             direction = trigger_data.get('direction')
             trigger_timeframe = trigger_data.get('trigger_timeframe')
-            formation_time = trigger_data.get('formation_time')
             criteria = trigger_data.get('type')  # FVG+SMT, SD+SMT, CRT+SMT
             signal_data = trigger_data.get('signal_data', {})
             
-            if not all([instrument, direction, trigger_timeframe, formation_time, criteria]):
-                self.logger.error("Missing required trigger data")
-                return False
-            
-            self.logger.info(f"🔨 Starting hammer scan for {instrument} ({criteria}, {direction})")
+            self.logger.info(f"🔨 Starting CONTINUOUS hammer scanning for {instrument}")
+            self.logger.info(f"   Criteria: {criteria}, Direction: {direction}")
             
             # Check cooldown
             if self._is_in_cooldown(instrument):
-                self.logger.info(f"⏳ {instrument} is in cooldown, skipping hammer scan")
+                self.logger.info(f"⏳ {instrument} is in cooldown, skipping")
                 return False
             
-            # Generate signal ID (same for all hammers from this trigger)
-            signal_id = self._generate_signal_id(trigger_data)
-            self.logger.info(f"🔨 Signal ID: {signal_id}")
-            
-            # Get aligned timeframes
+            # Get ONLY the hammer timeframes for this instrument
             timeframes = self.get_aligned_timeframes(instrument, criteria, trigger_timeframe)
-            self.logger.info(f"🔨 Aligned timeframes for {instrument}: {timeframes}")
+            self.logger.info(f"🔨 Hammer timeframes to scan: {timeframes}")
             
-            # Fetch data since formation time for each timeframe
-            for tf in timeframes:
-                self.logger.info(f"🔨 Checking {tf} timeframe for hammer pattern...")
-                
-                # Wait for candle open (3 second delay)
-                if not self.wait_for_candle_open(tf):
-                    self.logger.info(f"⏳ Waiting for {tf} candle to open...")
-                    continue
-                
-                self.logger.info(f"🔨 Fetching data for {instrument} {tf}...")
-                
-                # Fetch minimal data
-                df = fetch_candles(instrument, tf, count=30, api_key=self.credentials['oanda_api_key'])
-                
-                if df.empty or len(df) < 3:
-                    self.logger.warning(f"⚠️ No data for {instrument} {tf}")
-                    continue
-                
-                self.logger.info(f"✅ Got {len(df)} candles for {instrument} {tf}")
-                
-                # Get previous candle for hammer check
-                prev_candle = df.iloc[-2]
-                current_candle = df.iloc[-1]
-                
-                # Check hammer pattern
-                is_hammer, upper_ratio, lower_ratio = self.is_hammer_candle(prev_candle, direction)
-                
-                if not is_hammer:
-                    self.logger.info(f"❌ No hammer pattern found on {tf} (upper: {upper_ratio:.2f}, lower: {lower_ratio:.2f})")
-                    continue
-                
-                self.logger.info(f"✅ HAMMER FOUND on {tf}! (upper: {upper_ratio:.2f}, lower: {lower_ratio:.2f})")
-                
-                # Entry price (current candle open)
-                entry_price = current_candle['open']
-                
-                # Calculate SL based on Fibonacci extension
-                hammer_high = prev_candle['high']
-                hammer_low = prev_candle['low']
-                hammer_range = hammer_high - hammer_low
-                
-                # Determine pip multiplier
-                pip_multiplier = 100 if 'JPY' in instrument else 10000
-                
-                # Calculate price levels
-                if direction == 'bearish':
-                    sl_price = hammer_high + (hammer_range * 0.25)  # 1.25 extension
-                    tp_1_4_price = entry_price - (4 * (sl_price - entry_price))  # 4:1 RR
-                    self.logger.info(f"📊 Bearish setup: Entry={entry_price:.5f}, SL={sl_price:.5f}, TP 1:4={tp_1_4_price:.5f}")
-                else:  # bullish
-                    sl_price = hammer_low - (hammer_range * 0.25)  # 1.25 extension
-                    tp_1_4_price = entry_price + (4 * (entry_price - sl_price))  # 4:1 RR
-                    self.logger.info(f"📊 Bullish setup: Entry={entry_price:.5f}, SL={sl_price:.5f}, TP 1:4={tp_1_4_price:.5f}")
-                
-                # Calculate distances in pips
-                sl_distance_pips = abs(entry_price - sl_price) * pip_multiplier
-                self.logger.info(f"📏 SL Distance: {sl_distance_pips:.1f} pips")
-                
-                # Calculate TP distances in pips (1:1 to 1:10)
-                tp_distances = {}
-                for i in range(1, 11):
-                    tp_distance_pips = sl_distance_pips * i
-                    tp_distances[f'tp_1_{i}_distance'] = round(tp_distance_pips, 1)
-                
-                # RISK MANAGEMENT: Calculate lot sizes for different risk amounts
-                if sl_distance_pips > 0:
-                    # For micro lots (0.01 = 1 micro lot)
-                    risk_10_lots = round((10 / sl_distance_pips) * 1000, 2)  # Micro lots for $10 risk
-                    risk_100_lots = round((100 / sl_distance_pips) * 1000, 2)  # Micro lots for $100 risk
-                    self.logger.info(f"💰 Risk Management: ${risk_10_lots:.2f} lots for $10 risk, ${risk_100_lots:.2f} lots for $100 risk")
-                else:
-                    risk_10_lots = 0
-                    risk_100_lots = 0
-                
-                # Generate trade ID
-                trade_id = self._generate_trade_id(instrument, tf)
-                
-                # Extract signal data
-                fvg_idea = signal_data.get('fvg_idea', {})
-                smt_data = signal_data.get('smt_data', {})
-                zone = signal_data.get('zone', {})
-                crt_signal = signal_data.get('crt_signal', {})
-                
-                # Calculate simple technicals
-                indicators = self.calculate_simple_indicators(df, -2)  # Hammer candle
-                self.logger.info(f"📈 Indicators: RSI={indicators.get('rsi', 50):.1f}, MACD={indicators.get('macd_line', 0):.6f}")
-                
-                # Get session color
+            # Generate signal ID (groups all hammers from this trigger)
+            signal_id = self._generate_signal_id(trigger_data)
+            self.logger.info(f"🔨 Signal ID: {signal_id} (for grouping hammers)")
+            
+            # Track found hammers to avoid duplicates
+            found_hammers = set()
+            
+            # Start continuous scanning loop
+            scan_start_time = datetime.now(NY_TZ)
+            max_scan_duration = timedelta(hours=2)  # Scan for max 2 hours
+            hammer_count = 0
+            
+            while True:
                 current_time = datetime.now(NY_TZ)
-                session_color = self.get_session_color(current_time)
-                self.logger.info(f"🎨 Session: {session_color}")
                 
-                # Prepare trade data for CSV
-                trade_data = {
-                    # Core Identification & Timing
-                    'timestamp': current_time.strftime('%Y-%m-%d %H:%M:%S'),
-                    'signal_id': signal_id,
-                    'trade_id': trade_id,
-                    'instrument': instrument,
-                    'hammer_timeframe': tf,
-                    'direction': direction.upper(),
-                    'entry_time': current_time.strftime('%Y-%m-%d %H:%M:%S'),
-                    'entry_price': round(entry_price, 5),
-                    
-                    # Price Levels (NEW)
-                    'sl_price': round(sl_price, 5),
-                    'tp_1_4_price': round(tp_1_4_price, 5),
-                    
-                    # Trade Levels (distances in pips)
-                    'sl_distance_pips': round(sl_distance_pips, 1),
-                    **tp_distances,
-                    
-                    # Risk Management Lots (NEW)
-                    'risk_10_lots': risk_10_lots,
-                    'risk_100_lots': risk_100_lots,
-                    
-                    # Trigger Criteria & Context
-                    'criteria': criteria,
-                    'trigger_timeframe': trigger_timeframe,
-                    'fvg_formation_time': fvg_idea.get('formation_time', '').strftime('%Y-%m-%d %H:%M:%S') if fvg_idea.get('formation_time') else '',
-                    'sd_formation_time': zone.get('formation_time', '').strftime('%Y-%m-%d %H:%M:%S') if zone.get('formation_time') else '',
-                    'crt_formation_time': crt_signal.get('timestamp', '').strftime('%Y-%m-%d %H:%M:%S') if crt_signal.get('timestamp') else '',
-                    'smt_cycle': smt_data.get('cycle', ''),
-                    'smt_quarters': smt_data.get('quarters', ''),
-                    'has_psp': 1 if signal_data.get('has_psp') else 0,
-                    'is_hp_fvg': 1 if signal_data.get('is_hp_fvg') else 0,
-                    'is_hp_zone': 1 if signal_data.get('is_hp_zone') else 0,
-                    
-                    # Market Context
-                    'session_color': session_color,
-                    'rsi': indicators.get('rsi', 50),
-                    'macd_line': indicators.get('macd_line', 0),
-                    'vwap': indicators.get('vwap', entry_price),
-                    
-                    # Result Tracking
-                    'exit_time': '',
-                    'time_to_exit_seconds': 0,
-                    'tp_level_hit': 0
-                }
+                # Check if we should stop scanning
+                if self._should_stop_scanning(instrument, trigger_data, scan_start_time, 
+                                            max_scan_duration, hammer_count):
+                    self.logger.info(f"🛑 Stopping hammer scan for {instrument}")
+                    break
                 
-                self.logger.info(f"📋 Trade data prepared for CSV: {trade_id}")
+                self.logger.info(f"🔄 SCAN CYCLE: Checking {len(timeframes)} timeframes")
                 
-                # SEND SIGNAL FIRST (low latency)
-                self.logger.info(f"📤 Sending Telegram signal...")
-                self.send_hammer_signal(trade_data, trigger_data)
+                # Scan each timeframe
+                for tf in timeframes:
+                    try:
+                        self.logger.info(f"🔍 Scanning {instrument} {tf} for hammer...")
+                        
+                        # Fetch data for this timeframe
+                        df = fetch_candles(instrument, tf, count=20, api_key=self.credentials['oanda_api_key'])
+                        
+                        if df.empty or len(df) < 3:
+                            self.logger.warning(f"⚠️ No data for {instrument} {tf}")
+                            continue
+                        
+                        self.logger.info(f"✅ Got {len(df)} candles for {tf}")
+                        
+                        # Check last 5 candles for hammer patterns
+                        for i in range(2, 7):  # Check candles at positions -2 through -6
+                            if len(df) <= i:
+                                continue
+                            
+                            candle = df.iloc[-i]
+                            candle_time = candle['time']
+                            
+                            # Skip if we already processed this candle
+                            hammer_key = f"{tf}_{candle_time}"
+                            if hammer_key in found_hammers:
+                                continue
+                            
+                            # Check for hammer pattern
+                            is_hammer, upper_ratio, lower_ratio = self.is_hammer_candle(candle, direction)
+                            
+                            if is_hammer:
+                                self.logger.info(f"🎯 HAMMER FOUND on {tf} at {candle_time}")
+                                self.logger.info(f"   Candle: O={candle['open']:.5f}, H={candle['high']:.5f}, L={candle['low']:.5f}, C={candle['close']:.5f}")
+                                
+                                # Check if setup is still valid
+                                if self._is_setup_still_valid(instrument, candle, direction, trigger_data):
+                                    # Process and record this hammer
+                                    if self._process_and_record_hammer(
+                                        instrument, tf, candle, direction, criteria, 
+                                        signal_data, signal_id, trigger_data
+                                    ):
+                                        hammer_count += 1
+                                        found_hammers.add(hammer_key)
+                                        self.logger.info(f"📝 Hammer #{hammer_count} recorded for {instrument}")
+                                else:
+                                    self.logger.info(f"❌ Setup invalidated - stopping scan")
+                                    return True  # Return True because we found hammers before invalidation
+                    
+                    except Exception as e:
+                        self.logger.error(f"❌ Error scanning {tf}: {str(e)}")
+                        continue
                 
-                # THEN save to CSV
-                self.logger.info(f"💾 Saving trade to CSV...")
-                self.save_trade_to_csv(trade_data)
-                
-                # Set cooldown
+                # Calculate sleep time based on shortest timeframe
+                sleep_seconds = self._calculate_sleep_time(timeframes)
+                self.logger.info(f"💤 Sleeping for {sleep_seconds}s before next scan...")
+                time.sleep(sleep_seconds)
+            
+            self.logger.info(f"✅ Hammer scan completed for {instrument}. Found {hammer_count} hammers.")
+            
+            # Set cooldown only if we found hammers
+            if hammer_count > 0:
                 self._set_cooldown(instrument)
-                self.logger.info(f"⏳ Cooldown set for {instrument} ({self.cooldown_minutes} minutes)")
-                
                 return True
             
-            self.logger.info(f"🔨 No hammer patterns found for {instrument}")
             return False
             
         except Exception as e:
-            self.logger.error(f"❌ Error in hammer scan: {str(e)}", exc_info=True)
+            self.logger.error(f"❌ Error in continuous hammer scan: {str(e)}", exc_info=True)
+            return False
+    
+    def _should_stop_scanning(self, instrument, trigger_data, scan_start_time, 
+                             max_duration, hammer_count):
+        """Check if we should stop scanning"""
+        current_time = datetime.now(NY_TZ)
+        
+        # 1. Check max duration
+        if current_time - scan_start_time > max_duration:
+            self.logger.info(f"⏰ Max scan duration reached (2 hours)")
+            return True
+        
+        # 2. Check if setup is invalidated
+        if not self._is_setup_still_valid_overall(instrument, trigger_data):
+            self.logger.info(f"❌ Setup completely invalidated")
+            return True
+        
+        # 3. Optional: stop after finding N hammers
+        if hammer_count >= 5:  # Optional limit
+            self.logger.info(f"✅ Found {hammer_count} hammers - stopping scan")
+            return True
+        
+        return False
+    
+    def _is_setup_still_valid_overall(self, instrument, trigger_data):
+        """Check if the overall setup is still valid (not specific to a candle)"""
+        try:
+            direction = trigger_data.get('direction')
+            criteria = trigger_data.get('type')
+            signal_data = trigger_data.get('signal_data', {})
+            
+            # Get current price
+            df = fetch_candles(instrument, 'M1', count=2, api_key=self.credentials['oanda_api_key'])
+            if df.empty:
+                return True  # Assume valid
+            
+            current_price = df.iloc[-1]['close']
+            
+            # Check based on criteria
+            if criteria == 'FVG+SMT':
+                fvg_idea = signal_data.get('fvg_idea', {})
+                if fvg_idea:
+                    fvg_low = fvg_idea.get('fvg_low')
+                    fvg_high = fvg_idea.get('fvg_high')
+                    
+                    if direction == 'bearish' and current_price < fvg_low:
+                        self.logger.info(f"❌ FVG invalidated: Price {current_price:.5f} < FVG low {fvg_low:.5f}")
+                        return False
+                    elif direction == 'bullish' and current_price > fvg_high:
+                        self.logger.info(f"❌ FVG invalidated: Price {current_price:.5f} > FVG high {fvg_high:.5f}")
+                        return False
+            
+            elif criteria == 'SD+SMT':
+                zone = signal_data.get('zone', {})
+                if zone:
+                    zone_low = zone.get('zone_low')
+                    zone_high = zone.get('zone_high')
+                    zone_type = zone.get('type')
+                    
+                    if zone_type == 'supply' and direction == 'bearish':
+                        if current_price < zone_low:
+                            self.logger.info(f"❌ Supply zone invalidated: Price {current_price:.5f} < zone low {zone_low:.5f}")
+                            return False
+                    elif zone_type == 'demand' and direction == 'bullish':
+                        if current_price > zone_high:
+                            self.logger.info(f"❌ Demand zone invalidated: Price {current_price:.5f} > zone high {zone_high:.5f}")
+                            return False
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error checking setup validity: {str(e)}")
+            return True  # Assume valid
+    
+    def _is_setup_still_valid(self, instrument, candle, direction, trigger_data):
+        """Check if this specific hammer setup is still valid"""
+        try:
+            # Get current price
+            df = fetch_candles(instrument, 'M1', count=2, api_key=self.credentials['oanda_api_key'])
+            if df.empty:
+                return True
+            
+            current_price = df.iloc[-1]['close']
+            
+            # Basic check: price shouldn't have moved beyond hammer extremes
+            if direction == 'bearish':
+                if current_price > candle['high']:
+                    self.logger.info(f"   ❌ Hammer invalid: Price {current_price:.5f} > hammer high {candle['high']:.5f}")
+                    return False
+            else:  # bullish
+                if current_price < candle['low']:
+                    self.logger.info(f"   ❌ Hammer invalid: Price {current_price:.5f} < hammer low {candle['low']:.5f}")
+                    return False
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error checking hammer validity: {str(e)}")
+            return True
+    
+    def _calculate_sleep_time(self, timeframes):
+        """Calculate sleep time based on the shortest timeframe"""
+        # Find the minimum timeframe in minutes
+        min_minutes = float('inf')
+        
+        for tf in timeframes:
+            if tf.startswith('M'):
+                minutes = int(tf[1:])
+            elif tf == 'H1':
+                minutes = 60
+            elif tf == 'H4':
+                minutes = 240
+            else:
+                minutes = 60
+            
+            min_minutes = min(min_minutes, minutes)
+        
+        # Sleep for 70% of the shortest timeframe (in seconds)
+        sleep_minutes = min_minutes * 0.7
+        return int(sleep_minutes * 60)
+    
+    def _process_and_record_hammer(self, instrument, tf, candle, direction, criteria, 
+                                  signal_data, signal_id, trigger_data):
+        """Process a single hammer and record it to CSV"""
+        try:
+            # Get current price for entry
+            current_df = fetch_candles(instrument, 'M1', count=2, api_key=self.credentials['oanda_api_key'])
+            if current_df.empty:
+                self.logger.error(f"❌ Cannot get current price for {instrument}")
+                return False
+            
+            current_price = current_df.iloc[-1]['close']
+            
+            # Calculate price levels
+            hammer_high = candle['high']
+            hammer_low = candle['low']
+            hammer_range = hammer_high - hammer_low
+            
+            # Pip multiplier
+            pip_multiplier = 100 if 'JPY' in instrument else 10000
+            
+            if direction == 'bearish':
+                sl_price = hammer_high + (hammer_range * 0.25)
+                tp_1_4_price = current_price - (4 * (sl_price - current_price))
+            else:  # bullish
+                sl_price = hammer_low - (hammer_range * 0.25)
+                tp_1_4_price = current_price + (4 * (current_price - sl_price))
+            
+            # Calculate pips
+            sl_distance_pips = abs(current_price - sl_price) * pip_multiplier
+            
+            # TP distances
+            tp_distances = {}
+            for i in range(1, 11):
+                tp_distance_pips = sl_distance_pips * i
+                tp_distances[f'tp_1_{i}_distance'] = round(tp_distance_pips, 1)
+            
+            # Risk management lots
+            if sl_distance_pips > 0:
+                risk_10_lots = round((10 / sl_distance_pips) * 1000, 2)
+                risk_100_lots = round((100 / sl_distance_pips) * 1000, 2)
+            else:
+                risk_10_lots = 0
+                risk_100_lots = 0
+            
+            # Generate trade ID
+            trade_id = self._generate_trade_id(instrument, tf)
+            
+            # Extract signal data
+            fvg_idea = signal_data.get('fvg_idea', {})
+            smt_data = signal_data.get('smt_data', {})
+            zone = signal_data.get('zone', {})
+            crt_signal = signal_data.get('crt_signal', {})
+            
+            # Get indicators
+            df = fetch_candles(instrument, tf, count=30, api_key=self.credentials['oanda_api_key'])
+            indicators = self.calculate_simple_indicators(df, -2) if not df.empty else {'rsi': 50, 'macd_line': 0, 'vwap': current_price}
+            
+            # Session color
+            current_time = datetime.now(NY_TZ)
+            session_color = self.get_session_color(current_time)
+            
+            # Prepare trade data
+            trade_data = {
+                'timestamp': current_time.strftime('%Y-%m-%d %H:%M:%S'),
+                'signal_id': signal_id,
+                'trade_id': trade_id,
+                'instrument': instrument,
+                'hammer_timeframe': tf,
+                'direction': direction.upper(),
+                'entry_time': current_time.strftime('%Y-%m-%d %H:%M:%S'),
+                'entry_price': round(current_price, 5),
+                'sl_price': round(sl_price, 5),
+                'tp_1_4_price': round(tp_1_4_price, 5),
+                'sl_distance_pips': round(sl_distance_pips, 1),
+                **tp_distances,
+                'risk_10_lots': risk_10_lots,
+                'risk_100_lots': risk_100_lots,
+                'criteria': criteria,
+                'trigger_timeframe': trigger_data.get('trigger_timeframe', ''),
+                'fvg_formation_time': fvg_idea.get('formation_time', '').strftime('%Y-%m-%d %H:%M:%S') if fvg_idea.get('formation_time') else '',
+                'sd_formation_time': zone.get('formation_time', '').strftime('%Y-%m-%d %H:%M:%S') if zone.get('formation_time') else '',
+                'crt_formation_time': crt_signal.get('timestamp', '').strftime('%Y-%m-%d %H:%M:%S') if crt_signal.get('timestamp') else '',
+                'smt_cycle': smt_data.get('cycle', ''),
+                'smt_quarters': smt_data.get('quarters', ''),
+                'has_psp': 1 if signal_data.get('has_psp') else 0,
+                'is_hp_fvg': 1 if signal_data.get('is_hp_fvg') else 0,
+                'is_hp_zone': 1 if signal_data.get('is_hp_zone') else 0,
+                'session_color': session_color,
+                'rsi': indicators.get('rsi', 50),
+                'macd_line': indicators.get('macd_line', 0),
+                'vwap': indicators.get('vwap', current_price),
+                'exit_time': '',
+                'time_to_exit_seconds': 0,
+                'tp_level_hit': 0
+            }
+            
+            # Send Telegram signal
+            self.logger.info(f"📤 Sending Telegram signal for hammer #{trade_id}")
+            self.send_hammer_signal(trade_data, trigger_data)
+            
+            # Save to CSV
+            self.logger.info(f"💾 Saving hammer #{trade_id} to CSV")
+            self.save_trade_to_csv(trade_data)
+            
+            self.logger.info(f"✅ Hammer recorded: {instrument} {tf} at {candle['time']}")
+            self.logger.info(f"   Entry: {current_price:.5f}, SL: {sl_price:.5f}, TP1:4: {tp_1_4_price:.5f}")
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error processing hammer: {str(e)}")
             return False
     
     def calculate_simple_indicators(self, df, candle_index):
