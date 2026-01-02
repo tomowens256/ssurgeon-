@@ -6802,7 +6802,7 @@ class UltimateTradingSystem:
             
             # CRITICAL: Check if second swing happens AFTER FVG formation
             if second_swing_time <= fvg_formation_time:
-                logger.info(f"❌ CROSS-TF REJECTED: SMT second swing at {second_swing_time} is BEFORE FVG formation at {fvg_formation_time}")
+                # logger.info(f"❌ CROSS-TF REJECTED: SMT second swing at {second_swing_time} is BEFORE FVG formation at {fvg_formation_time}")
                 return False
             
             # Look for candles around second swing time in SMT timeframe
