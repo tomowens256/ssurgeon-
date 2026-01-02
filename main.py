@@ -4185,81 +4185,8 @@ class HammerPatternScanner:
         
         return False
     
-    def _is_setup_still_valid_overall(self, instrument, trigger_data):
-        """Check if the overall setup is still valid (not specific to a candle)"""
-        try:
-            direction = trigger_data.get('direction')
-            criteria = trigger_data.get('type')
-            signal_data = trigger_data.get('signal_data', {})
-            
-            # Get current price
-            df = fetch_candles(instrument, 'M1', count=2, api_key=self.credentials['oanda_api_key'])
-            if df.empty:
-                return True  # Assume valid
-            
-            current_price = df.iloc[-1]['close']
-            
-            # Check based on criteria
-            if criteria == 'FVG+SMT':
-                fvg_idea = signal_data.get('fvg_idea', {})
-                if fvg_idea:
-                    fvg_low = fvg_idea.get('fvg_low')
-                    fvg_high = fvg_idea.get('fvg_high')
-                    
-                    if direction == 'bearish' and current_price < fvg_low:
-                        self.logger.info(f"❌ FVG invalidated: Price {current_price:.5f} < FVG low {fvg_low:.5f}")
-                        return False
-                    elif direction == 'bullish' and current_price > fvg_high:
-                        self.logger.info(f"❌ FVG invalidated: Price {current_price:.5f} > FVG high {fvg_high:.5f}")
-                        return False
-            
-            elif criteria == 'SD+SMT':
-                zone = signal_data.get('zone', {})
-                if zone:
-                    zone_low = zone.get('zone_low')
-                    zone_high = zone.get('zone_high')
-                    zone_type = zone.get('type')
-                    
-                    if zone_type == 'supply' and direction == 'bearish':
-                        if current_price < zone_low:
-                            self.logger.info(f"❌ Supply zone invalidated: Price {current_price:.5f} < zone low {zone_low:.5f}")
-                            return False
-                    elif zone_type == 'demand' and direction == 'bullish':
-                        if current_price > zone_high:
-                            self.logger.info(f"❌ Demand zone invalidated: Price {current_price:.5f} > zone high {zone_high:.5f}")
-                            return False
-            
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"Error checking setup validity: {str(e)}")
-            return True  # Assume valid
     
-    def _is_setup_still_valid(self, instrument, candle, direction, trigger_data):
-        """Check if this specific hammer setup is still valid"""
-        try:
-            # Get current price
-            df = fetch_candles(instrument, 'M1', count=2, api_key=self.credentials['oanda_api_key'])
-            if df.empty:
-                return True
-            
-            current_price = df.iloc[-1]['close']
-            
-            # Basic check: price shouldn't have moved beyond hammer extremes
-            if direction == 'bearish':
-                if current_price > candle['high']:
-                    self.logger.info(f"   ❌ Hammer invalid: Price {current_price:.5f} > hammer high {candle['high']:.5f}")
-                    return False
-            else:  # bullish
-                if current_price < candle['low']:
-                    self.logger.info(f"   ❌ Hammer invalid: Price {current_price:.5f} < hammer low {candle['low']:.5f}")
-                    return False
-            
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"Error checking hammer validity: {str(e)}")
-            return True
+
     
     def _calculate_sleep_time(self, timeframes):
         """Calculate sleep time based on the shortest timeframe"""
