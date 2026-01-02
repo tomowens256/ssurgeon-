@@ -3911,16 +3911,16 @@ class SupplyDemandDetector:
             # Get candles AFTER formation (using NY_TZ)
             subsequent_candles = current_data_copy[current_data_copy['time'] > formation_ts]
             
-            if len(subsequent_candles) == 0:
-                logger.debug(f"📭 No candles after formation for: {zone.get('zone_name', 'Unknown')}")
-                return True
+            # if len(subsequent_candles) == 0:
+            #     logger.debug(f"📭 No candles after formation for: {zone.get('zone_name', 'Unknown')}")
+            #     return True
             
             # ===== CORRECTED INVALIDATION RULES =====
             # Check expiration: 35 candles from creation
             candles_since_creation = len(subsequent_candles)
-            if candles_since_creation >= 100:
-                logger.info(f"⏰ ZONE EXPIRED (101 candles): {zone.get('zone_name', 'Unknown')}")
-                return False
+            # if candles_since_creation >= 100:
+            #     logger.info(f"⏰ ZONE EXPIRED (101 candles): {zone.get('zone_name', 'Unknown')}")
+            #     return False
             
             # Check for invalidation - CORRECTED LOGIC
             if zone_type == 'demand':
@@ -4012,21 +4012,10 @@ class SupplyDemandDetector:
     
     def check_zone_invalidation(self, zone, subsequent_candles, zone_type, asset, other_asset_data=None):
         """Check if zone is invalidated - CORRECTED RULES"""
-        zone_low = zone['zone_low']
-        zone_high = zone['zone_high']
-        
         if zone_type == 'demand':
-            # Demand zone invalidated if ANY candle's LOW < zone_low (lowest low of A & B)
-            if (subsequent_candles['low'] < zone_low).any():
-                logger.debug(f"❌ Demand zone invalidated: Low {subsequent_candles['low'].min()} < Zone low {zone_low}")
-                return True
+            return (subsequent_candles['low'] < zone['zone_low']).any()
         else:  # supply zone
-            # Supply zone invalidated if ANY candle's HIGH > zone_high (highest high of A & B)
-            if (subsequent_candles['high'] > zone_high).any():
-                logger.debug(f"❌ Supply zone invalidated: High {subsequent_candles['high'].max()} > Zone high {zone_high}")
-                return True
-        
-        return False
+            return (subsequent_candles['high'] > zone['zone_high']).any()
     
     def calculate_invalidation_point(self, candle_a, candle_b, zone_type):
         """Calculate the invalidation point based on candles A and B"""
@@ -4050,10 +4039,10 @@ class SupplyDemandDetector:
         # Use only closed candles
         if 'complete' in data.columns:
             closed_data = data[data['complete'] == True].copy()
-            logger.info(f"📊 {asset} {timeframe}: Using {len(closed_data)} closed candles for zones")
+            # logger.info(f"📊 {asset} {timeframe}: Using {len(closed_data)} closed candles for zones")
         else:
             closed_data = data.copy()
-            logger.info(f"📊 {asset} {timeframe}: Using {len(closed_data)} candles (no 'complete' column)")
+            # logger.info(f"📊 {asset} {timeframe}: Using {len(closed_data)} candles (no 'complete' column)")
         
         if len(closed_data) < 10:
             logger.warning(f"⚠️ Not enough closed candles for {asset} {timeframe}: {len(closed_data)}")
@@ -4266,7 +4255,8 @@ class SupplyDemandDetector:
                 
                 filtered_zones.append(zone)
         
-        logger.info(f"🔍 A-B Pattern Scan {asset} {timeframe}: Found {len(filtered_zones)} valid zones (from {len(zones)} raw candidates)")
+        # logger.info(f"🔍 A-B Pattern Scan {asset} {timeframe}: Found {len(filtered_zones)} valid zones (from {len(zones)} raw candidates)")
+    
         
         # Debug: Log first few zones found
         if filtered_zones and len(filtered_zones) > 0:
