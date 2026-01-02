@@ -5495,12 +5495,17 @@ class UltimateTradingSystem:
                             
                             # Check PSP
                             has_psp = smt_feature['psp_data'] is not None
-                        if smt_data and has_psp:
-                            # ✅ TRIGGER HAMMER SCANNER (ADD THIS SECTION)
+                            
+                            logger.info(f"✅ CRT-SMT CONFLUENCE: {crt_tf} CRT + {smt_cycle} SMT "
+                                       f"({crt_direction}, PSP: {has_psp})")
+                            
+                            # ✅ TRIGGER HAMMER SCANNER (CORRECTED VERSION)
                             try:
+                                # Send the original signal first
                                 signal_result = self._send_crt_smt_signal(crt_signal, smt_data, has_psp, instrument)
                                 
                                 if signal_result:
+                                    # Prepare trigger data for hammer scanner
                                     trigger_data = {
                                         'type': 'CRT+SMT',
                                         'direction': crt_direction,
@@ -5514,20 +5519,18 @@ class UltimateTradingSystem:
                                         }
                                     }
                                     
+                                    # Trigger hammer scanner
                                     if hasattr(self, 'hammer_scanner') and self.hammer_scanner:
                                         logger.info(f"🔨 Triggering hammer scanner for {instrument}")
                                         self.hammer_scanner.on_signal_detected(trigger_data)
+                                    else:
+                                        logger.warning(f"⚠️ Hammer scanner not available for {self.pair_group}")
                                         
                             except Exception as e:
                                 logger.error(f"Error triggering hammer scanner: {str(e)}")
+                                signal_result = False
                             
                             return signal_result
-                            
-                            logger.info(f"✅ CRT-SMT CONFLUENCE: {crt_tf} CRT + {smt_cycle} SMT "
-                                       f"({crt_direction}, PSP: {has_psp})")
-                            
-                            # Send the signal
-                            return self._send_crt_smt_signal(crt_signal, smt_data, has_psp, instrument)
         
         logger.info(f"🔷 No CRT+SMT confluence found")
         return False
