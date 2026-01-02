@@ -3279,23 +3279,23 @@ class HybridTimingSystem:
         
         return to_scan
     
-    # def get_sleep_time(self):
-    #     """Calculate optimal sleep time until next scan"""
-    #     now = datetime.now(self.ny_tz)
-    #     next_scan_times = []
+    def get_sleep_time(self):
+        """Calculate optimal sleep time until next scan"""
+        now = datetime.now(self.ny_tz)
+        next_scan_times = []
         
-    #     for tf, config in self.timeframe_configs.items():
-    #         if config['next_scan']:
-    #             time_until = (config['next_scan'] - now).total_seconds()
-    #             if time_until > 0:
-    #                 next_scan_times.append(time_until)
+        for tf, config in self.timeframe_configs.items():
+            if config['next_scan']:
+                time_until = (config['next_scan'] - now).total_seconds()
+                if time_until > 0:
+                    next_scan_times.append(time_until)
         
-    #     if not next_scan_times:
-    #         return 60  # Default 1 minute
+        if not next_scan_times:
+            return 60  # Default 1 minute
         
-    #     # Return the shortest time until next scan
-    #     min_sleep = min(next_scan_times)
-    #     return max(5, min(min_sleep, 300))  # Between 5 and 300 seconds
+        # Return the shortest time until next scan
+        min_sleep = min(next_scan_times)
+        return max(5, min(min_sleep, 300))  # Between 5 and 300 seconds
     
     def mark_scanned(self, timeframe):
         """Mark a timeframe as scanned (for manual updates)"""
