@@ -4953,8 +4953,8 @@ class UltimateTradingSystem:
         }
         self.hammer_scanner = HammerPatternScanner(
             hammer_credentials,
-            csv_base_path='/content/drive/MyDrive/hammer_trades',
-            logger=logger  # Pass the logger here
+            csv_base_path='/content/drive/MyDrive/hammer_trades',  # Just the base path, no extension
+            logger=logger
         )
         self.hammer_scanner = HammerPatternScanner(hammer_credentials)
         self.hammer_scanner.start()
