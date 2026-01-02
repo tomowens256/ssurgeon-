@@ -3986,12 +3986,15 @@ class HammerPatternScanner:
                 seconds_to_next = (minutes - minutes_past - 1) * 60 + (60 - seconds_past)
                 
                 if seconds_to_next > 0:
-                    self.logger.debug(f"⏰ Waiting {seconds_to_next:.2f}s for {timeframe} candle open")
-                    time.sleep(seconds_to_next + 3)  # 3 seconds for data availability
+                    wait_time = seconds_to_next + 3
+                    self.logger.info(f"⏰ Waiting {wait_time:.0f}s for {timeframe} candle open (next at {now + timedelta(seconds=wait_time)})")
+                    time.sleep(wait_time)  # 3 seconds for data availability
+                    self.logger.info(f"✅ {timeframe} candle open, proceeding with scan")
                     return True
-                
-                return False
-                
+                else:
+                    self.logger.info(f"✅ {timeframe} candle is already open, proceeding immediately")
+                    return True
+                    
             return False
             
         except Exception as e:
