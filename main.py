@@ -4002,30 +4002,50 @@ class HammerPatternScanner:
             return False
     
     def is_hammer_candle(self, candle, direction):
-        """Strict hammer detection - 50% wick rule only"""
-        total_range = candle['high'] - candle['low']
-        if total_range == 0:
+        """Strict hammer detection - 50% wick rule with additional filters"""
+        try:
+            total_range = candle['high'] - candle['low']
+            if total_range == 0:
+                return False, 0, 0
+            
+            body_size = abs(candle['close'] - candle['open'])
+            upper_wick = candle['high'] - max(candle['close'], candle['open'])
+            lower_wick = min(candle['close'], candle['open']) - candle['low']
+            
+            # Calculate ratios
+            upper_ratio = upper_wick / total_range if total_range > 0 else 0
+            lower_ratio = lower_wick / total_range if total_range > 0 else 0
+            body_ratio = body_size / total_range if total_range > 0 else 0
+            
+            # Additional filter: body should not be too small (not a doji)
+            if body_ratio < 0.05:  # 5% minimum body
+                return False, upper_ratio, lower_ratio
+            
+            # Additional filter: total range should be meaningful
+            # Get pip multiplier to check if range is significant
+            pip_multiplier = 100 if 'JPY' in str(candle.get('instrument', '')) else 10000
+            range_pips = total_range * pip_multiplier
+            
+            # Minimum range: 5 pips for M1-M5, 10 pips for M15
+            min_pips = 5 if 'M5' in str(candle.get('timeframe', '')) else 10
+            if range_pips < min_pips:
+                return False, upper_ratio, lower_ratio
+            
+            # Strict 50% wick rule
+            if direction == 'bearish':
+                # Bearish hammer: upper wick > 50%
+                if upper_ratio > 0.5 and lower_ratio < 0.3:
+                    return True, upper_ratio, lower_ratio
+            else:  # bullish
+                # Bullish hammer: lower wick > 50%
+                if lower_ratio > 0.5 and upper_ratio < 0.3:
+                    return True, upper_ratio, lower_ratio
+            
+            return False, upper_ratio, lower_ratio
+            
+        except Exception as e:
+            self.logger.error(f"Error in hammer detection: {str(e)}")
             return False, 0, 0
-        
-        # Calculate wicks
-        upper_wick = candle['high'] - max(candle['close'], candle['open'])
-        lower_wick = min(candle['close'], candle['open']) - candle['low']
-        
-        # Calculate ratios
-        upper_ratio = upper_wick / total_range if total_range > 0 else 0
-        lower_ratio = lower_wick / total_range if total_range > 0 else 0
-        
-        # Strict 50% wick rule
-        if direction == 'bearish':
-            # Bearish hammer: upper wick > 50%
-            if upper_ratio > 0.5:
-                return True, upper_ratio, lower_ratio
-        else:  # bullish
-            # Bullish hammer: lower wick > 50%
-            if lower_ratio > 0.5:
-                return True, upper_ratio, lower_ratio
-        
-        return False, upper_ratio, lower_ratio
     
     def get_session_color(self, timestamp_ny):
         """Determine session color based on NY time"""
@@ -4041,6 +4061,279 @@ class HammerPatternScanner:
             return 'YELLOW'
         else:  # Asian / Low liquidity
             return 'RED'
+
+    def _get_fib_zones(self, trigger_data):
+        """Calculate Fibonacci zones based on SMT swings and zone formation"""
+        try:
+            instrument = trigger_data.get('instrument')
+            direction = trigger_data.get('direction')
+            criteria = trigger_data.get('type')
+            signal_data = trigger_data.get('signal_data', {})
+            
+            if criteria == 'CRT+SMT':
+                # CRT has different logic - we'll handle separately
+                return self._get_crt_zones(trigger_data)
+            
+            # Get SMT cycle and map to timeframe for data slicing
+            smt_data = signal_data.get('smt_data', {})
+            smt_cycle = smt_data.get('cycle', 'daily')
+            
+            # Map SMT cycle to timeframe for data slicing
+            tf_map = {
+                'daily': 'M15',
+                '90min': 'M5', 
+                'weekly': 'H1',
+                'monthly': 'H4'
+            }
+            analysis_tf = tf_map.get(smt_cycle, 'M15')
+            
+            # Get formation time and zone data
+            if criteria == 'FVG+SMT':
+                zone_data = signal_data.get('fvg_idea', {})
+                formation_time = zone_data.get('formation_time')
+            elif criteria == 'SD+SMT':
+                zone_data = signal_data.get('zone', {})
+                formation_time = zone_data.get('formation_time')
+            
+            if not formation_time:
+                self.logger.error(f"❌ No formation time for {criteria}")
+                return []
+            
+            # Fetch data from formation time to now
+            self.logger.info(f"📊 Fetching {analysis_tf} data from {formation_time} to now...")
+            
+            # We need to fetch enough candles to cover from formation time
+            # Estimate: 1000 candles should cover several days
+            df = fetch_candles(instrument, analysis_tf, count=1000, api_key=self.credentials['oanda_api_key'])
+            
+            if df.empty:
+                self.logger.error(f"❌ No data fetched for {instrument} {analysis_tf}")
+                return []
+            
+            # Filter data from formation time onward
+            df_from_formation = df[df['time'] >= formation_time]
+            
+            if df_from_formation.empty:
+                self.logger.error(f"❌ No data after formation time {formation_time}")
+                return []
+            
+            # Get SMT swings data
+            smt_swings = smt_data.get('swings', [])
+            
+            if not smt_swings or len(smt_swings) < 2:
+                self.logger.error(f"❌ Not enough SMT swings: {len(smt_swings)}")
+                return []
+            
+            if direction == 'bearish':
+                # Bearish setup
+                # 1. Default SL: Highest point of SMT swings
+                default_sl = max([swing.get('high', 0) for swing in smt_swings])
+                
+                # 2. Default TP: Lowest point between zone formation and second SMT swing
+                # Get second SMT swing time
+                second_swing_time = smt_swings[1].get('time') if len(smt_swings) > 1 else None
+                
+                if second_swing_time:
+                    # Filter data between formation time and second swing
+                    mask = (df_from_formation['time'] >= formation_time) & (df_from_formation['time'] <= second_swing_time)
+                    df_for_tp = df_from_formation[mask]
+                    default_tp = df_for_tp['low'].min() if not df_for_tp.empty else df_from_formation['low'].min()
+                else:
+                    default_tp = df_from_formation['low'].min()
+                
+                self.logger.info(f"📊 Bearish setup:")
+                self.logger.info(f"   Default SL (highest swing): {default_sl:.5f}")
+                self.logger.info(f"   Default TP (lowest after formation): {default_tp:.5f}")
+                
+                # Calculate Fibonacci retracement from SL to TP
+                fib_levels = self._calculate_fibonacci_levels(default_sl, default_tp, direction)
+                
+            else:  # bullish
+                # Bullish setup (flipped logic)
+                # 1. Default SL: Lowest point of SMT swings
+                default_sl = min([swing.get('low', float('inf')) for swing in smt_swings])
+                
+                # 2. Default TP: Highest point between zone formation and second SMT swing
+                second_swing_time = smt_swings[1].get('time') if len(smt_swings) > 1 else None
+                
+                if second_swing_time:
+                    mask = (df_from_formation['time'] >= formation_time) & (df_from_formation['time'] <= second_swing_time)
+                    df_for_tp = df_from_formation[mask]
+                    default_tp = df_for_tp['high'].max() if not df_for_tp.empty else df_from_formation['high'].max()
+                else:
+                    default_tp = df_from_formation['high'].max()
+                
+                self.logger.info(f"📊 Bullish setup:")
+                self.logger.info(f"   Default SL (lowest swing): {default_sl:.5f}")
+                self.logger.info(f"   Default TP (highest after formation): {default_tp:.5f}")
+                
+                # Calculate Fibonacci retracement from SL to TP
+                fib_levels = self._calculate_fibonacci_levels(default_sl, default_tp, direction)
+            
+            return fib_levels
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error calculating Fibonacci zones: {str(e)}", exc_info=True)
+            return []
+    
+    def _calculate_fibonacci_levels(self, level1, level2, direction):
+        """Calculate Fibonacci retracement levels between two prices"""
+        try:
+            # Standard Fibonacci retracement levels
+            fib_ratios = [0.236, 0.382, 0.5, 0.618, 0.786]
+            
+            if direction == 'bearish':
+                # For bearish: level1 is SL (higher), level2 is TP (lower)
+                price_range = level1 - level2
+                
+                zones = []
+                for ratio in fib_ratios:
+                    zone_high = level1 - (price_range * ratio)
+                    zone_low = level1 - (price_range * (ratio + 0.1)) if ratio < 0.786 else level2
+                    
+                    zones.append({
+                        'ratio': ratio,
+                        'high': zone_high,
+                        'low': zone_low,
+                        'mid': (zone_high + zone_low) / 2
+                    })
+                
+                self.logger.info(f"📊 Fibonacci zones for bearish:")
+                for zone in zones:
+                    self.logger.info(f"   {zone['ratio']}: {zone['low']:.5f} - {zone['high']:.5f}")
+                
+            else:  # bullish
+                # For bullish: level1 is SL (lower), level2 is TP (higher)
+                price_range = level2 - level1
+                
+                zones = []
+                for ratio in fib_ratios:
+                    zone_low = level1 + (price_range * ratio)
+                    zone_high = level1 + (price_range * (ratio + 0.1)) if ratio < 0.786 else level2
+                    
+                    zones.append({
+                        'ratio': ratio,
+                        'low': zone_low,
+                        'high': zone_high,
+                        'mid': (zone_low + zone_high) / 2
+                    })
+                
+                self.logger.info(f"📊 Fibonacci zones for bullish:")
+                for zone in zones:
+                    self.logger.info(f"   {zone['ratio']}: {zone['low']:.5f} - {zone['high']:.5f}")
+            
+            return zones
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error calculating Fibonacci levels: {str(e)}")
+            return []
+
+    def calculate_pips(self, instrument, price1, price2):
+        """Calculate pip difference between two prices"""
+        try:
+            price_diff = abs(price1 - price2)
+            
+            # Handle different instrument types
+            if '_' in instrument:  # Forex pairs
+                if 'JPY' in instrument:
+                    # JPY pairs: 2 decimal places, 1 pip = 0.01
+                    return round(price_diff * 100, 1)
+                else:
+                    # Other forex: 4-5 decimal places, 1 pip = 0.0001
+                    return round(price_diff * 10000, 1)
+            
+            # Indices
+            indices = ['NAS100', 'SPX500', 'DE30', 'EU50', 'UK100', 'AUS200', 'US30', 'US500', 'USTEC']
+            if any(idx in instrument for idx in indices):
+                # Indices: usually 1 point = 1 pip
+                return round(price_diff, 1)
+            
+            # Gold/Silver
+            if 'XAU' in instrument or 'XAG' in instrument:
+                # Gold/Silver: usually 2 decimal places, 1 pip = 0.01
+                return round(price_diff * 100, 1)
+            
+            # Default (shouldn't reach here)
+            return round(price_diff * 10000, 1)
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating pips: {str(e)}")
+            return 0
+    
+    def _get_crt_zones(self, trigger_data):
+        """Calculate zones for CRT setups (different logic)"""
+        try:
+            instrument = trigger_data.get('instrument')
+            direction = trigger_data.get('direction')
+            trigger_timeframe = trigger_data.get('trigger_timeframe')
+            criteria = trigger_data.get('type')
+            signal_data = trigger_data.get('signal_data', {})
+            
+            if criteria != 'CRT+SMT':
+                return []
+            
+            # For CRT, we need to check the previous candle's high/low
+            crt_signal = signal_data.get('crt_signal', {})
+            
+            # Fetch the previous candle of the CRT timeframe
+            df = fetch_candles(instrument, trigger_timeframe, count=3, api_key=self.credentials['oanda_api_key'])
+            
+            if df.empty or len(df) < 2:
+                self.logger.error(f"❌ No data for CRT {trigger_timeframe}")
+                return []
+            
+            previous_candle = df.iloc[-2]  # The completed candle
+            
+            if direction == 'bearish':
+                # For bearish CRT: invalidate if price goes above previous candle's high
+                invalidation_level = previous_candle['high']
+                current_price = df.iloc[-1]['close']
+                
+                # We'll scan within a price range below the invalidation level
+                # Use a fixed range for scanning (e.g., 50% retracement of previous candle)
+                candle_range = previous_candle['high'] - previous_candle['low']
+                scan_low = current_price - (candle_range * 2)  # Extend below for scanning
+                
+                # Create one big zone for scanning
+                zones = [{
+                    'ratio': 0.5,
+                    'high': invalidation_level,
+                    'low': scan_low,
+                    'mid': (invalidation_level + scan_low) / 2,
+                    'is_crt': True,
+                    'invalidation_level': invalidation_level
+                }]
+                
+                self.logger.info(f"📊 CRT Bearish setup:")
+                self.logger.info(f"   Invalidation (SL): {invalidation_level:.5f}")
+                self.logger.info(f"   Scan range: {scan_low:.5f} - {invalidation_level:.5f}")
+                
+            else:  # bullish
+                # For bullish CRT: invalidate if price goes below previous candle's low
+                invalidation_level = previous_candle['low']
+                current_price = df.iloc[-1]['close']
+                
+                candle_range = previous_candle['high'] - previous_candle['low']
+                scan_high = current_price + (candle_range * 2)  # Extend above for scanning
+                
+                zones = [{
+                    'ratio': 0.5,
+                    'low': invalidation_level,
+                    'high': scan_high,
+                    'mid': (invalidation_level + scan_high) / 2,
+                    'is_crt': True,
+                    'invalidation_level': invalidation_level
+                }]
+                
+                self.logger.info(f"📊 CRT Bullish setup:")
+                self.logger.info(f"   Invalidation (SL): {invalidation_level:.5f}")
+                self.logger.info(f"   Scan range: {invalidation_level:.5f} - {scan_high:.5f}")
+            
+            return zones
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error calculating CRT zones: {str(e)}")
+            return []
     
     def get_aligned_timeframes(self, instrument, criteria, trigger_tf):
         """Get aligned timeframes for scanning"""
@@ -4049,7 +4342,7 @@ class HammerPatternScanner:
         return trigger_map.get(trigger_tf, ['M5', 'M15'])
     
     def scan_fibonacci_hammer(self, trigger_data):
-        """Scan for hammers in Fibonacci zones on closed candles only"""
+        """Main hammer scanning function with proper zone logic"""
         try:
             instrument = trigger_data.get('instrument')
             direction = trigger_data.get('direction')
@@ -4057,20 +4350,20 @@ class HammerPatternScanner:
             criteria = trigger_data.get('type')
             signal_data = trigger_data.get('signal_data', {})
             
-            self.logger.info(f"🔨 Starting hammer scan for {instrument} ({criteria}, {direction})")
+            self.logger.info(f"🔨 Starting hammer scan for {instrument}")
+            self.logger.info(f"   Criteria: {criteria}, Direction: {direction}")
             
             # Check cooldown
             if self._is_in_cooldown(instrument):
                 self.logger.info(f"⏳ {instrument} in cooldown")
                 return False
             
-            # Get Fibonacci zones from signal data
+            # Get Fibonacci zones
             fib_zones = self._get_fib_zones(trigger_data)
-            if not fib_zones:
-                self.logger.info(f"❌ No Fibonacci zones defined for {instrument}")
-                return False
             
-            self.logger.info(f"📊 Fibonacci zones: {fib_zones}")
+            if not fib_zones:
+                self.logger.error(f"❌ No Fibonacci zones calculated")
+                return False
             
             # Get hammer timeframes
             timeframes = self.get_aligned_timeframes(instrument, criteria, trigger_timeframe)
@@ -4078,71 +4371,123 @@ class HammerPatternScanner:
             
             signal_id = self._generate_signal_id(trigger_data)
             
-            # Start continuous scanning
-            scan_start = datetime.now(NY_TZ)
-            max_scan_time = scan_start + timedelta(hours=2)
-            hammer_count = 0
+            # Set scan duration based on criteria
+            if criteria == 'CRT+SMT':
+                if trigger_timeframe == 'H1':
+                    max_scan_duration = timedelta(minutes=30)
+                elif trigger_timeframe == 'H4':
+                    max_scan_duration = timedelta(hours=2)
+                else:
+                    max_scan_duration = timedelta(minutes=30)
+            else:
+                max_scan_duration = timedelta(hours=2)  # FVG/SD scan for 2 hours
             
-            while datetime.now(NY_TZ) < max_scan_time:
+            scan_start = datetime.now(NY_TZ)
+            scan_end = scan_start + max_scan_duration
+            
+            self.logger.info(f"⏰ Scan duration: {max_scan_duration}")
+            
+            hammer_count = 0
+            scanned_candles = set()
+            
+            while datetime.now(NY_TZ) < scan_end:
+                current_time = datetime.now(NY_TZ)
+                
+                # Check for CRT invalidation
+                if criteria == 'CRT+SMT':
+                    crt_zone = fib_zones[0] if fib_zones else None
+                    if crt_zone and 'invalidation_level' in crt_zone:
+                        # Get current price
+                        df_current = fetch_candles(instrument, 'M1', count=2, api_key=self.credentials['oanda_api_key'])
+                        if not df_current.empty:
+                            current_price = df_current.iloc[-1]['close']
+                            
+                            if direction == 'bearish' and current_price > crt_zone['invalidation_level']:
+                                self.logger.info(f"❌ CRT invalidated: Price {current_price:.5f} > invalidation {crt_zone['invalidation_level']:.5f}")
+                                break
+                            elif direction == 'bullish' and current_price < crt_zone['invalidation_level']:
+                                self.logger.info(f"❌ CRT invalidated: Price {current_price:.5f} < invalidation {crt_zone['invalidation_level']:.5f}")
+                                break
+                
+                # Scan each timeframe
                 for tf in timeframes:
                     try:
-                        # Wait for current candle to close
-                        next_close = self._get_next_candle_close_time(tf)
-                        wait_seconds = (next_close - datetime.now(NY_TZ)).total_seconds()
+                        # Calculate next candle close time
+                        next_close = self._get_next_candle_close_time(tf, current_time)
+                        wait_seconds = (next_close - current_time).total_seconds()
                         
                         if wait_seconds > 0:
-                            self.logger.info(f"⏰ Waiting {wait_seconds:.0f}s for {tf} candle close at {next_close.strftime('%H:%M:%S')}")
+                            self.logger.debug(f"⏰ Waiting {wait_seconds:.0f}s for {tf} close")
                             time.sleep(wait_seconds)
                         
-                        # Candle just closed - fetch data
-                        self.logger.info(f"🔍 Scanning CLOSED {tf} candle...")
+                        # Fetch data after candle close
                         df = fetch_candles(instrument, tf, count=10, api_key=self.credentials['oanda_api_key'])
                         
                         if df.empty or len(df) < 2:
                             continue
                         
-                        # Get the last CLOSED candle
-                        closed_candle = df.iloc[-2]  # -1 is current forming, -2 is last closed
-                        candle_time = closed_candle['time']
+                        # Get the last CLOSED candle (index -2)
+                        closed_candle = df.iloc[-2]
+                        candle_key = f"{tf}_{closed_candle['time']}"
                         
-                        # Check if price is in Fibonacci zone
-                        if not self._is_price_in_fib_zone(closed_candle['close'], fib_zones):
-                            self.logger.info(f"❌ Candle close {closed_candle['close']:.5f} not in Fibonacci zone")
+                        if candle_key in scanned_candles:
+                            continue
+                        
+                        scanned_candles.add(candle_key)
+                        
+                        # Check if candle is in Fibonacci zone
+                        candle_price = closed_candle['close']  # Use close price for zone check
+                        in_zone = False
+                        target_zone = None
+                        
+                        for zone in fib_zones:
+                            if direction == 'bearish':
+                                if zone['low'] <= candle_price <= zone['high']:
+                                    in_zone = True
+                                    target_zone = zone
+                                    break
+                            else:  # bullish
+                                if zone['low'] <= candle_price <= zone['high']:
+                                    in_zone = True
+                                    target_zone = zone
+                                    break
+                        
+                        if not in_zone:
+                            self.logger.debug(f"❌ Candle not in Fibonacci zone: {candle_price:.5f}")
                             continue
                         
                         # Check for hammer pattern
                         is_hammer, upper_ratio, lower_ratio = self.is_hammer_candle(closed_candle, direction)
                         
                         if is_hammer:
-                            self.logger.info(f"✅ HAMMER FOUND on {tf} at {candle_time}")
+                            self.logger.info(f"✅ HAMMER FOUND in Fibonacci zone!")
+                            self.logger.info(f"   Timeframe: {tf}, Time: {closed_candle['time']}")
+                            self.logger.info(f"   Price: {candle_price:.5f}, Zone: {target_zone['ratio'] if target_zone else 'N/A'}")
                             self.logger.info(f"   Wick ratios: upper={upper_ratio:.2f}, lower={lower_ratio:.2f}")
                             
-                            # Wait for next candle open
-                            next_open = next_close + timedelta(seconds=3)
-                            open_wait = (next_open - datetime.now(NY_TZ)).total_seconds()
+                            # Wait for next candle open (3 seconds)
+                            time.sleep(3)
                             
-                            if open_wait > 0:
-                                self.logger.info(f"⏰ Waiting {open_wait:.0f}s for next candle open")
-                                time.sleep(open_wait)
-                            
-                            # Enter at next candle open
+                            # Enter trade
                             hammer_count += 1
-                            self._enter_hammer_trade(
-                                instrument, tf, closed_candle, direction, 
+                            success = self._enter_hammer_trade(
+                                instrument, tf, closed_candle, direction,
                                 criteria, signal_data, signal_id, trigger_data
                             )
                             
+                            if success:
+                                self.logger.info(f"✅ Trade #{hammer_count} entered successfully")
+                            
                             # Continue scanning for more hammers
-                            self.logger.info(f"🔄 Continuing scan for more hammers...")
                     
                     except Exception as e:
                         self.logger.error(f"❌ Error scanning {tf}: {str(e)}")
                         continue
                 
-                # Small pause between timeframe cycles
+                # Small pause between cycles
                 time.sleep(1)
             
-            self.logger.info(f"✅ Hammer scan completed. Found {hammer_count} hammers.")
+            self.logger.info(f"✅ Scan completed. Found {hammer_count} hammers.")
             
             if hammer_count > 0:
                 self._set_cooldown(instrument)
@@ -4151,8 +4496,29 @@ class HammerPatternScanner:
             return False
             
         except Exception as e:
-            self.logger.error(f"❌ Error in hammer scan: {str(e)}")
+            self.logger.error(f"❌ Error in hammer scan: {str(e)}", exc_info=True)
             return False
+    
+    def _get_next_candle_close_time(self, timeframe, current_time):
+        """Calculate next candle close time"""
+        if timeframe.startswith('M'):
+            minutes = int(timeframe[1:])
+            current_minute = current_time.minute
+            minutes_past = current_minute % minutes
+            minutes_to_close = minutes - minutes_past
+            
+            # If exactly at close time, wait for next candle
+            if minutes_to_close == 0:
+                minutes_to_close = minutes
+            
+            next_close = current_time + timedelta(minutes=minutes_to_close)
+            next_close = next_close.replace(second=0, microsecond=0)
+        else:
+            # For hourly timeframes (shouldn't be used for hammer scanning)
+            next_close = current_time + timedelta(hours=1)
+            next_close = next_close.replace(minute=0, second=0, microsecond=0)
+        
+        return next_close
     
     def _should_stop_scanning(self, instrument, trigger_data, scan_start_time, 
                              max_duration, hammer_count):
