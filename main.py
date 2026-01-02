@@ -4702,17 +4702,56 @@ class HammerPatternScanner:
             return {'rsi': 50, 'macd_line': 0, 'vwap': 0}
     
     def save_trade_to_csv(self, trade_data):
-        """Save trade data to CSV"""
+        """Save trade data to CSV with proper field handling"""
         try:
-            file_exists = os.path.exists(self.csv_file_path)
+            # Ensure the file exists and has headers
+            if not os.path.exists(self.csv_file_path):
+                self.init_csv_storage()
             
-            with open(self.csv_file_path, 'a', newline='') as f:
-                writer = csv.DictWriter(f, fieldnames=trade_data.keys())
-                if not file_exists:
+            # Read existing headers if file exists and has content
+            existing_headers = []
+            try:
+                with open(self.csv_file_path, 'r') as f:
+                    reader = csv.reader(f)
+                    first_row = next(reader, None)
+                    if first_row:
+                        existing_headers = first_row
+            except (StopIteration, FileNotFoundError):
+                existing_headers = []
+            
+            # If no headers or file is empty, reinitialize
+            if not existing_headers:
+                self.init_csv_storage()
+                with open(self.csv_file_path, 'r') as f:
+                    reader = csv.reader(f)
+                    existing_headers = next(reader, [])
+            
+            # Ensure all trade_data keys are in headers (add missing ones)
+            missing_headers = [key for key in trade_data.keys() if key not in existing_headers]
+            if missing_headers:
+                existing_headers.extend(missing_headers)
+                # Rewrite file with new headers
+                data = []
+                with open(self.csv_file_path, 'r') as f:
+                    reader = csv.DictReader(f)
+                    data = list(reader)
+                
+                with open(self.csv_file_path, 'w', newline='') as f:
+                    writer = csv.DictWriter(f, fieldnames=existing_headers)
                     writer.writeheader()
-                writer.writerow(trade_data)
+                    writer.writerows(data)
+                
+                self.logger.info(f"📁 Added missing headers: {missing_headers}")
             
-            self.logger.info(f"💾 Trade saved: {trade_data['trade_id']}")
+            # Write the trade data
+            with open(self.csv_file_path, 'a', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=existing_headers)
+                
+                # Create a row with all headers, filling missing ones with empty string
+                row = {header: trade_data.get(header, '') for header in existing_headers}
+                writer.writerow(row)
+            
+            self.logger.info(f"💾 Trade saved to CSV: {trade_data['trade_id']}")
             return True
             
         except Exception as e:
