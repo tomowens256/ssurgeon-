@@ -4002,25 +4002,27 @@ class HammerPatternScanner:
             return False
     
     def is_hammer_candle(self, candle, direction):
-        """Check if candle is a valid hammer"""
+        """Strict hammer detection - 50% wick rule only"""
         total_range = candle['high'] - candle['low']
         if total_range == 0:
             return False, 0, 0
         
-        body_size = abs(candle['close'] - candle['open'])
+        # Calculate wicks
         upper_wick = candle['high'] - max(candle['close'], candle['open'])
         lower_wick = min(candle['close'], candle['open']) - candle['low']
         
-        upper_ratio = upper_wick / total_range
-        lower_ratio = lower_wick / total_range
+        # Calculate ratios
+        upper_ratio = upper_wick / total_range if total_range > 0 else 0
+        lower_ratio = lower_wick / total_range if total_range > 0 else 0
         
+        # Strict 50% wick rule
         if direction == 'bearish':
-            # Bearish hammer: upper wick > 50%, little lower wick
-            if upper_ratio > 0.5 and lower_ratio < 0.3:
+            # Bearish hammer: upper wick > 50%
+            if upper_ratio > 0.5:
                 return True, upper_ratio, lower_ratio
         else:  # bullish
-            # Bullish hammer: lower wick > 50%, little upper wick
-            if lower_ratio > 0.5 and upper_ratio < 0.3:
+            # Bullish hammer: lower wick > 50%
+            if lower_ratio > 0.5:
                 return True, upper_ratio, lower_ratio
         
         return False, upper_ratio, lower_ratio
