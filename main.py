@@ -6488,7 +6488,6 @@ class UltimateTradingSystem:
     
     def _scan_fvg_with_smt_tap(self):
         """Find FVGs where SMT's SECOND SWING traded in FVG zone - USING CLOSED CANDLES ONLY"""
-        logger.info(f"🔍 SCANNING: FVG + SMT Second Swing Tap (Cross-TF) - PSP REQUIRED - CLOSED CANDLES ONLY")
         
         # CORRECT CROSS-TIMEFRAME MAPPING
         fvg_to_smt_cycles = {
@@ -6508,17 +6507,14 @@ class UltimateTradingSystem:
                     # ✅ NEW: Use only CLOSED candles for FVG detection
                     if 'complete' in data.columns:
                         closed_data = data[data['complete'] == True].copy()
-                        logger.info(f"📊 {instrument} {fvg_tf}: {len(data)} total candles, {len(closed_data)} closed candles")
                         
                         if len(closed_data) < 5:  # Need at least 5 closed candles
-                            logger.warning(f"⚠️ Not enough closed candles for {instrument} {fvg_tf}: {len(closed_data)}")
                             continue
                         
                         # Use FVGDetector to get FVGs from CLOSED CANDLES ONLY
                         fvgs = self.fvg_detector.scan_tf(closed_data, fvg_tf, instrument)
                     else:
                         # Fallback if no 'complete' column
-                        logger.warning(f"⚠️ No 'complete' column in {instrument} {fvg_tf} data")
                         fvgs = self.fvg_detector.scan_tf(data, fvg_tf, instrument)
                     
                     for fvg in fvgs:
@@ -6537,8 +6533,6 @@ class UltimateTradingSystem:
                         }
                         all_fvgs.append(fvg_idea)
         
-        logger.info(f"🔍 Found {len(all_fvgs)} FVGs from CLOSED CANDLES")
-        
         for fvg_idea in all_fvgs:
             fvg_direction = fvg_idea['direction']
             fvg_timeframe = fvg_idea['timeframe']
@@ -6549,8 +6543,6 @@ class UltimateTradingSystem:
             
             # Get which SMT cycles can tap this FVG timeframe
             relevant_cycles = fvg_to_smt_cycles.get(fvg_timeframe, [])
-            
-            # logger.info(f"🔍 Checking FVG {fvg_idea['fvg_name']} formed at {fvg_formation_time} - Can be tapped by: {relevant_cycles}")
             
             # Check all active SMTs
             for smt_key, smt_feature in self.feature_box.active_features['smt'].items():
@@ -6570,9 +6562,6 @@ class UltimateTradingSystem:
                 
                 # ✅ CHECK PSP REQUIREMENT FIRST
                 has_psp = smt_feature['psp_data'] is not None
-                # if not has_psp:
-                #     logger.info(f"⏳ Skipping FVG+SMT: {smt_cycle} SMT has no PSP confirmation")
-                #     continue  # Skip SMTs without PSP
                 
                 # CRITICAL: Check temporal relationship BEFORE checking tap
                 # Get swing_times - it's a dictionary, not a list!
@@ -6588,7 +6577,6 @@ class UltimateTradingSystem:
                 asset_curr = swing_times.get(asset_key, {})
                 
                 if not asset_curr:
-                    logger.info(f"⚠️ No swing data for {fvg_asset} in SMT {smt_cycle}")
                     continue
                 
                 # Extract second swing time (could be dict or Timestamp)
@@ -6598,13 +6586,7 @@ class UltimateTradingSystem:
                     second_swing_time = asset_curr  # Assuming it's already a Timestamp
                 
                 if not second_swing_time:
-                    logger.info(f"⚠️ No second swing time found for {fvg_asset} in SMT {smt_cycle}")
                     continue
-                
-                # REJECT if SMT second swing is BEFORE FVG formation
-                # if second_swing_time <= fvg_formation_time:
-                #     logger.info(f"❌ FVG+SMT REJECTED: SMT {smt_cycle} second swing at {second_swing_time} is BEFORE FVG formation at {fvg_formation_time}")
-                #     continue  # Skip this SMT
                 
                 # Check if SMT's second swing traded in FVG zone (CROSS-TIMEFRAME)
                 tapped = self._check_cross_tf_smt_second_swing_in_fvg(
@@ -6615,9 +6597,6 @@ class UltimateTradingSystem:
                 if tapped:
                     # Check if only ONE asset tapped (HP FVG)
                     is_hp_fvg = self._check_hp_fvg_fix(fvg_idea, fvg_asset)
-                    
-                    logger.info(f"✅ FVG+SMT TAP CONFIRMED WITH PSP: {smt_cycle} {smt_data['direction']} "
-                               f"tapped {fvg_timeframe} FVG on {fvg_asset}, HP: {is_hp_fvg}")
                     
                     # ✅ TRIGGER HAMMER SCANNER (CORRECTED VERSION)
                     try:
@@ -6644,18 +6623,18 @@ class UltimateTradingSystem:
                             
                             # Trigger hammer scanner
                             if hasattr(self, 'hammer_scanner') and self.hammer_scanner:
-                                logger.info(f"🔨 Triggering hammer scanner for {fvg_asset}")
                                 self.hammer_scanner.on_signal_detected(trigger_data)
                             else:
-                                logger.warning(f"⚠️ Hammer scanner not available for {self.pair_group}")
+                                # Keep this warning as it indicates a configuration issue
+                                logger.warning(f"Hammer scanner not available for {self.pair_group}")
                                 
                     except Exception as e:
+                        # Keep error logging for exceptions
                         logger.error(f"Error triggering hammer scanner: {str(e)}")
                         signal_result = False
                     
                     return signal_result
         
-        logger.info(f"🔍 No FVG+SMT setups with PSP found")
         return False
 
     def _check_cross_tf_smt_second_swing_in_fvg(self, smt_data, asset, fvg_low, fvg_high, fvg_direction, fvg_tf, smt_cycle, fvg_formation_time):
