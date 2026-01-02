@@ -3287,7 +3287,7 @@ class HybridTimingSystem:
             if config['next_scan']:
                 time_until = (config['next_scan'] - now).total_seconds()
                 if time_until > 0:
-                    next_scan_times.append(30)
+                    next_scan_times.append(20)
         
         if not next_scan_times:
             return 20  # Default 1 minute
