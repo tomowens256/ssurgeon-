@@ -4945,7 +4945,7 @@ class UltimateTradingSystem:
                 'H1': ['daily'], 
                 'M15': ['daily', '90min']
             }
-        # Initialize Hammer Pattern Scanner
+        # In UltimateTradingSystem.__init__
         hammer_credentials = {
             'telegram_token': telegram_token,
             'telegram_chat_id': telegram_chat_id,
@@ -4954,7 +4954,7 @@ class UltimateTradingSystem:
         self.hammer_scanner = HammerPatternScanner(
             hammer_credentials,
             csv_base_path='/content/drive/MyDrive/hammer_trades',
-            logger=logger  # Pass the main logger
+            logger=logger  # Pass the logger here
         )
         self.hammer_scanner = HammerPatternScanner(hammer_credentials)
         self.hammer_scanner.start()
