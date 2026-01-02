@@ -4326,39 +4326,76 @@ class HammerPatternScanner:
     def init_csv_storage(self):
         """Initialize CSV file with minimal columns"""
         try:
-            if not os.path.exists(self.csv_file_path):
-                headers = [
-                    # Core Identification & Timing
-                    'timestamp', 'signal_id', 'trade_id', 'instrument', 'hammer_timeframe',
-                    'direction', 'entry_time', 'entry_price',
-                    
-                    # Trade Levels (distances only)
-                    'sl_distance_pips', 'tp_1_1_distance', 'tp_1_2_distance', 'tp_1_3_distance',
-                    'tp_1_4_distance', 'tp_1_5_distance', 'tp_1_6_distance', 'tp_1_7_distance',
-                    'tp_1_8_distance', 'tp_1_9_distance', 'tp_1_10_distance',
-                    
-                    # Trigger Criteria & Context
-                    'criteria', 'trigger_timeframe',
-                    'fvg_formation_time', 'sd_formation_time', 'crt_formation_time',
-                    'smt_cycle', 'smt_quarters', 'has_psp', 'is_hp_fvg', 'is_hp_zone',
-                    
-                    # Market Context
-                    'session_color', 'rsi', 'macd_line', 'vwap',
-                    
-                    # Result Tracking
-                    'exit_time', 'time_to_exit_seconds', 'tp_level_hit'
-                ]
+            # Ensure directory exists
+            os.makedirs(os.path.dirname(self.csv_base_path), exist_ok=True)
+            
+            # Define the complete file path
+            self.csv_file_path = f"{self.csv_base_path}_hammer_trades.csv"
+            
+            headers = [
+                # Core Identification & Timing
+                'timestamp', 'signal_id', 'trade_id', 'instrument', 'hammer_timeframe',
+                'direction', 'entry_time', 'entry_price',
                 
+                # Price Levels
+                'sl_price', 'tp_1_4_price',  # NEW: Actual price levels
+                
+                # Trade Levels (distances in pips)
+                'sl_distance_pips', 'tp_1_1_distance', 'tp_1_2_distance', 'tp_1_3_distance',
+                'tp_1_4_distance', 'tp_1_5_distance', 'tp_1_6_distance', 'tp_1_7_distance',
+                'tp_1_8_distance', 'tp_1_9_distance', 'tp_1_10_distance',
+                
+                # Risk Management Lots
+                'risk_10_lots', 'risk_100_lots',  # NEW: Position sizing
+                
+                # Trigger Criteria & Context
+                'criteria', 'trigger_timeframe',
+                'fvg_formation_time', 'sd_formation_time', 'crt_formation_time',
+                'smt_cycle', 'smt_quarters', 'has_psp', 'is_hp_fvg', 'is_hp_zone',
+                
+                # Market Context
+                'session_color', 'rsi', 'macd_line', 'vwap',
+                
+                # Result Tracking
+                'exit_time', 'time_to_exit_seconds', 'tp_level_hit'
+            ]
+            
+            # Check if file exists and has headers
+            if not os.path.exists(self.csv_file_path):
                 with open(self.csv_file_path, 'w', newline='') as f:
                     writer = csv.writer(f)
                     writer.writerow(headers)
-                
                 self.logger.info(f"📁 Created CSV with {len(headers)} columns")
             else:
+                # Check if file is empty or missing headers
+                with open(self.csv_file_path, 'r') as f:
+                    first_line = f.readline().strip()
+                    if not first_line:
+                        # File is empty, write headers
+                        with open(self.csv_file_path, 'w', newline='') as f:
+                            writer = csv.writer(f)
+                            writer.writerow(headers)
+                        self.logger.info(f"📁 File was empty, wrote headers")
+                    elif ',' not in first_line:  # No proper CSV format
+                        # Backup and recreate
+                        backup_path = f"{self.csv_file_path}.backup"
+                        os.rename(self.csv_file_path, backup_path)
+                        with open(self.csv_file_path, 'w', newline='') as f:
+                            writer = csv.writer(f)
+                            writer.writerow(headers)
+                        self.logger.info(f"📁 Corrupted file backed up and recreated")
                 self.logger.info(f"📁 CSV file exists, will append")
                 
         except Exception as e:
             self.logger.error(f"❌ Failed to initialize CSV: {str(e)}")
+            # Create file anyway with headers
+            try:
+                with open(self.csv_file_path, 'w', newline='') as f:
+                    writer = csv.writer(f)
+                    writer.writerow(headers)
+                self.logger.info(f"📁 Created CSV after error")
+            except Exception as e2:
+                self.logger.error(f"❌ Could not create CSV at all: {str(e2)}")
     
     def _generate_signal_id(self, trigger_data):
         """Create a unique signal ID for grouping multiple hammers"""
