@@ -4720,7 +4720,7 @@ class HammerPatternScanner:
             return False
     
     def send_hammer_signal(self, trade_data, trigger_data):
-        """Send hammer signal to Telegram"""
+        """Send hammer signal to Telegram with price levels and risk management"""
         try:
             direction = trade_data['direction']
             instrument = trade_data['instrument']
@@ -4731,16 +4731,29 @@ class HammerPatternScanner:
             trigger_humor = get_humorous_phrase(direction.lower(), criteria)
             hammer_humor = get_hammer_humor(direction.lower(), tf)
             
-            # Build message
+            # Build message with PRICE LEVELS and LOT SIZES
             message = f"🔨 *HAMMER ENTRY SIGNAL* 🔨\n\n"
             message += f"*Yoo bro! {trigger_humor}*\n"
             message += f"*{hammer_humor}*\n\n"
             
             message += f"*📊 CRITERIA:* {criteria}\n"
             message += f"*🎯 ENTRY:* {direction} {instrument} on {tf}\n"
-            message += f"*💰 PRICE:* {trade_data['entry_price']:.5f}\n"
-            message += f"*🛑 SL:* {trade_data['sl_distance_pips']:.1f} pips\n"
-            message += f"*🎯 TP 1:4:* {trade_data.get('tp_1_4_distance', 0):.1f} pips\n"
+            message += f"*💰 ENTRY PRICE:* {trade_data['entry_price']:.5f}\n\n"
+            
+            # PRICE LEVELS
+            message += f"*🛑 STOP LOSS:*\n"
+            message += f"  • Price: {trade_data['sl_price']:.5f}\n"
+            message += f"  • Distance: {trade_data['sl_distance_pips']:.1f} pips\n\n"
+            
+            message += f"*🎯 TAKE PROFIT 1:4:*\n"
+            message += f"  • Price: {trade_data['tp_1_4_price']:.5f}\n"
+            message += f"  • Distance: {trade_data.get('tp_1_4_distance', 0):.1f} pips\n\n"
+            
+            # RISK MANAGEMENT - LOT SIZES
+            message += f"*💰 RISK MANAGEMENT (MICRO LOTS):*\n"
+            message += f"  • Risk $10: {trade_data['risk_10_lots']:.2f} lots\n"
+            message += f"  • Risk $100: {trade_data['risk_100_lots']:.2f} lots\n\n"
+            
             message += f"*⏰ TIME:* {trade_data['entry_time']}\n"
             message += f"*🎨 SESSION:* {trade_data['session_color']}\n\n"
             
@@ -4761,7 +4774,7 @@ class HammerPatternScanner:
                 message += f"• Has PSP: {'✅' if trade_data['has_psp'] else '❌'}\n"
             
             message += f"\n*💡 TRADER NOTE:* Signal ID: {trade_data['signal_id']} (groups all hammers)\n"
-            message += f"*🤙 REMEMBER:* Trade safe, bro!\n\n"
+            message += f"*🤙 REMEMBER:* Trade safe, bro! Manage your risk!\n\n"
             
             message += f"#{instrument.replace('_', '')} #{tf}Hammer #{direction}Signal #{criteria.replace('+', '')}"
             
@@ -4774,6 +4787,8 @@ class HammerPatternScanner:
             
             if success:
                 self.logger.info(f"📤 Signal sent: {instrument} {tf} {direction}")
+                self.logger.info(f"📊 SL Price: {trade_data['sl_price']:.5f}, TP 1:4 Price: {trade_data['tp_1_4_price']:.5f}")
+                self.logger.info(f"💰 Lot Sizes: ${trade_data['risk_10_lots']:.2f} (risk $10), ${trade_data['risk_100_lots']:.2f} (risk $100)")
             else:
                 self.logger.error(f"❌ Failed to send signal")
             
