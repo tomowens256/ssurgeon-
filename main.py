@@ -4049,110 +4049,101 @@ class HammerPatternScanner:
         return trigger_map.get(trigger_tf, ['M5', 'M15'])
     
     def scan_fibonacci_hammer(self, trigger_data):
-        """Continuous hammer scanning on lower timeframes until invalidation"""
+        """Scan for hammers in Fibonacci zones on closed candles only"""
         try:
-            # Extract trigger data
             instrument = trigger_data.get('instrument')
             direction = trigger_data.get('direction')
             trigger_timeframe = trigger_data.get('trigger_timeframe')
-            criteria = trigger_data.get('type')  # FVG+SMT, SD+SMT, CRT+SMT
+            criteria = trigger_data.get('type')
             signal_data = trigger_data.get('signal_data', {})
             
-            self.logger.info(f"🔨 Starting CONTINUOUS hammer scanning for {instrument}")
-            self.logger.info(f"   Criteria: {criteria}, Direction: {direction}")
+            self.logger.info(f"🔨 Starting hammer scan for {instrument} ({criteria}, {direction})")
             
             # Check cooldown
             if self._is_in_cooldown(instrument):
-                self.logger.info(f"⏳ {instrument} is in cooldown, skipping")
+                self.logger.info(f"⏳ {instrument} in cooldown")
                 return False
             
-            # Get ONLY the hammer timeframes for this instrument
+            # Get Fibonacci zones from signal data
+            fib_zones = self._get_fib_zones(trigger_data)
+            if not fib_zones:
+                self.logger.info(f"❌ No Fibonacci zones defined for {instrument}")
+                return False
+            
+            self.logger.info(f"📊 Fibonacci zones: {fib_zones}")
+            
+            # Get hammer timeframes
             timeframes = self.get_aligned_timeframes(instrument, criteria, trigger_timeframe)
-            self.logger.info(f"🔨 Hammer timeframes to scan: {timeframes}")
+            self.logger.info(f"🔨 Timeframes to scan: {timeframes}")
             
-            # Generate signal ID (groups all hammers from this trigger)
             signal_id = self._generate_signal_id(trigger_data)
-            self.logger.info(f"🔨 Signal ID: {signal_id} (for grouping hammers)")
             
-            # Track found hammers to avoid duplicates
-            found_hammers = set()
-            
-            # Start continuous scanning loop
-            scan_start_time = datetime.now(NY_TZ)
-            max_scan_duration = timedelta(hours=2)  # Scan for max 2 hours
+            # Start continuous scanning
+            scan_start = datetime.now(NY_TZ)
+            max_scan_time = scan_start + timedelta(hours=2)
             hammer_count = 0
             
-            while True:
-                current_time = datetime.now(NY_TZ)
-                
-                # Check if we should stop scanning
-                if self._should_stop_scanning(instrument, trigger_data, scan_start_time, 
-                                            max_scan_duration, hammer_count):
-                    self.logger.info(f"🛑 Stopping hammer scan for {instrument}")
-                    break
-                
-                self.logger.info(f"🔄 SCAN CYCLE: Checking {len(timeframes)} timeframes")
-                
-                # Scan each timeframe
+            while datetime.now(NY_TZ) < max_scan_time:
                 for tf in timeframes:
                     try:
-                        self.logger.info(f"🔍 Scanning {instrument} {tf} for hammer...")
+                        # Wait for current candle to close
+                        next_close = self._get_next_candle_close_time(tf)
+                        wait_seconds = (next_close - datetime.now(NY_TZ)).total_seconds()
                         
-                        # Fetch data for this timeframe
-                        df = fetch_candles(instrument, tf, count=20, api_key=self.credentials['oanda_api_key'])
+                        if wait_seconds > 0:
+                            self.logger.info(f"⏰ Waiting {wait_seconds:.0f}s for {tf} candle close at {next_close.strftime('%H:%M:%S')}")
+                            time.sleep(wait_seconds)
                         
-                        if df.empty or len(df) < 3:
-                            self.logger.warning(f"⚠️ No data for {instrument} {tf}")
+                        # Candle just closed - fetch data
+                        self.logger.info(f"🔍 Scanning CLOSED {tf} candle...")
+                        df = fetch_candles(instrument, tf, count=10, api_key=self.credentials['oanda_api_key'])
+                        
+                        if df.empty or len(df) < 2:
                             continue
                         
-                        self.logger.info(f"✅ Got {len(df)} candles for {tf}")
+                        # Get the last CLOSED candle
+                        closed_candle = df.iloc[-2]  # -1 is current forming, -2 is last closed
+                        candle_time = closed_candle['time']
                         
-                        # Check last 5 candles for hammer patterns
-                        for i in range(2, 7):  # Check candles at positions -2 through -6
-                            if len(df) <= i:
-                                continue
+                        # Check if price is in Fibonacci zone
+                        if not self._is_price_in_fib_zone(closed_candle['close'], fib_zones):
+                            self.logger.info(f"❌ Candle close {closed_candle['close']:.5f} not in Fibonacci zone")
+                            continue
+                        
+                        # Check for hammer pattern
+                        is_hammer, upper_ratio, lower_ratio = self.is_hammer_candle(closed_candle, direction)
+                        
+                        if is_hammer:
+                            self.logger.info(f"✅ HAMMER FOUND on {tf} at {candle_time}")
+                            self.logger.info(f"   Wick ratios: upper={upper_ratio:.2f}, lower={lower_ratio:.2f}")
                             
-                            candle = df.iloc[-i]
-                            candle_time = candle['time']
+                            # Wait for next candle open
+                            next_open = next_close + timedelta(seconds=3)
+                            open_wait = (next_open - datetime.now(NY_TZ)).total_seconds()
                             
-                            # Skip if we already processed this candle
-                            hammer_key = f"{tf}_{candle_time}"
-                            if hammer_key in found_hammers:
-                                continue
+                            if open_wait > 0:
+                                self.logger.info(f"⏰ Waiting {open_wait:.0f}s for next candle open")
+                                time.sleep(open_wait)
                             
-                            # Check for hammer pattern
-                            is_hammer, upper_ratio, lower_ratio = self.is_hammer_candle(candle, direction)
+                            # Enter at next candle open
+                            hammer_count += 1
+                            self._enter_hammer_trade(
+                                instrument, tf, closed_candle, direction, 
+                                criteria, signal_data, signal_id, trigger_data
+                            )
                             
-                            if is_hammer:
-                                self.logger.info(f"🎯 HAMMER FOUND on {tf} at {candle_time}")
-                                self.logger.info(f"   Candle: O={candle['open']:.5f}, H={candle['high']:.5f}, L={candle['low']:.5f}, C={candle['close']:.5f}")
-                                
-                                # Check if setup is still valid
-                                if self._is_setup_still_valid(instrument, candle, direction, trigger_data):
-                                    # Process and record this hammer
-                                    if self._process_and_record_hammer(
-                                        instrument, tf, candle, direction, criteria, 
-                                        signal_data, signal_id, trigger_data
-                                    ):
-                                        hammer_count += 1
-                                        found_hammers.add(hammer_key)
-                                        self.logger.info(f"📝 Hammer #{hammer_count} recorded for {instrument}")
-                                else:
-                                    self.logger.info(f"❌ Setup invalidated - stopping scan")
-                                    return True  # Return True because we found hammers before invalidation
+                            # Continue scanning for more hammers
+                            self.logger.info(f"🔄 Continuing scan for more hammers...")
                     
                     except Exception as e:
                         self.logger.error(f"❌ Error scanning {tf}: {str(e)}")
                         continue
                 
-                # Calculate sleep time based on shortest timeframe
-                sleep_seconds = self._calculate_sleep_time(timeframes)
-                self.logger.info(f"💤 Sleeping for {sleep_seconds}s before next scan...")
-                time.sleep(sleep_seconds)
+                # Small pause between timeframe cycles
+                time.sleep(1)
             
-            self.logger.info(f"✅ Hammer scan completed for {instrument}. Found {hammer_count} hammers.")
+            self.logger.info(f"✅ Hammer scan completed. Found {hammer_count} hammers.")
             
-            # Set cooldown only if we found hammers
             if hammer_count > 0:
                 self._set_cooldown(instrument)
                 return True
@@ -4160,7 +4151,7 @@ class HammerPatternScanner:
             return False
             
         except Exception as e:
-            self.logger.error(f"❌ Error in continuous hammer scan: {str(e)}", exc_info=True)
+            self.logger.error(f"❌ Error in hammer scan: {str(e)}")
             return False
     
     def _should_stop_scanning(self, instrument, trigger_data, scan_start_time, 
