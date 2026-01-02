@@ -3917,7 +3917,7 @@ class SupplyDemandDetector:
             # ===== CORRECTED INVALIDATION RULES =====
             # Check expiration: 35 candles from creation
             candles_since_creation = len(subsequent_candles)
-            if candles_since_creation >= 35:
+            if candles_since_creation >= 100:
                 logger.info(f"⏰ ZONE EXPIRED (35 candles): {zone.get('zone_name', 'Unknown')}")
                 return False
             
