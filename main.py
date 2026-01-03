@@ -4406,7 +4406,7 @@ class HammerPatternScanner:
         
         # Initialize NewsCalendar if RapidAPI key is available now
         self.news_calendar = None
-        rapidapi_key = credentials.get('rapidapi_key')
+        rapidapi_key = os.getenv('rapidapi_key')
         if rapidapi_key:
             try:
                 self.news_calendar = NewsCalendar(
