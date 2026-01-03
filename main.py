@@ -4731,6 +4731,321 @@ class HammerPatternScanner:
         except Exception as e:
             self.logger.error(f"Error calculating indicators: {str(e)}")
             return {'rsi': 50, 'macd_line': 0, 'vwap': 0}
+
+    def calculate_advanced_features(self, df, candle_index):
+        """Calculate advanced features for the hammer candle"""
+        try:
+            if df.empty or len(df) < 100:
+                return {}
+            
+            # Make a copy to avoid modifying original
+            df_features = df.copy()
+            
+            # Ensure we have necessary columns
+            if 'adj close' not in df_features.columns:
+                df_features['adj close'] = df_features['close']
+            
+            # Moving averages
+            for length in [10, 20, 30, 40, 60, 100]:
+                df_features[f'ma_{length}'] = df_features['adj close'].rolling(window=length, min_periods=1).mean()
+            
+            # VWAP calculation
+            try:
+                typical_price = (df_features['high'] + df_features['low'] + df_features['close']) / 3
+                vwap_num = (typical_price * df_features['volume']).cumsum()
+                vwap_den = df_features['volume'].cumsum()
+                df_features['vwap_value'] = vwap_num / vwap_den
+                df_features['vwap_std'] = df_features['vwap_value'].rolling(window=20, min_periods=1).std()
+            except:
+                df_features['vwap_value'] = df_features['adj close']
+                df_features['vwap_std'] = 0
+            
+            # VWAP bands
+            try:
+                for i in range(1, 4):
+                    df_features[f'upper_band_{i}'] = df_features['vwap_value'] + i * df_features['vwap_std']
+                    df_features[f'lower_band_{i}'] = df_features['vwap_value'] - i * df_features['vwap_std']
+            except:
+                for i in range(1, 4):
+                    df_features[f'upper_band_{i}'] = df_features['vwap_value']
+                    df_features[f'lower_band_{i}'] = df_features['vwap_value']
+            
+            # Touch indicators (using the hammer candle)
+            try:
+                hammer_low = df_features['low'].iloc[candle_index]
+                hammer_high = df_features['high'].iloc[candle_index]
+                
+                for i in range(1, 4):
+                    touches_upper = (hammer_low <= df_features[f'upper_band_{i}'].iloc[candle_index]) & \
+                                   (df_features[f'upper_band_{i}'].iloc[candle_index] <= hammer_high)
+                    touches_lower = (hammer_low <= df_features[f'lower_band_{i}'].iloc[candle_index]) & \
+                                   (df_features[f'lower_band_{i}'].iloc[candle_index] <= hammer_high)
+                    
+                    df_features[f'touches_upper_band_{i}'] = int(touches_upper)
+                    df_features[f'touches_lower_band_{i}'] = int(touches_lower)
+                
+                touches_vwap = (hammer_low <= df_features['vwap_value'].iloc[candle_index]) & \
+                              (df_features['vwap_value'].iloc[candle_index] <= hammer_high)
+                df_features['touches_vwap'] = int(touches_vwap)
+            except:
+                for i in range(1, 4):
+                    df_features[f'touches_upper_band_{i}'] = 0
+                    df_features[f'touches_lower_band_{i}'] = 0
+                df_features['touches_vwap'] = 0
+            
+            # Distance ratios
+            try:
+                hammer_close = df_features['close'].iloc[candle_index]
+                for i in range(1, 4):
+                    upper_dist = abs(hammer_close - df_features[f'upper_band_{i}'].iloc[candle_index])
+                    lower_dist = abs(hammer_close - df_features[f'lower_band_{i}'].iloc[candle_index])
+                    
+                    df_features[f'far_ratio_upper_band_{i}'] = upper_dist / (df_features['vwap_std'].iloc[candle_index] + 1e-6)
+                    df_features[f'far_ratio_lower_band_{i}'] = lower_dist / (df_features['vwap_std'].iloc[candle_index] + 1e-6)
+                
+                vwap_dist = abs(hammer_close - df_features['vwap_value'].iloc[candle_index])
+                df_features['far_ratio_vwap'] = vwap_dist / (df_features['vwap_std'].iloc[candle_index] + 1e-6)
+            except:
+                for i in range(1, 4):
+                    df_features[f'far_ratio_upper_band_{i}'] = 0
+                    df_features[f'far_ratio_lower_band_{i}'] = 0
+                df_features['far_ratio_vwap'] = 0
+            
+            # Bearish stack
+            try:
+                bearish = (
+                    (df_features['ma_20'].iloc[candle_index] < df_features['ma_30'].iloc[candle_index]) & 
+                    (df_features['ma_30'].iloc[candle_index] < df_features['ma_40'].iloc[candle_index]) & 
+                    (df_features['ma_40'].iloc[candle_index] < df_features['ma_60'].iloc[candle_index])
+                )
+                df_features['bearish_stack'] = int(bearish)
+            except:
+                df_features['bearish_stack'] = 0
+            
+            # Trend strength
+            try:
+                trend_up = (
+                    (df_features['ma_20'].iloc[candle_index] > df_features['ma_30'].iloc[candle_index]) & 
+                    (df_features['ma_30'].iloc[candle_index] > df_features['ma_40'].iloc[candle_index]) & 
+                    (df_features['ma_40'].iloc[candle_index] > df_features['ma_60'].iloc[candle_index])
+                )
+                trend_down = (
+                    (df_features['ma_20'].iloc[candle_index] < df_features['ma_30'].iloc[candle_index]) & 
+                    (df_features['ma_30'].iloc[candle_index] < df_features['ma_40'].iloc[candle_index]) & 
+                    (df_features['ma_40'].iloc[candle_index] < df_features['ma_60'].iloc[candle_index])
+                )
+                df_features['trend_strength_up'] = int(trend_up)
+                df_features['trend_strength_down'] = int(trend_down)
+            except:
+                df_features['trend_strength_up'] = 0
+                df_features['trend_strength_down'] = 0
+            
+            # Previous volume
+            try:
+                if candle_index > 0:
+                    df_features['prev_volume'] = df_features['volume'].iloc[candle_index - 1]
+                else:
+                    df_features['prev_volume'] = df_features['volume'].iloc[candle_index]
+            except:
+                df_features['prev_volume'] = 0
+            
+            # Extract values for the hammer candle
+            features = {}
+            for col in ['vwap_value', 'vwap_std', 'bearish_stack', 'trend_strength_up', 
+                       'trend_strength_down', 'prev_volume']:
+                features[col] = df_features[col].iloc[candle_index]
+            
+            for length in [10, 20, 30, 40, 60, 100]:
+                features[f'ma_{length}'] = df_features[f'ma_{length}'].iloc[candle_index]
+            
+            for i in range(1, 4):
+                features[f'upper_band_{i}'] = df_features[f'upper_band_{i}'].iloc[candle_index]
+                features[f'lower_band_{i}'] = df_features[f'lower_band_{i}'].iloc[candle_index]
+                features[f'touches_upper_band_{i}'] = df_features[f'touches_upper_band_{i}']
+                features[f'touches_lower_band_{i}'] = df_features[f'touches_lower_band_{i}']
+                features[f'far_ratio_upper_band_{i}'] = df_features[f'far_ratio_upper_band_{i}']
+                features[f'far_ratio_lower_band_{i}'] = df_features[f'far_ratio_lower_band_{i}']
+            
+            features['touches_vwap'] = df_features['touches_vwap']
+            features['far_ratio_vwap'] = df_features['far_ratio_vwap']
+            
+            return features
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error calculating advanced features: {str(e)}")
+            return {}
+    
+    def calculate_inducement(self, instrument, direction, fib_zones, 
+                             formation_time, second_swing_time, zone_timeframe):
+        """Calculate inducement (swing highs/lows count between formation and second swing)"""
+        try:
+            if not fib_zones or len(fib_zones) < 3:  # Need at least 0.5 fib zone
+                return 0
+            
+            # Get the 0.5 Fibonacci zone
+            fib_50_zone = None
+            for zone in fib_zones:
+                if abs(zone.get('ratio', 0) - 0.5) < 0.01:
+                    fib_50_zone = zone
+                    break
+            
+            if not fib_50_zone:
+                return 0
+            
+            # Fetch data between formation time and second swing
+            df = fetch_candles(instrument, zone_timeframe, count=500, 
+                              api_key=self.credentials['oanda_api_key'])
+            
+            if df.empty:
+                return 0
+            
+            # Filter to the time range
+            df_period = df[(df['time'] >= formation_time) & 
+                          (df['time'] <= second_swing_time)]
+            
+            if df_period.empty:
+                return 0
+            
+            # Find swing highs/lows using simple peak detection
+            inducement_count = 0
+            
+            if direction == 'bearish':
+                # Look for swing highs above fib 50%
+                threshold = fib_50_zone.get('high', 0)
+                
+                # Simple peak detection: high is greater than neighbors
+                for i in range(1, len(df_period)-1):
+                    if (df_period['high'].iloc[i] > df_period['high'].iloc[i-1] and
+                        df_period['high'].iloc[i] > df_period['high'].iloc[i+1] and
+                        df_period['high'].iloc[i] > threshold):
+                        inducement_count += 1
+                        
+            else:  # bullish
+                # Look for swing lows below fib 50%
+                threshold = fib_50_zone.get('low', float('inf'))
+                
+                for i in range(1, len(df_period)-1):
+                    if (df_period['low'].iloc[i] < df_period['low'].iloc[i-1] and
+                        df_period['low'].iloc[i] < df_period['low'].iloc[i+1] and
+                        df_period['low'].iloc[i] < threshold):
+                        inducement_count += 1
+            
+            self.logger.info(f"📊 Inducement count: {inducement_count} swing {'highs' if direction == 'bearish' else 'lows'}")
+            return inducement_count
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error calculating inducement: {str(e)}")
+            return 0
+    
+    def calculate_open_tp(self, instrument, direction, entry_price, sl_price):
+        """Calculate open TP (previous day/week/month highs/lows)"""
+        try:
+            from datetime import datetime, timedelta
+            
+            current_time = datetime.now(NY_TZ)
+            
+            # Fetch daily data for last 5 days
+            df_daily = fetch_candles(instrument, 'D', count=5, 
+                                    api_key=self.credentials['oanda_api_key'])
+            
+            # Fetch weekly data for last 4 weeks
+            df_weekly = fetch_candles(instrument, 'W', count=4,
+                                     api_key=self.credentials['oanda_api_key'])
+            
+            # Fetch monthly data for last 3 months
+            df_monthly = fetch_candles(instrument, 'M', count=3,
+                                      api_key=self.credentials['oanda_api_key'])
+            
+            open_tp_candidates = []
+            
+            # Previous day levels
+            if not df_daily.empty and len(df_daily) >= 2:
+                prev_day = df_daily.iloc[-2]
+                
+                # Check if price hasn't traded above/beyond these levels
+                if direction == 'bearish':
+                    # For selling: use previous day low (if price hasn't traded below it)
+                    recent_lows = df_daily['low'].tail(10).min()
+                    if prev_day['low'] < recent_lows:
+                        open_tp_candidates.append({
+                            'price': prev_day['low'],
+                            'type': 'daily_low',
+                            'distance': abs(entry_price - prev_day['low'])
+                        })
+                else:  # bullish
+                    # For buying: use previous day high (if price hasn't traded above it)
+                    recent_highs = df_daily['high'].tail(10).max()
+                    if prev_day['high'] > recent_highs:
+                        open_tp_candidates.append({
+                            'price': prev_day['high'],
+                            'type': 'daily_high',
+                            'distance': abs(entry_price - prev_day['high'])
+                        })
+            
+            # Previous week levels
+            if not df_weekly.empty and len(df_weekly) >= 2:
+                prev_week = df_weekly.iloc[-2]
+                
+                if direction == 'bearish':
+                    recent_lows = df_weekly['low'].tail(5).min()
+                    if prev_week['low'] < recent_lows:
+                        open_tp_candidates.append({
+                            'price': prev_week['low'],
+                            'type': 'weekly_low',
+                            'distance': abs(entry_price - prev_week['low'])
+                        })
+                else:
+                    recent_highs = df_weekly['high'].tail(5).max()
+                    if prev_week['high'] > recent_highs:
+                        open_tp_candidates.append({
+                            'price': prev_week['high'],
+                            'type': 'weekly_high',
+                            'distance': abs(entry_price - prev_week['high'])
+                        })
+            
+            # Previous month levels
+            if not df_monthly.empty and len(df_monthly) >= 2:
+                prev_month = df_monthly.iloc[-2]
+                
+                if direction == 'bearish':
+                    recent_lows = df_monthly['low'].tail(3).min()
+                    if prev_month['low'] < recent_lows:
+                        open_tp_candidates.append({
+                            'price': prev_month['low'],
+                            'type': 'monthly_low',
+                            'distance': abs(entry_price - prev_month['low'])
+                        })
+                else:
+                    recent_highs = df_monthly['high'].tail(3).max()
+                    if prev_month['high'] > recent_highs:
+                        open_tp_candidates.append({
+                            'price': prev_month['high'],
+                            'type': 'monthly_high',
+                            'distance': abs(entry_price - prev_month['high'])
+                        })
+            
+            if not open_tp_candidates:
+                return None, None, None
+            
+            # Pick the closest one
+            closest = min(open_tp_candidates, key=lambda x: x['distance'])
+            
+            # Calculate risk:reward ratio
+            risk = abs(entry_price - sl_price)
+            reward = abs(entry_price - closest['price'])
+            
+            if risk > 0:
+                rr_ratio = round(reward / risk, 2)
+            else:
+                rr_ratio = 0
+            
+            self.logger.info(f"📊 Open TP: {closest['type']} at {closest['price']:.5f}, RR: {rr_ratio}")
+            
+            return closest['price'], rr_ratio, closest['type']
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error calculating open TP: {str(e)}")
+            return None, None, None
     
     def save_trade_to_csv(self, trade_data):
         """Save trade data to CSV with proper field handling"""
