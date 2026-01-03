@@ -5266,6 +5266,161 @@ class HammerPatternScanner:
         self.running = False
         self.logger.info("🔨 Hammer Pattern Scanner stopped")
 
+    def _start_tp_monitoring(self, trade_data):
+        """Start monitoring TPs in background thread"""
+        try:
+            thread = threading.Thread(
+                target=self._monitor_tp_levels,
+                args=(trade_data,),
+                name=f"TPMonitor_{trade_data['trade_id']}",
+                daemon=True
+            )
+            thread.start()
+            self.logger.info(f"📊 Started TP monitoring for {trade_data['trade_id']}")
+        except Exception as e:
+            self.logger.error(f"❌ Error starting TP monitoring: {str(e)}")
+    
+    def _monitor_tp_levels(self, trade_data):
+        """Monitor and record TP hits in background"""
+        try:
+            instrument = trade_data['instrument']
+            direction = trade_data['direction'].lower()
+            entry_price = trade_data['entry_price']
+            sl_price = trade_data['sl_price']
+            
+            # Calculate TP prices
+            tp_prices = {}
+            for i in range(1, 11):
+                distance_pips = trade_data.get(f'tp_1_{i}_distance', 0)
+                pip_multiplier = 100 if 'JPY' in instrument else 10000
+                
+                if direction == 'bearish':
+                    tp_price = entry_price - (distance_pips / pip_multiplier)
+                else:
+                    tp_price = entry_price + (distance_pips / pip_multiplier)
+                
+                tp_prices[i] = tp_price
+            
+            # Open TP price
+            open_tp_price = trade_data.get('open_tp_price')
+            
+            start_time = datetime.now(NY_TZ)
+            monitor_duration = timedelta(hours=24)  # Monitor for 24 hours
+            check_interval = 1  # Check every 1 second
+            
+            while datetime.now(NY_TZ) - start_time < monitor_duration:
+                # Get current price
+                df = fetch_candles(instrument, 'M1', count=2, api_key=self.credentials['oanda_api_key'])
+                if df.empty:
+                    time.sleep(check_interval)
+                    continue
+                
+                current_price = df.iloc[-1]['close']
+                current_time = datetime.now(NY_TZ)
+                
+                # Check SL hit
+                if direction == 'bearish' and current_price >= sl_price:
+                    self._record_tp_result(trade_data, 'SL', -1, current_time)
+                    break
+                elif direction == 'bullish' and current_price <= sl_price:
+                    self._record_tp_result(trade_data, 'SL', -1, current_time)
+                    break
+                
+                # Check regular TPs
+                for i in range(1, 11):
+                    tp_result_key = f'tp_1_{i}_result'
+                    if trade_data.get(tp_result_key) == '':  # Not recorded yet
+                        if direction == 'bearish' and current_price <= tp_prices[i]:
+                            time_seconds = (current_time - start_time).total_seconds()
+                            self._record_tp_result(trade_data, f'TP_{i}', i, current_time, time_seconds)
+                        elif direction == 'bullish' and current_price >= tp_prices[i]:
+                            time_seconds = (current_time - start_time).total_seconds()
+                            self._record_tp_result(trade_data, f'TP_{i}', i, current_time, time_seconds)
+                
+                # Check open TP
+                if (open_tp_price and trade_data.get('open_tp_result') == ''):
+                    if direction == 'bearish' and current_price <= open_tp_price:
+                        time_seconds = (current_time - start_time).total_seconds()
+                        self._record_tp_result(trade_data, 'OPEN_TP', trade_data.get('open_tp_rr', 0), current_time, time_seconds)
+                    elif direction == 'bullish' and current_price >= open_tp_price:
+                        time_seconds = (current_time - start_time).total_seconds()
+                        self._record_tp_result(trade_data, 'OPEN_TP', trade_data.get('open_tp_rr', 0), current_time, time_seconds)
+                
+                time.sleep(check_interval)
+                
+            self.logger.info(f"📊 TP monitoring completed for {trade_data['trade_id']}")
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error in TP monitoring: {str(e)}")
+    
+    def _record_tp_result(self, trade_data, tp_type, result_value, hit_time, time_seconds=None):
+        """Record TP result to CSV"""
+        try:
+            # Update trade_data
+            if tp_type.startswith('TP_'):
+                tp_num = int(tp_type.split('_')[1])
+                trade_data[f'tp_1_{tp_num}_result'] = f"+{result_value}"
+                if time_seconds:
+                    trade_data[f'tp_1_{tp_num}_time_seconds'] = int(time_seconds)
+            elif tp_type == 'OPEN_TP':
+                trade_data['open_tp_result'] = f"+{result_value}"
+                if time_seconds:
+                    trade_data['open_tp_time_seconds'] = int(time_seconds)
+            elif tp_type == 'SL':
+                # Record -1 for all TPs that weren't hit
+                for i in range(1, 11):
+                    if trade_data.get(f'tp_1_{i}_result') == '':
+                        trade_data[f'tp_1_{i}_result'] = "-1"
+                if trade_data.get('open_tp_result') == '':
+                    trade_data['open_tp_result'] = "-1"
+            
+            # Update CSV
+            self._update_trade_in_csv(trade_data)
+            self.logger.info(f"📊 {tp_type} hit: result {result_value}, time {time_seconds}s")
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error recording TP result: {str(e)}")
+    
+    def _update_trade_in_csv(self, trade_data):
+        """Update trade record in CSV"""
+        try:
+            if not os.path.exists(self.csv_file_path):
+                return False
+            
+            # Read all data
+            rows = []
+            with open(self.csv_file_path, 'r', newline='') as f:
+                reader = csv.DictReader(f)
+                fieldnames = reader.fieldnames
+                rows = list(reader)
+            
+            # Find and update the trade
+            updated = False
+            for i, row in enumerate(rows):
+                if row.get('trade_id') == trade_data['trade_id']:
+                    # Update the row with new data
+                    for key, value in trade_data.items():
+                        if key in fieldnames:
+                            rows[i][key] = value
+                    updated = True
+                    break
+            
+            if updated:
+                # Write back to CSV
+                with open(self.csv_file_path, 'w', newline='') as f:
+                    writer = csv.DictWriter(f, fieldnames=fieldnames)
+                    writer.writeheader()
+                    writer.writerows(rows)
+                
+                self.logger.info(f"💾 Updated trade {trade_data['trade_id']} in CSV")
+                return True
+            
+            return False
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error updating CSV: {str(e)}")
+            return False
+
 
 
 
