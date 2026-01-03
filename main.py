@@ -3849,6 +3849,41 @@ class NewsCalendar:
         
         self.logger.info(f"📰 News Calendar initialized for currencies: {self.tracked_currencies}")
         self.logger.info(f"📁 News data path: {self.news_data_path}")
+        self.cache_dir = f"{self.news_data_path}/cache"
+        os.makedirs(self.cache_dir, exist_ok=True)
+
+    def get_daily_news(self, force_fetch: bool = False) -> Dict:
+        """
+        Get today's news. Fetches from API only if no fresh cache exists.
+        Returns cached data otherwise.
+        """
+        today_str = datetime.now(self.ny_tz).strftime('%Y-%m-%d')
+        cache_file = f"{self.cache_dir}/news_cache_{today_str}.json"  # Can also be .csv
+
+        # 1. RETURN CACHED DATA IF IT EXISTS AND IS FRESH
+        if not force_fetch and os.path.exists(cache_file):
+            try:
+                with open(cache_file, 'r') as f:
+                    cached_data = json.load(f)
+                self.logger.info(f"📰 Loaded cached news for {today_str}")
+                return cached_data
+            except Exception as e:
+                self.logger.warning(f"⚠️ Failed to read cache, re-fetching: {e}")
+
+        # 2. OTHERWISE, FETCH FROM API (ONLY THIS ONE CALL)
+        self.logger.info(f"📰 Fetching fresh news for {today_str} from API...")
+        api_data = self._fetch_from_api()  # Your corrected API call logic
+
+        # 3. SAVE THE FRESH DATA TO CACHE
+        if api_data and 'error' not in api_data:
+            try:
+                with open(cache_file, 'w') as f:
+                    json.dump(api_data, f, indent=2)
+                self.logger.info(f"💾 News cached to {cache_file}")
+            except Exception as e:
+                self.logger.error(f"❌ Failed to write cache: {e}")
+
+        return api_data
     
     def _create_currency_map(self) -> Dict[str, List[str]]:
         """Create mapping from instruments to relevant currencies"""
