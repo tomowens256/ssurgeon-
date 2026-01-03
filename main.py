@@ -3818,6 +3818,14 @@ class NewsCalendar:
             base_path: Base directory for storing news data
             logger: Optional logger instance
         """
+        import glob
+        cache_files = glob.glob(f"{self.cache_dir}/*.json")
+        for f in cache_files:
+            try:
+                os.remove(f)
+                self.logger.info(f"🗑️ Cleared old cache: {f}")
+            except:
+                pass
         self.rapidapi_key = rapidapi_key
         self.base_path = base_path.rstrip('/')
         self.news_data_path = f"{self.base_path}/news_data"
