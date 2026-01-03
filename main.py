@@ -3984,21 +3984,33 @@ class NewsCalendar:
             return self._create_error_response(error_msg)
     
     def _process_raw_news(self, raw_data: Dict, date_str: str) -> Dict:
-        """Process raw API response into structured format"""
+        """Process raw API response into structured format - FIXED VERSION"""
         try:
             events = []
-            
-            if not isinstance(raw_data, list):
-                self.logger.warning(f"❌ Unexpected raw data format: {type(raw_data)}")
-                return {"error": "Invalid data format", "events": []}
-            
-            for event in raw_data:
+    
+            # === FIX: The API returns a dictionary, not a direct list ===
+            # Your successful test showed: {"success":true, "message":"...", "data":[{...}]}
+            if not isinstance(raw_data, dict) or 'data' not in raw_data:
+                self.logger.warning(f"❌ Unexpected raw data structure: {type(raw_data)}")
+                # Try to log the structure to see what you actually got
+                self.logger.warning(f"❌ Data keys: {raw_data.keys() if isinstance(raw_data, dict) else 'N/A'}")
+                return {"error": "Invalid data structure", "events": []}
+    
+            # The actual list of events is inside the 'data' key
+            event_list = raw_data['data']
+    
+            if not isinstance(event_list, list):
+                self.logger.warning(f"❌ 'data' key is not a list: {type(event_list)}")
+                return {"error": "'data' is not a list", "events": []}
+    
+            # Now process the list of events
+            for event in event_list:
                 try:
-                    # Extract relevant fields
-                    event_time_utc = event.get('date')
-                    event_name = event.get('event')
-                    currency = event.get('country')
-                    impact = event.get('volatility', '').upper()  # HIGH, MEDIUM, LOW
+                    # Extract relevant fields - FIELD NAMES MIGHT HAVE CHANGED
+                    event_time_utc = event.get('dateUtc')  # Note: 'dateUtc' not 'date'
+                    event_name = event.get('name')        # Note: 'name' not 'event'
+                    currency = event.get('currencyCode')  # Note: 'currencyCode' not 'country'
+                    impact = event.get('potency', '').upper()  # Note: 'potency' not 'volatility'
                     
                     # Skip if no currency or not in our tracked currencies
                     if not currency or currency not in self.tracked_currencies:
@@ -4048,7 +4060,7 @@ class NewsCalendar:
                     events.append(processed_event)
                     
                 except Exception as e:
-                    self.logger.warning(f"⚠️ Error processing event: {str(e)}")
+                    self.logger.warning(f"⚠️ Error processing single event: {str(e)}")
                     continue
             
             # Sort by time
@@ -4062,7 +4074,7 @@ class NewsCalendar:
             }
             
         except Exception as e:
-            self.logger.error(f"❌ Error processing raw news: {str(e)}")
+            self.logger.error(f"❌ Error in _process_raw_news: {str(e)}")
             return {"error": str(e), "events": []}
     
     def _impact_to_level(self, impact: str) -> int:
