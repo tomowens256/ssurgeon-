@@ -3803,6 +3803,585 @@ class SupplyDemandDetector:
 
 
 
+
+class NewsCalendar:
+    """Economic calendar data collector for trading signals"""
+    
+    def __init__(self, rapidapi_key: str, base_path: str = '/content/drive/MyDrive', logger=None):
+        """
+        Initialize news calendar
+        
+        Args:
+            rapidapi_key: RapidAPI key for economic-calendar-api
+            base_path: Base directory for storing news data
+            logger: Optional logger instance
+        """
+        self.rapidapi_key = rapidapi_key
+        self.base_path = base_path.rstrip('/')
+        self.news_data_path = f"{self.base_path}/news_data"
+        
+        # Setup logger
+        if logger:
+            self.logger = logger
+        else:
+            self.logger = logging.getLogger('NewsCalendar')
+        
+        # Create directories
+        os.makedirs(f"{self.news_data_path}/raw", exist_ok=True)
+        os.makedirs(f"{self.news_data_path}/processed", exist_ok=True)
+        os.makedirs(f"{self.news_data_path}/cache", exist_ok=True)
+        
+        # Timezone
+        self.utc_tz = pytz.UTC
+        self.ny_tz = pytz.timezone('America/New_York')
+        
+        # Currencies we track (based on your instruments)
+        self.tracked_currencies = ['USD', 'GBP', 'EUR']
+        
+        # Instrument to currency mapping
+        self.instrument_currency_map = self._create_currency_map()
+        
+        # Cache settings
+        self.cache_duration = 3600  # 1 hour in seconds
+        self.cache_file = f"{self.news_data_path}/cache/news_cache.json"
+        
+        self.logger.info(f"📰 News Calendar initialized for currencies: {self.tracked_currencies}")
+        self.logger.info(f"📁 News data path: {self.news_data_path}")
+    
+    def _create_currency_map(self) -> Dict[str, List[str]]:
+        """Create mapping from instruments to relevant currencies"""
+        mapping = {}
+        
+        # Precious metals
+        mapping['XAU_USD'] = ['USD']
+        mapping['XAU_JPY'] = ['JPY', 'USD']  # Gold in JPY, but USD news matters
+        
+        # US Indices
+        mapping['NAS100_USD'] = ['USD']
+        mapping['SPX500_USD'] = ['USD']
+        
+        # Forex pairs
+        mapping['GBP_USD'] = ['GBP', 'USD']
+        mapping['EUR_USD'] = ['EUR', 'USD']
+        
+        # European indices
+        mapping['DE30_EUR'] = ['EUR']
+        mapping['EU50_EUR'] = ['EUR']
+        
+        # Add XAG_USD if you have it
+        mapping['XAG_USD'] = ['USD']
+        
+        return mapping
+    
+    def fetch_news_data(self, date_str: str = None) -> Dict:
+        """
+        Fetch news data from RapidAPI
+        
+        Args:
+            date_str: Date in format 'YYYY-MM-DD' (None for today)
+            
+        Returns:
+            Dictionary with news data or error
+        """
+        if date_str is None:
+            date_str = datetime.now(self.ny_tz).strftime('%Y-%m-%d')
+        
+        cache_key = f"news_{date_str}"
+        
+        # Check cache first
+        cached = self._get_from_cache(cache_key)
+        if cached:
+            self.logger.info(f"📰 Using cached news for {date_str}")
+            return cached
+        
+        try:
+            url = "https://economic-calendar-api.p.rapidapi.com/calendar/history/today"
+            
+            headers = {
+                "X-RapidAPI-Key": self.rapidapi_key,
+                "X-RapidAPI-Host": "economic-calendar-api.p.rapidapi.com"
+            }
+            
+            params = {
+                "timezone": "GMT+0",
+                "volatility": "NONE",  # Get ALL volatility levels
+                "limit": "100"  # Increased limit for all events
+            }
+            
+            self.logger.info(f"📰 Fetching news from RapidAPI for {date_str}...")
+            response = requests.get(url, headers=headers, params=params, timeout=30)
+            
+            if response.status_code == 200:
+                news_data = response.json()
+                
+                # Save raw response
+                raw_file = f"{self.news_data_path}/raw/{date_str}_raw.json"
+                with open(raw_file, 'w') as f:
+                    json.dump(news_data, f, indent=2)
+                
+                # Process and cache
+                processed_data = self._process_raw_news(news_data, date_str)
+                self._save_to_cache(cache_key, processed_data)
+                
+                # Save to processed CSV
+                self._save_to_processed_csv(processed_data, date_str)
+                
+                self.logger.info(f"✅ Fetched {len(processed_data.get('events', []))} news events for {date_str}")
+                return processed_data
+            else:
+                error_msg = f"API Error: {response.status_code} - {response.text}"
+                self.logger.error(f"❌ {error_msg}")
+                return self._create_error_response(error_msg)
+                
+        except requests.exceptions.Timeout:
+            error_msg = "API timeout"
+            self.logger.error(f"❌ {error_msg}")
+            return self._create_error_response(error_msg)
+        except requests.exceptions.RequestException as e:
+            error_msg = f"Request error: {str(e)}"
+            self.logger.error(f"❌ {error_msg}")
+            return self._create_error_response(error_msg)
+        except Exception as e:
+            error_msg = f"Unexpected error: {str(e)}"
+            self.logger.error(f"❌ {error_msg}")
+            return self._create_error_response(error_msg)
+    
+    def _process_raw_news(self, raw_data: Dict, date_str: str) -> Dict:
+        """Process raw API response into structured format"""
+        try:
+            events = []
+            
+            if not isinstance(raw_data, list):
+                self.logger.warning(f"❌ Unexpected raw data format: {type(raw_data)}")
+                return {"error": "Invalid data format", "events": []}
+            
+            for event in raw_data:
+                try:
+                    # Extract relevant fields
+                    event_time_utc = event.get('date')
+                    event_name = event.get('event')
+                    currency = event.get('country')
+                    impact = event.get('volatility', '').upper()  # HIGH, MEDIUM, LOW
+                    
+                    # Skip if no currency or not in our tracked currencies
+                    if not currency or currency not in self.tracked_currencies:
+                        continue
+                    
+                    # Convert UTC to NY time
+                    try:
+                        # Parse UTC time
+                        if 'T' in event_time_utc:
+                            utc_dt = datetime.strptime(event_time_utc, '%Y-%m-%dT%H:%M:%S')
+                        else:
+                            utc_dt = datetime.strptime(event_time_utc, '%Y-%m-%d %H:%M:%S')
+                        
+                        utc_dt = self.utc_tz.localize(utc_dt)
+                        ny_dt = utc_dt.astimezone(self.ny_tz)
+                        ny_time_str = ny_dt.strftime('%H:%M')
+                        
+                        # Check if event is today in NY time
+                        ny_date_str = ny_dt.strftime('%Y-%m-%d')
+                        if ny_date_str != date_str:
+                            continue  # Skip if not today in NY time
+                            
+                    except Exception as time_error:
+                        self.logger.warning(f"⚠️ Time parsing error: {time_error}")
+                        continue
+                    
+                    # Get actual, forecast, previous values
+                    actual = event.get('actual')
+                    forecast = event.get('forecast')
+                    previous = event.get('previous')
+                    
+                    # Create event dict
+                    processed_event = {
+                        'utc_time': event_time_utc,
+                        'ny_time': ny_time_str,
+                        'ny_datetime': ny_dt.isoformat(),
+                        'event': event_name,
+                        'currency': currency,
+                        'impact': impact,
+                        'impact_level': self._impact_to_level(impact),
+                        'actual': actual if actual is not None else '',
+                        'forecast': forecast if forecast is not None else '',
+                        'previous': previous if previous is not None else '',
+                        'timestamp': datetime.now(self.ny_tz).isoformat()
+                    }
+                    
+                    events.append(processed_event)
+                    
+                except Exception as e:
+                    self.logger.warning(f"⚠️ Error processing event: {str(e)}")
+                    continue
+            
+            # Sort by time
+            events.sort(key=lambda x: x['ny_datetime'])
+            
+            return {
+                'fetch_time': datetime.now(self.ny_tz).isoformat(),
+                'date': date_str,
+                'events': events,
+                'summary': self._create_summary(events)
+            }
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error processing raw news: {str(e)}")
+            return {"error": str(e), "events": []}
+    
+    def _impact_to_level(self, impact: str) -> int:
+        """Convert impact string to numeric level"""
+        impact_upper = impact.upper() if impact else ''
+        if 'HIGH' in impact_upper:
+            return 3
+        elif 'MEDIUM' in impact_upper:
+            return 2
+        elif 'LOW' in impact_upper:
+            return 1
+        else:
+            return 0
+    
+    def _create_summary(self, events: List[Dict]) -> Dict:
+        """Create summary statistics for events"""
+        summary = {
+            'total': len(events),
+            'high_impact': 0,
+            'medium_impact': 0,
+            'low_impact': 0,
+            'by_currency': {},
+            'earliest_time': None,
+            'latest_time': None
+        }
+        
+        for currency in self.tracked_currencies:
+            summary['by_currency'][currency] = {
+                'total': 0,
+                'high': 0,
+                'medium': 0,
+                'low': 0
+            }
+        
+        for event in events:
+            impact = event.get('impact', '').upper()
+            currency = event.get('currency', '')
+            
+            # Count by impact
+            if 'HIGH' in impact:
+                summary['high_impact'] += 1
+            elif 'MEDIUM' in impact:
+                summary['medium_impact'] += 1
+            elif 'LOW' in impact:
+                summary['low_impact'] += 1
+            
+            # Count by currency
+            if currency in summary['by_currency']:
+                summary['by_currency'][currency]['total'] += 1
+                if 'HIGH' in impact:
+                    summary['by_currency'][currency]['high'] += 1
+                elif 'MEDIUM' in impact:
+                    summary['by_currency'][currency]['medium'] += 1
+                elif 'LOW' in impact:
+                    summary['by_currency'][currency]['low'] += 1
+        
+        # Get time range
+        if events:
+            times = [datetime.fromisoformat(e['ny_datetime']) for e in events]
+            summary['earliest_time'] = min(times).isoformat()
+            summary['latest_time'] = max(times).isoformat()
+        
+        return summary
+    
+    def _save_to_processed_csv(self, news_data: Dict, date_str: str):
+        """Save processed news to CSV file"""
+        try:
+            csv_file = f"{self.news_data_path}/processed/{date_str}_news.csv"
+            
+            headers = [
+                'utc_time', 'ny_time', 'event', 'currency', 
+                'impact', 'impact_level', 'actual', 'forecast', 'previous'
+            ]
+            
+            with open(csv_file, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=headers)
+                writer.writeheader()
+                
+                for event in news_data.get('events', []):
+                    row = {key: event.get(key, '') for key in headers}
+                    writer.writerow(row)
+            
+            self.logger.info(f"💾 Saved {len(news_data.get('events', []))} events to {csv_file}")
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error saving to CSV: {str(e)}")
+    
+    def _get_from_cache(self, key: str) -> Optional[Dict]:
+        """Get data from cache if valid"""
+        try:
+            if os.path.exists(self.cache_file):
+                with open(self.cache_file, 'r') as f:
+                    cache_data = json.load(f)
+                
+                if key in cache_data:
+                    cached_item = cache_data[key]
+                    cache_time = datetime.fromisoformat(cached_item['cache_time'])
+                    
+                    # Check if cache is still valid
+                    age_seconds = (datetime.now(self.ny_tz) - cache_time).total_seconds()
+                    if age_seconds < self.cache_duration:
+                        return cached_item['data']
+                    
+                    # Cache expired
+                    del cache_data[key]
+                    with open(self.cache_file, 'w') as f:
+                        json.dump(cache_data, f)
+                        
+            return None
+            
+        except Exception as e:
+            self.logger.warning(f"⚠️ Cache read error: {str(e)}")
+            return None
+    
+    def _save_to_cache(self, key: str, data: Dict):
+        """Save data to cache"""
+        try:
+            cache_data = {}
+            if os.path.exists(self.cache_file):
+                with open(self.cache_file, 'r') as f:
+                    cache_data = json.load(f)
+            
+            cache_data[key] = {
+                'cache_time': datetime.now(self.ny_tz).isoformat(),
+                'data': data
+            }
+            
+            # Limit cache size
+            if len(cache_data) > 50:  # Keep last 50 entries
+                oldest_key = min(cache_data.keys(), key=lambda k: cache_data[k]['cache_time'])
+                del cache_data[oldest_key]
+            
+            with open(self.cache_file, 'w') as f:
+                json.dump(cache_data, f, indent=2)
+                
+        except Exception as e:
+            self.logger.warning(f"⚠️ Cache write error: {str(e)}")
+    
+    def _create_error_response(self, error_msg: str) -> Dict:
+        """Create error response structure"""
+        return {
+            'error': error_msg,
+            'fetch_time': datetime.now(self.ny_tz).isoformat(),
+            'events': [],
+            'summary': {
+                'total': 0,
+                'high_impact': 0,
+                'medium_impact': 0,
+                'low_impact': 0,
+                'by_currency': {c: {'total': 0, 'high': 0, 'medium': 0, 'low': 0} 
+                               for c in self.tracked_currencies}
+            }
+        }
+    
+    def get_news_for_instrument(self, instrument: str, signal_time: datetime) -> Dict:
+        """
+        Get relevant news context for a specific instrument at signal time
+        
+        Args:
+            instrument: Trading instrument (e.g., 'GBP_USD')
+            signal_time: Signal timestamp (NY timezone)
+            
+        Returns:
+            Dictionary with news context
+        """
+        try:
+            # Get today's date in NY time
+            date_str = signal_time.strftime('%Y-%m-%d')
+            
+            # Fetch or get cached news
+            news_data = self.fetch_news_data(date_str)
+            
+            if 'error' in news_data and news_data['error']:
+                return self._create_empty_news_context(instrument, error=news_data['error'])
+            
+            # Get relevant currencies for this instrument
+            relevant_currencies = self.instrument_currency_map.get(instrument, [])
+            if not relevant_currencies:
+                return self._create_empty_news_context(instrument, error="No currency mapping")
+            
+            # Filter events for relevant currencies
+            relevant_events = []
+            for event in news_data.get('events', []):
+                if event.get('currency') in relevant_currencies:
+                    relevant_events.append(event)
+            
+            # Calculate timing metrics
+            timing_metrics = self._calculate_timing_metrics(relevant_events, signal_time)
+            
+            # Create news context
+            context = {
+                'instrument': instrument,
+                'signal_time': signal_time.isoformat(),
+                'relevant_currencies': relevant_currencies,
+                'event_count': len(relevant_events),
+                'high_impact_count': sum(1 for e in relevant_events if e.get('impact_level') == 3),
+                'medium_impact_count': sum(1 for e in relevant_events if e.get('impact_level') == 2),
+                'low_impact_count': sum(1 for e in relevant_events if e.get('impact_level') == 1),
+                'timing': timing_metrics,
+                'events': relevant_events[:10],  # Limit to first 10 for JSON storage
+                'all_events_count': len(relevant_events),
+                'fetch_status': 'success',
+                'fetch_time': news_data.get('fetch_time', '')
+            }
+            
+            return context
+            
+        except Exception as e:
+            error_msg = f"Error getting news context: {str(e)}"
+            self.logger.error(f"❌ {error_msg}")
+            return self._create_empty_news_context(instrument, error=error_msg)
+    
+    def _calculate_timing_metrics(self, events: List[Dict], signal_time: datetime) -> Dict:
+        """Calculate timing metrics relative to signal"""
+        metrics = {
+            'closest_future_event': None,
+            'closest_past_event': None,
+            'seconds_to_next': None,
+            'seconds_since_last': None,
+            'events_next_1h': 0,
+            'events_next_2h': 0,
+            'events_prev_1h': 0,
+            'events_prev_2h': 0,
+            'timing_category': 'no_news'
+        }
+        
+        if not events:
+            return metrics
+        
+        # Convert events to datetime objects
+        event_datetimes = []
+        for event in events:
+            try:
+                event_dt = datetime.fromisoformat(event['ny_datetime'])
+                event_datetimes.append((event_dt, event))
+            except:
+                continue
+        
+        if not event_datetimes:
+            return metrics
+        
+        # Sort by time
+        event_datetimes.sort(key=lambda x: x[0])
+        
+        # Find closest future and past events
+        future_events = [(dt, event) for dt, event in event_datetimes if dt > signal_time]
+        past_events = [(dt, event) for dt, event in event_datetimes if dt <= signal_time]
+        
+        # Closest future event
+        if future_events:
+            closest_future_dt, closest_future_event = min(future_events, key=lambda x: x[0])
+            metrics['closest_future_event'] = closest_future_event
+            metrics['seconds_to_next'] = (closest_future_dt - signal_time).total_seconds()
+            
+            # Count events in next 1h and 2h
+            one_hour_later = signal_time + timedelta(hours=1)
+            two_hours_later = signal_time + timedelta(hours=2)
+            
+            metrics['events_next_1h'] = sum(1 for dt, _ in future_events if dt <= one_hour_later)
+            metrics['events_next_2h'] = sum(1 for dt, _ in future_events if dt <= two_hours_later)
+        
+        # Closest past event
+        if past_events:
+            closest_past_dt, closest_past_event = max(past_events, key=lambda x: x[0])
+            metrics['closest_past_event'] = closest_past_event
+            metrics['seconds_since_last'] = (signal_time - closest_past_dt).total_seconds()
+            
+            # Count events in previous 1h and 2h
+            one_hour_ago = signal_time - timedelta(hours=1)
+            two_hours_ago = signal_time - timedelta(hours=2)
+            
+            metrics['events_prev_1h'] = sum(1 for dt, _ in past_events if dt >= one_hour_ago)
+            metrics['events_prev_2h'] = sum(1 for dt, _ in past_events if dt >= two_hours_ago)
+        
+        # Determine timing category
+        if metrics['seconds_to_next'] is not None:
+            if metrics['seconds_to_next'] <= 1800:  # 30 minutes
+                metrics['timing_category'] = 'within_30min_before'
+            elif metrics['seconds_to_next'] <= 3600:  # 1 hour
+                metrics['timing_category'] = 'within_1h_before'
+            elif metrics['seconds_to_next'] <= 7200:  # 2 hours
+                metrics['timing_category'] = 'within_2h_before'
+            else:
+                metrics['timing_category'] = 'more_than_2h_before'
+        elif metrics['seconds_since_last'] is not None:
+            if metrics['seconds_since_last'] <= 1800:  # 30 minutes
+                metrics['timing_category'] = 'within_30min_after'
+            elif metrics['seconds_since_last'] <= 3600:  # 1 hour
+                metrics['timing_category'] = 'within_1h_after'
+            elif metrics['seconds_since_last'] <= 7200:  # 2 hours
+                metrics['timing_category'] = 'within_2h_after'
+            else:
+                metrics['timing_category'] = 'more_than_2h_after'
+        
+        return metrics
+    
+    def _create_empty_news_context(self, instrument: str, error: str = None) -> Dict:
+        """Create empty news context for error cases"""
+        relevant_currencies = self.instrument_currency_map.get(instrument, [])
+        
+        return {
+            'instrument': instrument,
+            'signal_time': datetime.now(self.ny_tz).isoformat(),
+            'relevant_currencies': relevant_currencies,
+            'event_count': 0,
+            'high_impact_count': 0,
+            'medium_impact_count': 0,
+            'low_impact_count': 0,
+            'timing': {
+                'closest_future_event': None,
+                'closest_past_event': None,
+                'seconds_to_next': None,
+                'seconds_since_last': None,
+                'events_next_1h': 0,
+                'events_next_2h': 0,
+                'events_prev_1h': 0,
+                'events_prev_2h': 0,
+                'timing_category': 'no_news_or_error'
+            },
+            'events': [],
+            'all_events_count': 0,
+            'fetch_status': 'error' if error else 'no_news',
+            'error_message': error if error else '',
+            'fetch_time': datetime.now(self.ny_tz).isoformat()
+        }
+    
+    def get_daily_summary(self, date_str: str = None) -> Dict:
+        """Get daily news summary for dashboard/reporting"""
+        if date_str is None:
+            date_str = datetime.now(self.ny_tz).strftime('%Y-%m-%d')
+        
+        news_data = self.fetch_news_data(date_str)
+        
+        if 'error' in news_data:
+            return {
+                'date': date_str,
+                'status': 'error',
+                'error': news_data['error'],
+                'summary': {
+                    'total_events': 0,
+                    'high_impact': 0,
+                    'medium_impact': 0,
+                    'low_impact': 0
+                }
+            }
+        
+        return {
+            'date': date_str,
+            'status': 'success',
+            'summary': news_data.get('summary', {}),
+            'events_count': len(news_data.get('events', [])),
+            'fetch_time': news_data.get('fetch_time', '')
+        }
+
+
+
 class HammerPatternScanner:
     """Concurrent hammer pattern scanner with minimal features"""
     
