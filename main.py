@@ -9256,9 +9256,24 @@ async def main():
         logger.info("💡 Please set OANDA_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID")
         return
     
+    news_calendar = None
+    if rapidapi_key:
+        news_calendar = NewsCalendar(rapidapi_key=rapidapi_key,
+                                      base_path='/content/drive/MyDrive',
+                                      logger=logger)
+        # This line makes the single API call for the day
+        global_news_data = news_calendar.get_daily_news()
+    else:
+        logger.warning("⚠️ RapidAPI key missing. News features disabled.")
+        global_news_data = {}
+    
+    # === PASS THE DATA/CALENDAR TO  MANAGER ===
     try:
-        manager = UltimateTradingManager(api_key, telegram_token, telegram_chat_id)
-        
+        #the pre-fetched news data or calendar
+        manager = UltimateTradingManager(api_key, 
+                                         telegram_token, 
+                                         telegram_chat_id, 
+                                         news_data=global_news_data)  # Or pass the calendar object
         
         await manager.run_ultimate_systems()
         
