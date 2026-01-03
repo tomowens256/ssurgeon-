@@ -3807,25 +3807,10 @@ class SupplyDemandDetector:
 
 
 class NewsCalendar:
-    """Economic calendar data collector for trading signals"""
-    
     def __init__(self, rapidapi_key: str, base_path: str = '/content/drive/MyDrive', logger=None):
         """
-        Initialize news calendar
-        
-        Args:
-            rapidapi_key: RapidAPI key for economic-calendar-api
-            base_path: Base directory for storing news data
-            logger: Optional logger instance
+        Initialize news calendar - WITH CACHE DIRECTORY SETUP
         """
-        import glob
-        cache_files = glob.glob(f"{self.cache_dir}/*.json")
-        for f in cache_files:
-            try:
-                os.remove(f)
-                self.logger.info(f"🗑️ Cleared old cache: {f}")
-            except:
-                pass
         self.rapidapi_key = rapidapi_key
         self.base_path = base_path.rstrip('/')
         self.news_data_path = f"{self.base_path}/news_data"
@@ -3836,29 +3821,28 @@ class NewsCalendar:
         else:
             self.logger = logging.getLogger('NewsCalendar')
         
-        # Create directories
+        # === CREATE ALL NECESSARY DIRECTORIES ===
         os.makedirs(f"{self.news_data_path}/raw", exist_ok=True)
         os.makedirs(f"{self.news_data_path}/processed", exist_ok=True)
-        os.makedirs(f"{self.news_data_path}/cache", exist_ok=True)
+        os.makedirs(f"{self.news_data_path}/cache", exist_ok=True)  # This line is critical
         
-        # Timezone
+        # === DEFINE CACHE DIRECTORY ATTRIBUTE ===
+        self.cache_dir = f"{self.news_data_path}/cache"  # This fixes the error
+        
+        # Timezone setup
         self.utc_tz = pytz.UTC
         self.ny_tz = pytz.timezone('America/New_York')
         
-        # Currencies we track (based on your instruments)
-        self.tracked_currencies = ['USD', 'GBP', 'EUR']
+        # Currencies we track
+        self.tracked_currencies = ['USD', 'GBP', 'EUR', 'JPY']
         
         # Instrument to currency mapping
         self.instrument_currency_map = self._create_currency_map()
         
-        # Cache settings
-        self.cache_duration = 3600  # 1 hour in seconds
-        self.cache_file = f"{self.news_data_path}/cache/news_cache.json"
+        # Cache file for _get_from_cache/_save_to_cache methods
+        self.cache_file = f"{self.cache_dir}/rapidapi_cache.json"
         
-        self.logger.info(f"📰 News Calendar initialized for currencies: {self.tracked_currencies}")
-        self.logger.info(f"📁 News data path: {self.news_data_path}")
-        self.cache_dir = f"{self.news_data_path}/cache"
-        os.makedirs(self.cache_dir, exist_ok=True)
+        self.logger.info(f"📰 News Calendar initialized. Cache: {self.cache_dir}")
 
     def get_daily_news(self, force_fetch: bool = False) -> Dict:
         """
