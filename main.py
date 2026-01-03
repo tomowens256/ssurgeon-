@@ -5295,15 +5295,21 @@ class HammerPatternScanner:
                 candle_close_time = datetime.strptime(candle_close_time, '%Y-%m-%d %H:%M:%S')
             signal_latency_seconds = (current_time - candle_close_time).total_seconds()
 
-            # Get news context if available
+
+            # Get news context from the shared cache file
             news_context = {}
-            if self.news_calendar:
-                try:
-                    news_context = self.news_calendar.get_news_for_instrument(instrument, current_time)
-                    self.logger.info(f"📰 News context: {news_context.get('event_count', 0)} events, "
-                                    f"{news_context.get('high_impact_count', 0)} high impact")
-                except Exception as e:
-                    self.logger.error(f"❌ Error getting news context: {str(e)}")
+            if self.news_cache_dir:  # Make this path available to the scanner
+                today_str = datetime.now(NY_TZ).strftime('%Y-%m-%d')
+                cache_file = f"{self.news_cache_dir}/news_cache_{today_str}.json"
+                
+                if os.path.exists(cache_file):
+                    try:
+                        with open(cache_file, 'r') as f:
+                            cached_news = json.load(f)
+                        # Process cached_news for your instrument
+                        news_context = self._filter_news_for_instrument(cached_news, instrument)
+                    except Exception as e:
+                        self.logger.error(f"❌ Error reading news cache: {e}")
                     news_context = {
                         'error': str(e),
                         'event_count': 0,
