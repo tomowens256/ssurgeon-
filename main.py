@@ -3984,45 +3984,46 @@ class NewsCalendar:
             return self._create_error_response(error_msg)
     
     def _process_raw_news(self, raw_data: Dict, date_str: str) -> Dict:
-        """Process raw API response into structured format - FIXED VERSION"""
+        """Process raw API response into structured format - UPDATED FOR NEW API"""
         try:
             events = []
     
-            # === FIX: The API returns a dictionary, not a direct list ===
-            # Your successful test showed: {"success":true, "message":"...", "data":[{...}]}
-            if not isinstance(raw_data, dict) or 'data' not in raw_data:
-                self.logger.warning(f"❌ Unexpected raw data structure: {type(raw_data)}")
-                # Try to log the structure to see what you actually got
-                self.logger.warning(f"❌ Data keys: {raw_data.keys() if isinstance(raw_data, dict) else 'N/A'}")
-                return {"error": "Invalid data structure", "events": []}
+            # 1. VALIDATE THE NEW API RESPONSE STRUCTURE
+            if not isinstance(raw_data, dict):
+                self.logger.warning(f"❌ Raw data is not a dict: {type(raw_data)}")
+                return {"error": "Invalid data format", "events": []}
     
-            # The actual list of events is inside the 'data' key
-            event_list = raw_data['data']
+            if not raw_data.get('success'):
+                error_msg = raw_data.get('message', 'API call unsuccessful')
+                self.logger.warning(f"❌ API returned error: {error_msg}")
+                return {"error": error_msg, "events": []}
     
-            if not isinstance(event_list, list):
-                self.logger.warning(f"❌ 'data' key is not a list: {type(event_list)}")
-                return {"error": "'data' is not a list", "events": []}
+            if 'data' not in raw_data or not isinstance(raw_data['data'], list):
+                self.logger.warning(f"❌ 'data' key missing or not a list")
+                return {"error": "No event data in response", "events": []}
     
-            # Now process the list of events
-            for event in event_list:
+            # 2. PROCESS EACH EVENT WITH CORRECT FIELD NAMES
+            for event in raw_data['data']:
                 try:
-                    # Extract relevant fields - FIELD NAMES MIGHT HAVE CHANGED
-                    event_time_utc = event.get('dateUtc')  # Note: 'dateUtc' not 'date'
-                    event_name = event.get('name')        # Note: 'name' not 'event'
-                    currency = event.get('currencyCode')  # Note: 'currencyCode' not 'country'
-                    impact = event.get('potency', '').upper()  # Note: 'potency' not 'volatility'
+                    # EXTRACT FIELDS - USING NAMES FROM YOUR EXAMPLE
+                    event_time_utc = event.get('dateUtc')  # Key changed
+                    event_name = event.get('name')        # Key changed
+                    currency = event.get('currencyCode')  # Key changed
                     
-                    # Skip if no currency or not in our tracked currencies
+                    # IMPACT FIELD: Use 'volatility' (present in example) not 'potency'
+                    impact = event.get('volatility', 'NONE').upper()
+                    
+                    # Skip if no currency or not in tracked currencies
                     if not currency or currency not in self.tracked_currencies:
                         continue
-                    
-                    # Convert UTC to NY time
+    
+                    # CONVERT UTC TO NY TIME
                     try:
-                        # Parse UTC time
-                        if 'T' in event_time_utc:
-                            utc_dt = datetime.strptime(event_time_utc, '%Y-%m-%dT%H:%M:%S')
+                        # Parse UTC time - format: '2025-12-03T13:30:00.000Z'
+                        if event_time_utc:
+                            utc_dt = datetime.strptime(event_time_utc, '%Y-%m-%dT%H:%M:%S.%fZ')
                         else:
-                            utc_dt = datetime.strptime(event_time_utc, '%Y-%m-%d %H:%M:%S')
+                            continue
                         
                         utc_dt = self.utc_tz.localize(utc_dt)
                         ny_dt = utc_dt.astimezone(self.ny_tz)
@@ -4034,15 +4035,19 @@ class NewsCalendar:
                             continue  # Skip if not today in NY time
                             
                     except Exception as time_error:
-                        self.logger.warning(f"⚠️ Time parsing error: {time_error}")
+                        self.logger.debug(f"⚠️ Time parsing error for event: {time_error}")
                         continue
                     
-                    # Get actual, forecast, previous values
+                    # Get additional values
                     actual = event.get('actual')
-                    forecast = event.get('forecast')
+                    forecast = event.get('consensus')  # Note: called 'consensus' in API
                     previous = event.get('previous')
                     
-                    # Create event dict
+                    # IMPACT LEVEL MAPPING
+                    impact_level_map = {'HIGH': 3, 'MEDIUM': 2, 'LOW': 1, 'NONE': 0}
+                    impact_level = impact_level_map.get(impact, 0)
+                    
+                    # CREATE PROCESSED EVENT
                     processed_event = {
                         'utc_time': event_time_utc,
                         'ny_time': ny_time_str,
@@ -4050,7 +4055,7 @@ class NewsCalendar:
                         'event': event_name,
                         'currency': currency,
                         'impact': impact,
-                        'impact_level': self._impact_to_level(impact),
+                        'impact_level': impact_level,
                         'actual': actual if actual is not None else '',
                         'forecast': forecast if forecast is not None else '',
                         'previous': previous if previous is not None else '',
@@ -4060,21 +4065,31 @@ class NewsCalendar:
                     events.append(processed_event)
                     
                 except Exception as e:
-                    self.logger.warning(f"⚠️ Error processing single event: {str(e)}")
+                    self.logger.debug(f"⚠️ Skipping event due to error: {str(e)}")
                     continue
-            
+    
             # Sort by time
             events.sort(key=lambda x: x['ny_datetime'])
+            
+            # LOG SUMMARY
+            self.logger.info(f"📰 Processed {len(events)} events for {date_str}")
+            if events:
+                self.logger.info(f"   Time range: {events[0]['ny_time']} to {events[-1]['ny_time']}")
             
             return {
                 'fetch_time': datetime.now(self.ny_tz).isoformat(),
                 'date': date_str,
                 'events': events,
-                'summary': self._create_summary(events)
+                'summary': self._create_summary(events),
+                'raw_response_metadata': {
+                    'totalEvents': raw_data.get('totalEvents', 0),
+                    'lastUpdated': raw_data.get('lastUpdated'),
+                    'timezone': raw_data.get('timezone', 'UTC')
+                }
             }
             
         except Exception as e:
-            self.logger.error(f"❌ Error in _process_raw_news: {str(e)}")
+            self.logger.error(f"❌ Error in _process_raw_news: {str(e)}", exc_info=True)
             return {"error": str(e), "events": []}
     
     def _impact_to_level(self, impact: str) -> int:
