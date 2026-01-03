@@ -3897,22 +3897,22 @@ class NewsCalendar:
             return cached
         
         try:
-            url = "https://economic-calendar-api.p.rapidapi.com/calendar/history/today"
+            # CORRECT ENDPOINT AND PARAMETERS
+            url = "https://economic-calendar-api.p.rapidapi.com/calendar"
             
             headers = {
-                "X-RapidAPI-Key": self.rapidapi_key,
+                "X-RapidAPI-Key": self.rapidapi_key,  # Ensure this is passed correctly
                 "X-RapidAPI-Host": "economic-calendar-api.p.rapidapi.com"
             }
-            
+    
+            # The API uses 'impact', not 'volatility'. Use 'HIGH' or 'ALL'.
             params = {
-                "timezone": "GMT+0",
-                "volatility": "NONE",  # Get ALL volatility levels
-                "limit": "100"  # Increased limit for all events
+                "impact": "ALL"  # Or "HIGH" for all HIGH impact levels
             }
-            
-            self.logger.info(f"📰 Fetching news from RapidAPI for {date_str}...")
+    
+            self.logger.info(f"📰 Fetching news from RapidAPI...")
             response = requests.get(url, headers=headers, params=params, timeout=30)
-            
+    
             if response.status_code == 200:
                 news_data = response.json()
                 
