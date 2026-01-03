@@ -4835,14 +4835,6 @@ class HammerPatternScanner:
             self.logger.error(f"Error sending signal: {str(e)}")
             return False
     
-    def _is_in_cooldown(self, instrument):
-        """Check cooldown status"""
-        if instrument in self.cooldown_until:
-            if datetime.now(NY_TZ) < self.cooldown_until[instrument]:
-                remaining = (self.cooldown_until[instrument] - datetime.now(NY_TZ)).total_seconds() / 60
-                self.logger.info(f"⏳ {instrument} in cooldown: {remaining:.1f}min remaining")
-                return True
-        return False
     
     def _set_cooldown(self, instrument):
         """Set cooldown period"""
