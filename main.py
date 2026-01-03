@@ -4836,9 +4836,7 @@ class HammerPatternScanner:
             return False
     
     
-    def _set_cooldown(self, instrument):
-        """Set cooldown period"""
-        self.cooldown_until[instrument] = datetime.now(NY_TZ) + timedelta(minutes=self.cooldown_minutes)
+    
     
     def on_signal_detected(self, signal_data):
         """Trigger hammer scanner when main signal detected"""
