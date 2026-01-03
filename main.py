@@ -3823,9 +3823,7 @@ class HammerPatternScanner:
         self.csv_file_path = f"{self.csv_base_path}.csv"  # Simple .csv extension
         self.init_csv_storage()
         
-        # Cooldown tracking
-        self.cooldown_until = {}
-        self.cooldown_minutes = 30
+        
         
         # Timeframe alignment
         self.timeframe_alignment = {
@@ -3866,8 +3864,6 @@ class HammerPatternScanner:
                 'tp_1_4_distance', 'tp_1_5_distance', 'tp_1_6_distance', 'tp_1_7_distance',
                 'tp_1_8_distance', 'tp_1_9_distance', 'tp_1_10_distance',
                 
-                # Risk Management Lots
-                'risk_10_lots', 'risk_100_lots',
                 
                 # Trigger Criteria & Context
                 'criteria', 'trigger_timeframe',
@@ -3875,7 +3871,7 @@ class HammerPatternScanner:
                 'smt_cycle', 'smt_quarters', 'has_psp', 'is_hp_fvg', 'is_hp_zone',
                 
                 # Market Context
-                'session_color', 'rsi', 'macd_line', 'vwap',
+                'session_color', 'rsi',  'vwap',
                 
                 # Result Tracking
                 'exit_time', 'time_to_exit_seconds', 'tp_level_hit'
@@ -4330,10 +4326,6 @@ class HammerPatternScanner:
             self.logger.info(f"🔨 Starting hammer scan for {instrument}")
             self.logger.info(f"   Criteria: {criteria}, Direction: {direction}")
             
-            # Check cooldown
-            if self._is_in_cooldown(instrument):
-                self.logger.info(f"⏳ {instrument} in cooldown")
-                return False
             
             # Get Fibonacci zones
             fib_zones = self._get_fib_zones(trigger_data)
@@ -4467,7 +4459,7 @@ class HammerPatternScanner:
             self.logger.info(f"✅ Scan completed. Found {hammer_count} hammers.")
             
             if hammer_count > 0:
-                self._set_cooldown(instrument)
+                
                 return True
             
             return False
