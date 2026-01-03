@@ -9214,6 +9214,7 @@ async def main():
     telegram_token = os.getenv('TELEGRAM_BOT_TOKEN')
     telegram_chat_id = os.getenv('TELEGRAM_CHAT_ID')
     rapidapi_key = os.getenv('rapidapi_key')
+    logger.info(f"RapidAPI Key found: {'Yes' if rapidapi_key else 'No'}")
     
     if not all([api_key, telegram_token, telegram_chat_id]):
         logger.error("❌ Missing required environment variables")
