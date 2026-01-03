@@ -3923,59 +3923,59 @@ class NewsCalendar:
     
     def fetch_news_data(self, date_str: str = None) -> Dict:
         """
-        Fetch news data from RapidAPI
-        
-        Args:
-            date_str: Date in format 'YYYY-MM-DD' (None for today)
-            
-        Returns:
-            Dictionary with news data or error
+        Fetch and process news data from RapidAPI.
+        Returns processed data ready for analysis.
         """
         if date_str is None:
             date_str = datetime.now(self.ny_tz).strftime('%Y-%m-%d')
         
         cache_key = f"news_{date_str}"
         
-        # Check cache first
+        # 1. Check cache first for PROCESSED data
         cached = self._get_from_cache(cache_key)
-        if cached:
-            self.logger.info(f"📰 Using cached news for {date_str}")
-            return cached
+        if cached and 'events' in cached:
+            self.logger.info(f"📰 Using cached processed news for {date_str}")
+            return cached  # Return already-processed data
         
         try:
-            # CORRECT ENDPOINT AND PARAMETERS
+            # 2. Fetch from API
             url = "https://economic-calendar-api.p.rapidapi.com/calendar"
             
             headers = {
-                "X-RapidAPI-Key": self.rapidapi_key,  # Ensure this is passed correctly
+                "X-RapidAPI-Key": self.rapidapi_key,
                 "X-RapidAPI-Host": "economic-calendar-api.p.rapidapi.com"
             }
-    
-            # The API uses 'impact', not 'volatility'. Use 'HIGH' or 'ALL'.
+            
             params = {
-                "impact": "ALL"  # Or "HIGH" for all HIGH impact levels
+                "timezone": "GMT+0",
+                "volatility": "NONE",  # Gets ALL volatility levels
+                "limit": "50"
             }
-    
-            self.logger.info(f"📰 Fetching news from RapidAPI...")
+            
+            self.logger.info(f"📰 Fetching news from RapidAPI for {date_str}...")
             response = requests.get(url, headers=headers, params=params, timeout=30)
-    
+            
             if response.status_code == 200:
-                news_data = response.json()
+                # 3. Get raw API response
+                raw_api_response = response.json()
                 
-                # Save raw response
-                raw_file = f"{self.news_data_path}/raw/{date_str}_raw.json"
-                with open(raw_file, 'w') as f:
-                    json.dump(news_data, f, indent=2)
+                # 4. Process the raw response into our format
+                processed_data = self._process_raw_news(raw_api_response, date_str)
                 
-                # Process and cache
-                processed_data = self._process_raw_news(news_data, date_str)
-                self._save_to_cache(cache_key, processed_data)
-                
-                # Save to processed CSV
-                self._save_to_processed_csv(processed_data, date_str)
-                
-                self.logger.info(f"✅ Fetched {len(processed_data.get('events', []))} news events for {date_str}")
-                return processed_data
+                # 5. Only cache if we have valid processed data
+                if 'events' in processed_data:
+                    self._save_to_cache(cache_key, processed_data)
+                    
+                    # Save to processed CSV
+                    self._save_to_processed_csv(processed_data, date_str)
+                    
+                    self.logger.info(f"✅ Fetched {len(processed_data.get('events', []))} news events for {date_str}")
+                    return processed_data
+                else:
+                    error_msg = processed_data.get('error', 'Processing failed')
+                    self.logger.error(f"❌ News processing failed: {error_msg}")
+                    return processed_data
+                    
             else:
                 error_msg = f"API Error: {response.status_code} - {response.text}"
                 self.logger.error(f"❌ {error_msg}")
@@ -3983,10 +3983,6 @@ class NewsCalendar:
                 
         except requests.exceptions.Timeout:
             error_msg = "API timeout"
-            self.logger.error(f"❌ {error_msg}")
-            return self._create_error_response(error_msg)
-        except requests.exceptions.RequestException as e:
-            error_msg = f"Request error: {str(e)}"
             self.logger.error(f"❌ {error_msg}")
             return self._create_error_response(error_msg)
         except Exception as e:
