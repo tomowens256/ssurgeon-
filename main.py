@@ -3854,36 +3854,47 @@ class NewsCalendar:
 
     def get_daily_news(self, force_fetch: bool = False) -> Dict:
         """
-        Get today's news. Fetches from API only if no fresh cache exists.
-        Returns cached data otherwise.
+        Get today's news - with proper error handling for cached data
         """
         today_str = datetime.now(self.ny_tz).strftime('%Y-%m-%d')
-        cache_file = f"{self.cache_dir}/news_cache_{today_str}.json"  # Can also be .csv
-
-        # 1. RETURN CACHED DATA IF IT EXISTS AND IS FRESH
+        cache_file = f"{self.cache_dir}/news_cache_{today_str}.json"
+        
+        # 1. Try to use cache first (unless force_fetch is True)
         if not force_fetch and os.path.exists(cache_file):
             try:
                 with open(cache_file, 'r') as f:
                     cached_data = json.load(f)
-                self.logger.info(f"📰 Loaded cached news for {today_str}")
-                return cached_data
-            except Exception as e:
-                self.logger.warning(f"⚠️ Failed to read cache, re-fetching: {e}")
-
-        # 2. OTHERWISE, FETCH FROM API (ONLY THIS ONE CALL)
-        self.logger.info(f"📰 Fetching fresh news for {today_str} from API...")
-        api_data = self._fetch_from_api()  # Your corrected API call logic
-
-        # 3. SAVE THE FRESH DATA TO CACHE
+                
+                # VALIDATE CACHED DATA STRUCTURE
+                if isinstance(cached_data, dict) and 'events' in cached_data:
+                    self.logger.info(f"📰 Loaded {len(cached_data['events'])} events from cache")
+                    return cached_data
+                else:
+                    self.logger.warning("⚠️ Cached data has invalid structure, re-fetching")
+                    
+            except (json.JSONDecodeError, IOError) as e:
+                self.logger.warning(f"⚠️ Cache corrupted, re-fetching: {e}")
+        
+        # 2. Fetch fresh data from API
+        self.logger.info(f"📰 Fetching fresh news for {today_str}")
+        api_data = self._fetch_from_api()
+        
+        # 3. Process and cache the new data
         if api_data and 'error' not in api_data:
-            try:
-                with open(cache_file, 'w') as f:
-                    json.dump(api_data, f, indent=2)
-                self.logger.info(f"💾 News cached to {cache_file}")
-            except Exception as e:
-                self.logger.error(f"❌ Failed to write cache: {e}")
-
-        return api_data
+            processed_data = self._process_raw_news(api_data, today_str)
+            
+            # Only cache if we have valid events
+            if processed_data and 'events' in processed_data:
+                try:
+                    with open(cache_file, 'w') as f:
+                        json.dump(processed_data, f, indent=2)
+                    self.logger.info(f"💾 News cached to {cache_file}")
+                except Exception as e:
+                    self.logger.error(f"❌ Failed to write cache: {e}")
+            
+            return processed_data
+        
+        return {"error": "Failed to fetch news", "events": []}
     
     def _create_currency_map(self) -> Dict[str, List[str]]:
         """Create mapping from instruments to relevant currencies"""
