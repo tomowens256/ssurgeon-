@@ -3843,15 +3843,14 @@ class HammerPatternScanner:
         self.logger.info(f"📁 CSV storage: {self.csv_file_path}")
     
     def init_csv_storage(self):
-        """Initialize CSV file with minimal columns"""
+        """Initialize CSV file with NEW columns - FORCE UPDATE"""
         try:
             # Ensure directory exists
             directory = os.path.dirname(self.csv_base_path)
             if directory:  # Only create if path has directory
                 os.makedirs(directory, exist_ok=True)
             
-            # Define headers
-            # Define headers - UPDATED
+            # Define UPDATED headers with ALL new columns
             headers = [
                 # Core Identification & Timing
                 'timestamp', 'signal_id', 'trade_id', 'instrument', 'hammer_timeframe',
@@ -3914,60 +3913,91 @@ class HammerPatternScanner:
             
             # Check if file exists
             if not os.path.exists(self.csv_file_path):
+                # Create new file with headers
                 with open(self.csv_file_path, 'w', newline='') as f:
                     writer = csv.writer(f)
                     writer.writerow(headers)
-                self.logger.info(f"📁 Created CSV with {len(headers)} columns")
-            else:
-                # Check if file has proper CSV headers
-                with open(self.csv_file_path, 'r', newline='') as f:
-                    try:
-                        reader = csv.reader(f)
-                        existing_headers = next(reader, None)
-                        
-                        # Check if first row looks like headers (contains 'timestamp' or 'signal_id')
-                        if existing_headers is None or len(existing_headers) == 0:
-                            # Empty file, write headers
-                            with open(self.csv_file_path, 'w', newline='') as f2:
-                                writer = csv.writer(f2)
-                                writer.writerow(headers)
-                            self.logger.info(f"📁 File was empty, wrote headers")
-                        elif 'timestamp' not in existing_headers or 'signal_id' not in existing_headers:
-                            # File exists but doesn't have proper headers
-                            # Read all existing data
-                            f.seek(0)
-                            all_rows = list(reader)
-                            
-                            # Create backup of old file
-                            backup_path = f"{self.csv_base_path}_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-                            with open(backup_path, 'w', newline='') as backup:
-                                if existing_headers:
-                                    backup.write(','.join(existing_headers) + '\n')
-                                for row in all_rows:
-                                    backup.write(','.join(row) + '\n')
-                            
-                            # Write new file with proper headers
-                            with open(self.csv_file_path, 'w', newline='') as f2:
-                                writer = csv.writer(f2)
-                                writer.writerow(headers)
-                                # Write existing data if it has the right number of columns
-                                for row in all_rows:
-                                    if len(row) == len(headers):
-                                        writer.writerow(row)
-                            
-                            self.logger.info(f"📁 Fixed CSV headers and backed up old file to {backup_path}")
-                        else:
-                            # File has proper headers, just log
-                            self.logger.info(f"📁 CSV file exists with proper headers ({len(existing_headers)} columns), will append")
-                            
-                    except (csv.Error, StopIteration) as e:
-                        # Corrupted CSV, recreate it
-                        self.logger.warning(f"📁 CSV file corrupted, recreating: {str(e)}")
+                self.logger.info(f"📁 Created NEW CSV with {len(headers)} columns")
+                return
+            
+            # File exists - check and update headers
+            with open(self.csv_file_path, 'r', newline='') as f:
+                try:
+                    reader = csv.reader(f)
+                    existing_headers = next(reader, None)
+                    
+                    # If file is empty, write headers
+                    if existing_headers is None or len(existing_headers) == 0:
                         with open(self.csv_file_path, 'w', newline='') as f2:
                             writer = csv.writer(f2)
                             writer.writerow(headers)
-                        self.logger.info(f"📁 Recreated CSV with headers")
+                        self.logger.info(f"📁 File was empty, wrote {len(headers)} headers")
+                        return
+                    
+                    # Check if headers match EXACTLY
+                    if existing_headers == headers:
+                        self.logger.info(f"📁 CSV file exists with correct headers ({len(headers)} columns)")
+                        return
+                    
+                    # Headers don't match - we need to update the file
+                    self.logger.info(f"📁 Existing headers ({len(existing_headers)} cols) don't match new headers ({len(headers)} cols)")
+                    self.logger.info(f"📁 Updating CSV structure...")
+                    
+                    # Read all existing data
+                    f.seek(0)
+                    all_rows = list(reader)
+                    
+                    # Create backup of old file
+                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                    backup_path = f"{self.csv_base_path}_backup_{timestamp}.csv"
+                    with open(backup_path, 'w', newline='') as backup:
+                        writer = csv.writer(backup)
+                        writer.writerow(existing_headers)
+                        for row in all_rows:
+                            writer.writerow(row)
+                    self.logger.info(f"📁 Backed up old file to: {backup_path}")
+                    
+                    # Create a mapping from old headers to new headers
+                    # For existing data, we'll try to preserve what we can
+                    old_to_new = {}
+                    for i, old_header in enumerate(existing_headers):
+                        if old_header in headers:
+                            old_to_new[old_header] = old_header
+                    
+                    # Write new file with updated headers
+                    with open(self.csv_file_path, 'w', newline='') as f2:
+                        writer = csv.DictWriter(f2, fieldnames=headers)
+                        writer.writeheader()
                         
+                        # Write existing rows, preserving data where possible
+                        for row_data in all_rows:
+                            row_dict = {}
+                            # Build dictionary from old row data
+                            for i, value in enumerate(row_data):
+                                if i < len(existing_headers):
+                                    old_header = existing_headers[i]
+                                    if old_header in old_to_new:
+                                        row_dict[old_header] = value
+                            
+                            # Fill missing columns with empty values
+                            for header in headers:
+                                if header not in row_dict:
+                                    row_dict[header] = ''
+                            
+                            # Write the row
+                            writer.writerow(row_dict)
+                    
+                    self.logger.info(f"📁 Successfully updated CSV to {len(headers)} columns")
+                    self.logger.info(f"📁 New columns added: {[h for h in headers if h not in existing_headers]}")
+                        
+                except (csv.Error, StopIteration, UnicodeDecodeError) as e:
+                    # Corrupted CSV, recreate it
+                    self.logger.warning(f"📁 CSV file corrupted, recreating: {str(e)}")
+                    with open(self.csv_file_path, 'w', newline='') as f2:
+                        writer = csv.writer(f2)
+                        writer.writerow(headers)
+                    self.logger.info(f"📁 Recreated CSV with {len(headers)} headers")
+                    
         except Exception as e:
             self.logger.error(f"❌ Failed to initialize CSV: {str(e)}")
             # Try to create a simple file as last resort
