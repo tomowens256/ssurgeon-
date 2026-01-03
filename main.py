@@ -4037,20 +4037,7 @@ class HammerPatternScanner:
             self.logger.error(f"Error in hammer detection: {str(e)}")
             return False, 0, 0
     
-    def get_session_color(self, timestamp_ny):
-        """Determine session color based on NY time"""
-        hour = timestamp_ny.hour
-        
-        # London Session: 3 AM - 12 PM NYT
-        # NY Session: 8 AM - 5 PM NYT
-        # Asian Session: 7 PM - 4 AM NYT
-        
-        if 8 <= hour < 17:  # NY + London Overlap / High liquidity
-            return 'GREEN'
-        elif (3 <= hour < 12) or (17 <= hour < 22):  # Pure London or Late NY
-            return 'YELLOW'
-        else:  # Asian / Low liquidity
-            return 'RED'
+    
 
     def _get_fib_zones(self, trigger_data):
         """Calculate Fibonacci zones based on SMT swings and zone formation"""
