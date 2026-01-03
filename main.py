@@ -3851,19 +3851,34 @@ class HammerPatternScanner:
                 os.makedirs(directory, exist_ok=True)
             
             # Define headers
+            # Define headers - UPDATED
             headers = [
                 # Core Identification & Timing
                 'timestamp', 'signal_id', 'trade_id', 'instrument', 'hammer_timeframe',
                 'direction', 'entry_time', 'entry_price',
                 
                 # Price Levels
-                'sl_price', 'tp_1_4_price',
+                'sl_price', 'tp_1_4_price', 'open_tp_price',
                 
                 # Trade Levels (distances in pips)
                 'sl_distance_pips', 'tp_1_1_distance', 'tp_1_2_distance', 'tp_1_3_distance',
                 'tp_1_4_distance', 'tp_1_5_distance', 'tp_1_6_distance', 'tp_1_7_distance',
                 'tp_1_8_distance', 'tp_1_9_distance', 'tp_1_10_distance',
                 
+                # TP Results (1-10) and Time Tracking
+                'tp_1_1_result', 'tp_1_1_time_seconds',
+                'tp_1_2_result', 'tp_1_2_time_seconds',
+                'tp_1_3_result', 'tp_1_3_time_seconds',
+                'tp_1_4_result', 'tp_1_4_time_seconds',
+                'tp_1_5_result', 'tp_1_5_time_seconds',
+                'tp_1_6_result', 'tp_1_6_time_seconds',
+                'tp_1_7_result', 'tp_1_7_time_seconds',
+                'tp_1_8_result', 'tp_1_8_time_seconds',
+                'tp_1_9_result', 'tp_1_9_time_seconds',
+                'tp_1_10_result', 'tp_1_10_time_seconds',
+                
+                # Open TP Tracking
+                'open_tp_rr', 'open_tp_result', 'open_tp_time_seconds',
                 
                 # Trigger Criteria & Context
                 'criteria', 'trigger_timeframe',
@@ -3871,7 +3886,27 @@ class HammerPatternScanner:
                 'smt_cycle', 'smt_quarters', 'has_psp', 'is_hp_fvg', 'is_hp_zone',
                 
                 # Market Context
-                'session_color', 'rsi',  'vwap',
+                'rsi', 'vwap',
+                
+                # New Features
+                'signal_latency_seconds',  # Time from candle close to Telegram send
+                'hammer_volume',
+                'inducement_count',  # Number of swing highs/lows
+                'ma_10', 'ma_20', 'ma_30', 'ma_40', 'ma_60', 'ma_100',  # Moving averages
+                'vwap_value', 'vwap_std',
+                'upper_band_1', 'lower_band_1',
+                'upper_band_2', 'lower_band_2',
+                'upper_band_3', 'lower_band_3',
+                'touches_upper_band_1', 'touches_lower_band_1',
+                'touches_upper_band_2', 'touches_lower_band_2',
+                'touches_upper_band_3', 'touches_lower_band_3',
+                'touches_vwap',
+                'far_ratio_upper_band_1', 'far_ratio_lower_band_1',
+                'far_ratio_upper_band_2', 'far_ratio_lower_band_2',
+                'far_ratio_upper_band_3', 'far_ratio_lower_band_3',
+                'far_ratio_vwap',
+                'bearish_stack', 'trend_strength_up', 'trend_strength_down',
+                'prev_volume',
                 
                 # Result Tracking
                 'exit_time', 'time_to_exit_seconds', 'tp_level_hit'
@@ -4588,6 +4623,15 @@ class HammerPatternScanner:
             
             
             current_time = datetime.now(NY_TZ)
+
+            # Calculate signal latency (candle close to Telegram send)
+            candle_close_time = candle['time']  # Assuming this is datetime
+            if isinstance(candle_close_time, str):
+                candle_close_time = datetime.strptime(candle_close_time, '%Y-%m-%d %H:%M:%S')
+            signal_latency_seconds = (current_time - candle_close_time).total_seconds()
+            
+            
+            
             
             
             # Prepare trade data
@@ -4619,6 +4663,7 @@ class HammerPatternScanner:
                 'vwap': indicators.get('vwap', current_price),
                 'exit_time': '',
                 'time_to_exit_seconds': 0,
+                'signal_latency_seconds': round(signal_latency_seconds, 2),
                 'tp_level_hit': 0
             }
             
@@ -4783,7 +4828,7 @@ class HammerPatternScanner:
             message += f"  • Risk $100: {trade_data['risk_100_lots']:.2f} lots\n\n"
             
             message += f"*⏰ TIME:* {trade_data['entry_time']}\n"
-            message += f"*🎨 SESSION:* {trade_data['session_color']}\n\n"
+            message += f"*⚡ LATENCY:* {trade_data.get('signal_latency_seconds', 0):.1f}s (candle close → signal)\n\n"
             
             # Add signal context
             if criteria == 'FVG+SMT':
