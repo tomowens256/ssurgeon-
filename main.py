@@ -4399,14 +4399,28 @@ class HammerPatternScanner:
         else:
             self.logger = logging.getLogger('HammerScanner')
         
-        # CSV configuration - FIX THE DUPLICATED FILENAME
-        self.csv_base_path = csv_base_path.rstrip('_')  # Remove trailing underscore
-        self.csv_file_path = f"{self.csv_base_path}.csv"  # Simple .csv extension
+        # CSV configuration
+        self.csv_base_path = csv_base_path.rstrip('_')
+        self.csv_file_path = f"{self.csv_base_path}.csv"
         self.init_csv_storage()
         
+        # Initialize NewsCalendar if RapidAPI key is available
+        self.news_calendar = None
+        rapidapi_key = credentials.get('rapidapi_key')
+        if rapidapi_key:
+            try:
+                self.news_calendar = NewsCalendar(
+                    rapidapi_key=rapidapi_key,
+                    base_path='/content/drive/MyDrive',
+                    logger=self.logger
+                )
+                self.logger.info(f"📰 News Calendar initialized")
+            except Exception as e:
+                self.logger.error(f"❌ Failed to initialize News Calendar: {str(e)}")
+        else:
+            self.logger.warning(f"⚠️ No RapidAPI key provided - News Calendar disabled")
         
-        
-        # Timeframe alignment
+        # Timeframe alignment (keep existing)
         self.timeframe_alignment = {
             'XAU_USD': {
                 'FVG+SMT': {'M15': ['M1', 'M3', 'M5'], 'H1': ['M5', 'M15'], 'H4': ['M15']},
