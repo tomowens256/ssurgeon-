@@ -4655,6 +4655,43 @@ class HammerPatternScanner:
         except Exception as e:
             self.logger.error(f"Error in wait_for_candle_open: {str(e)}")
             return False
+
+    def start_news_background_fetch(self, interval_hours=6):
+        """Start background news fetching thread"""
+        if not self.news_calendar:
+            self.logger.warning("⚠️ News Calendar not initialized - cannot start background fetch")
+            return
+        
+        def news_fetcher():
+            while self.running:
+                try:
+                    # Fetch news for today
+                    date_str = datetime.now(NY_TZ).strftime('%Y-%m-%d')
+                    self.logger.info(f"📰 Background news fetch for {date_str}")
+                    
+                    news_data = self.news_calendar.fetch_news_data(date_str)
+                    
+                    if 'error' in news_data:
+                        self.logger.error(f"❌ Background news fetch failed: {news_data['error']}")
+                    else:
+                        event_count = len(news_data.get('events', []))
+                        self.logger.info(f"📰 Background fetch successful: {event_count} events")
+                    
+                    # Sleep for interval
+                    time.sleep(interval_hours * 3600)
+                    
+                except Exception as e:
+                    self.logger.error(f"❌ Error in background news fetch: {str(e)}")
+                    time.sleep(3600)  # Wait 1 hour on error
+        
+        # Start thread
+        self.news_thread = threading.Thread(
+            target=news_fetcher,
+            name="NewsBackgroundFetch",
+            daemon=True
+        )
+        self.news_thread.start()
+        self.logger.info(f"📰 Started background news fetching every {interval_hours} hours")
     
     def is_hammer_candle(self, candle, direction):
         """Strict hammer detection - 50% wick rule with additional filters"""
