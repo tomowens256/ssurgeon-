@@ -3952,9 +3952,10 @@ class HammerPatternScanner:
         return hashlib.md5(unique_string.encode()).hexdigest()[:8]
     
     def _generate_trade_id(self, instrument, timeframe):
-        """Create unique trade ID"""
+        """Create unique trade ID with date for 10-year uniqueness"""
         from datetime import datetime
-        timestamp = datetime.now(NY_TZ).strftime('%H%M%S%f')[:10]
+        # Include date to ensure 10-year uniqueness: YYYYMMDD_HHMMSSmmm
+        timestamp = datetime.now(NY_TZ).strftime('%Y%m%d_%H%M%S%f')[:-3]
         return f"{instrument}_{timeframe}_{timestamp}"
     
     def wait_for_candle_open(self, timeframe):
