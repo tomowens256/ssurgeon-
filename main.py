@@ -5222,7 +5222,28 @@ class HammerPatternScanner:
             if isinstance(candle_close_time, str):
                 candle_close_time = datetime.strptime(candle_close_time, '%Y-%m-%d %H:%M:%S')
             signal_latency_seconds = (current_time - candle_close_time).total_seconds()
-            
+
+            # Get news context if available
+            news_context = {}
+            if self.news_calendar:
+                try:
+                    news_context = self.news_calendar.get_news_for_instrument(instrument, current_time)
+                    self.logger.info(f"📰 News context: {news_context.get('event_count', 0)} events, "
+                                    f"{news_context.get('high_impact_count', 0)} high impact")
+                except Exception as e:
+                    self.logger.error(f"❌ Error getting news context: {str(e)}")
+                    news_context = {
+                        'error': str(e),
+                        'event_count': 0,
+                        'high_impact_count': 0,
+                        'fetch_status': 'error'
+                    }
+            else:
+                news_context = {
+                    'event_count': 0,
+                    'high_impact_count': 0,
+                    'fetch_status': 'disabled'
+                }
             # Calculate price levels
             hammer_high = candle['high']
             hammer_low = candle['low']
