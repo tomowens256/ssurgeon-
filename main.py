@@ -4190,8 +4190,13 @@ class NewsCalendar:
             return None
     
     def _save_to_cache(self, key: str, data: Dict):
-        """Save data to cache"""
+        """Save data to cache - ONLY IF SUCCESSFUL"""
         try:
+            # === FIX: Only cache if we have valid data with events ===
+            if 'error' in data or not data.get('events'):
+                self.logger.warning(f"⚠️ Not caching error/empty data for {key}")
+                return
+            """Save data to cache"""
             cache_data = {}
             if os.path.exists(self.cache_file):
                 with open(self.cache_file, 'r') as f:
