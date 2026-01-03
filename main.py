@@ -4572,8 +4572,8 @@ class HammerPatternScanner:
         return int(sleep_minutes * 60)
     
     def _process_and_record_hammer(self, instrument, tf, candle, direction, criteria, 
-                                  signal_data, signal_id, trigger_data):
-        """Process a single hammer and record it to CSV"""
+                              signal_data, signal_id, trigger_data):
+        """Process a single hammer and record it to CSV - UPDATED"""
         try:
             # Get current price for entry
             current_df = fetch_candles(instrument, 'M1', count=2, api_key=self.credentials['oanda_api_key'])
@@ -4582,6 +4582,13 @@ class HammerPatternScanner:
                 return False
             
             current_price = current_df.iloc[-1]['close']
+            current_time = datetime.now(NY_TZ)
+            
+            # Calculate signal latency
+            candle_close_time = candle['time']
+            if isinstance(candle_close_time, str):
+                candle_close_time = datetime.strptime(candle_close_time, '%Y-%m-%d %H:%M:%S')
+            signal_latency_seconds = (current_time - candle_close_time).total_seconds()
             
             # Calculate price levels
             hammer_high = candle['high']
@@ -4607,7 +4614,6 @@ class HammerPatternScanner:
                 tp_distance_pips = sl_distance_pips * i
                 tp_distances[f'tp_1_{i}_distance'] = round(tp_distance_pips, 1)
             
-            
             # Generate trade ID
             trade_id = self._generate_trade_id(instrument, tf)
             
@@ -4617,24 +4623,45 @@ class HammerPatternScanner:
             zone = signal_data.get('zone', {})
             crt_signal = signal_data.get('crt_signal', {})
             
-            # Get indicators
-            df = fetch_candles(instrument, tf, count=30, api_key=self.credentials['oanda_api_key'])
-            indicators = self.calculate_simple_indicators(df, -2) if not df.empty else {'rsi': 50, 'macd_line': 0, 'vwap': current_price}
+            # Get basic indicators
+            df = fetch_candles(instrument, tf, count=150, api_key=self.credentials['oanda_api_key'])
             
+            # Calculate advanced features
+            if not df.empty:
+                # Find the index of the hammer candle
+                candle_index = -2  # Default to second last candle
+                for idx in range(len(df)):
+                    if df.iloc[idx]['time'] == candle['time']:
+                        candle_index = idx
+                        break
+                
+                indicators = self.calculate_simple_indicators(df, candle_index)
+                advanced_features = self.calculate_advanced_features(df, candle_index)
+            else:
+                indicators = {'rsi': 50, 'vwap': current_price}
+                advanced_features = {}
             
-            current_time = datetime.now(NY_TZ)
-
-            # Calculate signal latency (candle close to Telegram send)
-            candle_close_time = candle['time']  # Assuming this is datetime
-            if isinstance(candle_close_time, str):
-                candle_close_time = datetime.strptime(candle_close_time, '%Y-%m-%d %H:%M:%S')
-            signal_latency_seconds = (current_time - candle_close_time).total_seconds()
+            # Calculate inducement if we have the data
+            inducement_count = 0
+            if criteria in ['FVG+SMT', 'SD+SMT']:
+                # Get formation time and second swing
+                formation_time = fvg_idea.get('formation_time') if criteria == 'FVG+SMT' else zone.get('formation_time')
+                smt_swings = smt_data.get('swings', [])
+                second_swing_time = smt_swings[1].get('time') if len(smt_swings) > 1 else None
+                
+                if formation_time and second_swing_time:
+                    zone_timeframe = tf  # Use hammer timeframe for swing detection
+                    inducement_count = self.calculate_inducement(
+                        instrument, direction, trigger_data.get('fib_zones', []),
+                        formation_time, second_swing_time, zone_timeframe
+                    )
             
+            # Calculate open TP
+            open_tp_price, open_tp_rr, open_tp_type = self.calculate_open_tp(
+                instrument, direction, current_price, sl_price
+            )
             
-            
-            
-            
-            # Prepare trade data
+            # Prepare trade data - UPDATED
             trade_data = {
                 'timestamp': current_time.strftime('%Y-%m-%d %H:%M:%S'),
                 'signal_id': signal_id,
@@ -4646,8 +4673,23 @@ class HammerPatternScanner:
                 'entry_price': round(current_price, 5),
                 'sl_price': round(sl_price, 5),
                 'tp_1_4_price': round(tp_1_4_price, 5),
+                'open_tp_price': round(open_tp_price, 5) if open_tp_price else '',
                 'sl_distance_pips': round(sl_distance_pips, 1),
                 **tp_distances,
+                # Initialize TP results and times
+                'tp_1_1_result': '', 'tp_1_1_time_seconds': 0,
+                'tp_1_2_result': '', 'tp_1_2_time_seconds': 0,
+                'tp_1_3_result': '', 'tp_1_3_time_seconds': 0,
+                'tp_1_4_result': '', 'tp_1_4_time_seconds': 0,
+                'tp_1_5_result': '', 'tp_1_5_time_seconds': 0,
+                'tp_1_6_result': '', 'tp_1_6_time_seconds': 0,
+                'tp_1_7_result': '', 'tp_1_7_time_seconds': 0,
+                'tp_1_8_result': '', 'tp_1_8_time_seconds': 0,
+                'tp_1_9_result': '', 'tp_1_9_time_seconds': 0,
+                'tp_1_10_result': '', 'tp_1_10_time_seconds': 0,
+                'open_tp_rr': round(open_tp_rr, 2) if open_tp_rr else 0,
+                'open_tp_result': '',
+                'open_tp_time_seconds': 0,
                 'criteria': criteria,
                 'trigger_timeframe': trigger_data.get('trigger_timeframe', ''),
                 'fvg_formation_time': fvg_idea.get('formation_time', '').strftime('%Y-%m-%d %H:%M:%S') if fvg_idea.get('formation_time') else '',
@@ -4659,15 +4701,20 @@ class HammerPatternScanner:
                 'is_hp_fvg': 1 if signal_data.get('is_hp_fvg') else 0,
                 'is_hp_zone': 1 if signal_data.get('is_hp_zone') else 0,
                 'rsi': indicators.get('rsi', 50),
-                'macd_line': indicators.get('macd_line', 0),
                 'vwap': indicators.get('vwap', current_price),
+                'signal_latency_seconds': round(signal_latency_seconds, 2),
+                'hammer_volume': int(candle.get('volume', 0)),
+                'inducement_count': inducement_count,
                 'exit_time': '',
                 'time_to_exit_seconds': 0,
-                'signal_latency_seconds': round(signal_latency_seconds, 2),
                 'tp_level_hit': 0
             }
             
-            # Send Telegram signal
+            # Add advanced features
+            for key, value in advanced_features.items():
+                trade_data[key] = value
+            
+            # Send Telegram signal (run feature calculation AFTER sending)
             self.logger.info(f"📤 Sending Telegram signal for hammer #{trade_id}")
             self.send_hammer_signal(trade_data, trigger_data)
             
@@ -4676,12 +4723,16 @@ class HammerPatternScanner:
             self.save_trade_to_csv(trade_data)
             
             self.logger.info(f"✅ Hammer recorded: {instrument} {tf} at {candle['time']}")
-            self.logger.info(f"   Entry: {current_price:.5f}, SL: {sl_price:.5f}, TP1:4: {tp_1_4_price:.5f}")
+            self.logger.info(f"   Entry: {current_price:.5f}, SL: {sl_price:.5f}")
+            self.logger.info(f"   Latency: {signal_latency_seconds:.2f}s, Inducement: {inducement_count}")
+            
+            # Start TP monitoring in background thread
+            self._start_tp_monitoring(trade_data)
             
             return True
             
         except Exception as e:
-            self.logger.error(f"❌ Error processing hammer: {str(e)}")
+            self.logger.error(f"❌ Error processing hammer: {str(e)}", exc_info=True)
             return False
     
     def calculate_simple_indicators(self, df, candle_index):
