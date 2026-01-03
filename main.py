@@ -4501,9 +4501,17 @@ class HammerPatternScanner:
                 'far_ratio_vwap',
                 'bearish_stack', 'trend_strength_up', 'trend_strength_down',
                 'prev_volume',
+                # News Calendar Columns
+                'news_context_json',  # JSON string with all news context
+                'news_high_count', 'news_medium_count', 'news_low_count',
+                'next_news_time', 'next_news_event', 'next_news_currency',
+                'prev_news_time', 'prev_news_event', 'prev_news_currency',
+                'seconds_to_next_news', 'seconds_since_last_news',
+                'news_timing_category', 'news_fetch_status',
                 
                 # Result Tracking
                 'exit_time', 'time_to_exit_seconds', 'tp_level_hit'
+                
             ]
             
             # Check if file exists
