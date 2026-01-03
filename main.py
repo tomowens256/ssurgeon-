@@ -9213,6 +9213,7 @@ async def main():
     api_key = os.getenv('OANDA_API_KEY')
     telegram_token = os.getenv('TELEGRAM_BOT_TOKEN')
     telegram_chat_id = os.getenv('TELEGRAM_CHAT_ID')
+    rapidapi_key = os.getenv('rapidapi_key')
     
     if not all([api_key, telegram_token, telegram_chat_id]):
         logger.error("❌ Missing required environment variables")
