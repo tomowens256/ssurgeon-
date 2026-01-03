@@ -4404,7 +4404,7 @@ class HammerPatternScanner:
         self.csv_file_path = f"{self.csv_base_path}.csv"
         self.init_csv_storage()
         
-        # Initialize NewsCalendar if RapidAPI key is available
+        # Initialize NewsCalendar if RapidAPI key is available now
         self.news_calendar = None
         rapidapi_key = credentials.get('rapidapi_key')
         if rapidapi_key:
