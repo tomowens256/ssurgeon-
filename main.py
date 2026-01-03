@@ -4593,9 +4593,9 @@ class HammerPatternScanner:
             df = fetch_candles(instrument, tf, count=30, api_key=self.credentials['oanda_api_key'])
             indicators = self.calculate_simple_indicators(df, -2) if not df.empty else {'rsi': 50, 'macd_line': 0, 'vwap': current_price}
             
-            # Session color
+            
             current_time = datetime.now(NY_TZ)
-            session_color = self.get_session_color(current_time)
+            
             
             # Prepare trade data
             trade_data = {
@@ -4623,7 +4623,6 @@ class HammerPatternScanner:
                 'has_psp': 1 if signal_data.get('has_psp') else 0,
                 'is_hp_fvg': 1 if signal_data.get('is_hp_fvg') else 0,
                 'is_hp_zone': 1 if signal_data.get('is_hp_zone') else 0,
-                'session_color': session_color,
                 'rsi': indicators.get('rsi', 50),
                 'macd_line': indicators.get('macd_line', 0),
                 'vwap': indicators.get('vwap', current_price),
