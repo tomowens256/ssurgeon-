@@ -3801,16 +3801,7 @@ class SupplyDemandDetector:
         return all_zones
 
 
-# STREAMLINED HAMMER 
-import csv
-import os
-import logging
-import time
-import threading
-from datetime import datetime, timedelta
-import pytz  # Add this import
 
-NY_TZ = pytz.timezone('America/New_York')  # Define NY_TZ here
 
 class HammerPatternScanner:
     """Concurrent hammer pattern scanner with minimal features"""
