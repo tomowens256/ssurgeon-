@@ -4572,13 +4572,6 @@ class HammerPatternScanner:
                 tp_distance_pips = sl_distance_pips * i
                 tp_distances[f'tp_1_{i}_distance'] = round(tp_distance_pips, 1)
             
-            # Risk management lots
-            if sl_distance_pips > 0:
-                risk_10_lots = round((10 / sl_distance_pips) * 1000, 2)
-                risk_100_lots = round((100 / sl_distance_pips) * 1000, 2)
-            else:
-                risk_10_lots = 0
-                risk_100_lots = 0
             
             # Generate trade ID
             trade_id = self._generate_trade_id(instrument, tf)
@@ -4611,8 +4604,6 @@ class HammerPatternScanner:
                 'tp_1_4_price': round(tp_1_4_price, 5),
                 'sl_distance_pips': round(sl_distance_pips, 1),
                 **tp_distances,
-                'risk_10_lots': risk_10_lots,
-                'risk_100_lots': risk_100_lots,
                 'criteria': criteria,
                 'trigger_timeframe': trigger_data.get('trigger_timeframe', ''),
                 'fvg_formation_time': fvg_idea.get('formation_time', '').strftime('%Y-%m-%d %H:%M:%S') if fvg_idea.get('formation_time') else '',
