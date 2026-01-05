@@ -7018,7 +7018,7 @@ class UltimateTradingSystem:
             'M15': ['daily', '90min']
         }
         
-        # Initialize HammerScanner WITH news_calendar
+        # Initialize HammerScanner with news_calendar
         hammer_credentials = {
             'telegram_token': telegram_token,
             'telegram_chat_id': telegram_chat_id,
@@ -7035,9 +7035,11 @@ class UltimateTradingSystem:
         # Start the hammer scanner
         self.hammer_scanner.start()
         
-        logger.info(f"🎯 Initialized ULTIMATE trading system for {self.pair_group}")
-        logger.info(f"🔨 Hammer scanner initialized with news calendar: {'Yes' if news_calendar else 'No'}")
-        
+        if news_calendar:
+            logger.info(f"🔨 Hammer scanner initialized WITH news calendar for {pair_group}")
+            logger.info(f"   Cache directory: {news_calendar.cache_dir}")
+        else:
+            logger.info(f"🔨 Hammer scanner initialized WITHOUT news calendar for {pair_group}")
     def get_sleep_time(self):
         """Use smart timing instead of fixed intervals"""
         return self.hybrid_timing.get_sleep_time()
