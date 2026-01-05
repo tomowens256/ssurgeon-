@@ -10067,7 +10067,6 @@ async def main():
     telegram_token = os.getenv('TELEGRAM_BOT_TOKEN')
     telegram_chat_id = os.getenv('TELEGRAM_CHAT_ID')
     rapidapi_key = os.getenv('rapidapi_key')
-    logger.info(f"RapidAPI Key found: {'Yes' if rapidapi_key else 'No'}")
     
     if not all([api_key, telegram_token, telegram_chat_id]):
         logger.error("❌ Missing required environment variables")
@@ -10081,26 +10080,21 @@ async def main():
                                       logger=logger)
         # This line makes the single API call for the day
         global_news_data = news_calendar.get_daily_news()
+        logger.info(f"📰 News Calendar initialized with cache at: {news_calendar.cache_dir}")
     else:
         logger.warning("⚠️ RapidAPI key missing. News features disabled.")
         global_news_data = {}
     
-    # Initialize the manager with news calendar
+    # === PASS THE DATA/CALENDAR TO MANAGER ===
     try:
+        # Initialize the manager with BOTH news data AND calendar
         manager = UltimateTradingManager(
-            api_key, 
-            telegram_token, 
-            telegram_chat_id,
+            api_key=api_key, 
+            telegram_token=telegram_token, 
+            chat_id=telegram_chat_id,  # Note: parameter name is chat_id
             news_data=global_news_data,
-            news_calendar=news_calendar  # Pass the calendar object
+            news_calendar=news_calendar  # ← PASS THIS!
         )
-        
-        # Start all hammer scanners (they should already be started in initialization)
-        for pair_group, system in manager.trading_systems.items():
-            if hasattr(system, 'hammer_scanner'):
-                if not system.hammer_scanner.running:
-                    system.hammer_scanner.start()
-                    logger.info(f"✅ Hammer scanner started for {pair_group}")
         
         await manager.run_ultimate_systems()
         
