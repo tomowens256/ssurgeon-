@@ -4701,30 +4701,19 @@ class HammerPatternScanner:
         self.csv_file_path = f"{self.csv_base_path}.csv"
         self.init_csv_storage()
         
-        # Store the news calendar reference - FIXED
+        # Store the news calendar reference
         self.news_calendar = news_calendar
         
-        # TIMEZONE FIX - Add this!
+        # TIMEZONE - MUST HAVE THIS!
         self.NY_TZ = pytz.timezone('America/New_York')
         
         if self.news_calendar:
-            self.logger.info(f"📰 News Calendar received: {self.news_calendar.cache_dir}")
-            
-            # Check if cache exists using the news_calendar's cache_dir
-            today_str = datetime.now(self.NY_TZ).strftime('%Y-%m-%d')
-            expected_cache = f"{self.news_calendar.cache_dir}/news_cache_{today_str}.json"
-            
-            if os.path.exists(expected_cache):
-                self.logger.info(f"✅ News cache found: {expected_cache}")
-            else:
-                self.logger.warning(f"⚠️ News cache not found at {expected_cache}")
-                self.logger.info(f"   This is normal if get_daily_news() hasn't been called yet")
+            self.logger.info(f"📰 News Calendar received")
+            # You can access cache_dir if needed: self.news_calendar.cache_dir
         else:
             self.logger.warning("⚠️ No News Calendar provided - news features disabled")
         
-        
-        
-        # Timeframe alignment (keep existing)
+        # Timeframe alignment
         self.timeframe_alignment = {
             'XAU_USD': {
                 'FVG+SMT': {'M15': ['M1', 'M3', 'M5'], 'H1': ['M5', 'M15'], 'H4': ['M15']},
@@ -4740,6 +4729,8 @@ class HammerPatternScanner:
         
         self.logger.info(f"🔨 Streamlined Hammer Scanner initialized")
         self.logger.info(f"📁 CSV storage: {self.csv_file_path}")
+        
+        
         
     def init_csv_storage(self):
         """Initialize CSV file with NEW columns - FORCE UPDATE"""
