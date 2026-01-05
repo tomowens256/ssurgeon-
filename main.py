@@ -4909,21 +4909,40 @@ class HammerPatternScanner:
                 self.logger.error(f"❌ No data after formation time {formation_time}")
                 return []
             
-            # Get SMT swings data
-            smt_swings = smt_data.get('swings', [])
+            # Get SMT swings data - now it's a dictionary, not a list
+            smt_swings = smt_data.get('swings', {})
             
-            if not smt_swings or len(smt_swings) < 2:
-                self.logger.error(f"❌ Not enough SMT swings: {len(smt_swings)}")
+            if not smt_swings:
+                self.logger.error(f"❌ No SMT swings found")
                 return []
+            
+            # Convert swings dictionary to list for easier processing
+            swings_list = []
+            for key, swing_info in smt_swings.items():
+                # Only process if it has the expected structure
+                if isinstance(swing_info, dict) and 'price' in swing_info and 'time' in swing_info:
+                    swings_list.append({
+                        'time': swing_info['time'],
+                        'price': swing_info['price'],
+                        'type': swing_info.get('type', 'unknown'),
+                        'asset': key  # Keep track of which asset/swing this is
+                    })
+            
+            if len(swings_list) < 2:
+                self.logger.error(f"❌ Not enough valid SMT swings: {len(swings_list)}")
+                return []
+            
+            # Sort swings by time for chronological order
+            swings_list.sort(key=lambda x: x['time'])
             
             if direction == 'bearish':
                 # Bearish setup
-                # 1. Default SL: Highest point of SMT swings
-                default_sl = max([swing.get('high', 0) for swing in smt_swings])
+                # 1. Default SL: Highest price among all SMT swings (should be highest high)
+                default_sl = max([swing['price'] for swing in swings_list])
                 
                 # 2. Default TP: Lowest point between zone formation and second SMT swing
-                # Get second SMT swing time
-                second_swing_time = smt_swings[1].get('time') if len(smt_swings) > 1 else None
+                # Get second SMT swing time (chronologically)
+                second_swing_time = swings_list[1]['time'] if len(swings_list) > 1 else None
                 
                 if second_swing_time:
                     # Filter data between formation time and second swing
@@ -4934,7 +4953,7 @@ class HammerPatternScanner:
                     default_tp = df_from_formation['low'].min()
                 
                 self.logger.info(f"📊 Bearish setup:")
-                self.logger.info(f"   Default SL (highest swing): {default_sl:.5f}")
+                self.logger.info(f"   Default SL (highest swing price): {default_sl:.5f}")
                 self.logger.info(f"   Default TP (lowest after formation): {default_tp:.5f}")
                 
                 # Calculate Fibonacci retracement from SL to TP
@@ -4942,11 +4961,11 @@ class HammerPatternScanner:
                 
             else:  # bullish
                 # Bullish setup (flipped logic)
-                # 1. Default SL: Lowest point of SMT swings
-                default_sl = min([swing.get('low', float('inf')) for swing in smt_swings])
+                # 1. Default SL: Lowest price among all SMT swings (should be lowest low)
+                default_sl = min([swing['price'] for swing in swings_list])
                 
                 # 2. Default TP: Highest point between zone formation and second SMT swing
-                second_swing_time = smt_swings[1].get('time') if len(smt_swings) > 1 else None
+                second_swing_time = swings_list[1]['time'] if len(swings_list) > 1 else None
                 
                 if second_swing_time:
                     mask = (df_from_formation['time'] >= formation_time) & (df_from_formation['time'] <= second_swing_time)
@@ -4956,11 +4975,16 @@ class HammerPatternScanner:
                     default_tp = df_from_formation['high'].max()
                 
                 self.logger.info(f"📊 Bullish setup:")
-                self.logger.info(f"   Default SL (lowest swing): {default_sl:.5f}")
+                self.logger.info(f"   Default SL (lowest swing price): {default_sl:.5f}")
                 self.logger.info(f"   Default TP (highest after formation): {default_tp:.5f}")
                 
                 # Calculate Fibonacci retracement from SL to TP
                 fib_levels = self._calculate_fibonacci_levels(default_sl, default_tp, direction)
+            
+            # Log the swing details for debugging
+            self.logger.info(f"📊 SMT Swing details:")
+            for i, swing in enumerate(swings_list):
+                self.logger.info(f"   Swing {i+1}: {swing['asset']} - Time: {swing['time']}, Price: {swing['price']:.5f}, Type: {swing['type']}")
             
             return fib_levels
             
