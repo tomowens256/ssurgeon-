@@ -9766,14 +9766,25 @@ async def main():
         logger.warning("⚠️ RapidAPI key missing. News features disabled.")
         global_news_data = {}
     
-    # === PASS THE DATA/CALENDAR TO  MANAGER ===
+    # === PASS THE DATA/CALENDAR TO MANAGER ===
     try:
-        #the pre-fetched news data or calendar
+        # Initialize the manager with news data
         manager = UltimateTradingManager(api_key, 
                                          telegram_token, 
                                          telegram_chat_id, 
-                                         news_data=global_news_data)  # Or pass the calendar object
+                                         news_data=global_news_data)
         
+        # Make sure all hammer scanners in each trading system are started
+        logger.info("🔨 Starting all hammer scanners...")
+        for pair_group, system in manager.trading_systems.items():
+            if hasattr(system, 'hammer_scanner'):
+                try:
+                    system.hammer_scanner.start()
+                    logger.info(f"✅ Hammer scanner started for {pair_group}")
+                except Exception as e:
+                    logger.error(f"❌ Failed to start hammer scanner for {pair_group}: {str(e)}")
+        
+        # Run the main systems
         await manager.run_ultimate_systems()
         
     except KeyboardInterrupt:
@@ -9782,10 +9793,18 @@ async def main():
         for pair_group, system in manager.trading_systems.items():
             if hasattr(system, 'hammer_scanner'):
                 system.hammer_scanner.stop()
+                logger.info(f"🛑 Hammer scanner stopped for {pair_group}")
     except Exception as e:
         logger.error(f"💥 Fatal error: {str(e)}")
         import traceback
         logger.error(traceback.format_exc())
+        # Try to stop hammer scanners on error
+        for pair_group, system in manager.trading_systems.items():
+            if hasattr(system, 'hammer_scanner'):
+                try:
+                    system.hammer_scanner.stop()
+                except:
+                    pass
         sys.exit(1)
 
 if __name__ == "__main__":
