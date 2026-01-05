@@ -5061,44 +5061,7 @@ class HammerPatternScanner:
             return False
 
     def check_news_cache_exists(self):
-        """Check if news cache files exist"""
-        try:
-            today_str = datetime.now(NY_TZ).strftime('%Y-%m-%d')
-            
-            # Check standard NewsCalendar cache location
-            news_calendar_cache = f"/content/drive/MyDrive/news_data/cache/news_cache_{today_str}.json"
-            default_cache = f"/content/drive/MyDrive/news_cache_{today_str}.json"
-            
-            cache_files = {
-                "NewsCalendar Cache": news_calendar_cache,
-                "Default Cache": default_cache,
-                "Current Cache Dir": f"{self.news_cache_dir}/news_cache_{today_str}.json" if self.news_cache_dir else None
-            }
-            
-            self.logger.info("🔍 CHECKING NEWS CACHE FILES...")
-            
-            found_cache = False
-            for name, path in cache_files.items():
-                if path and os.path.exists(path):
-                    self.logger.info(f"✅ {name}: FOUND at {path}")
-                    # Read and count events
-                    with open(path, 'r') as f:
-                        data = json.load(f)
-                    event_count = len(data.get('events', []))
-                    self.logger.info(f"   Contains {event_count} news events")
-                    found_cache = True
-                elif path:
-                    self.logger.warning(f"⚠️ {name}: NOT FOUND at {path}")
-            
-            if not found_cache:
-                self.logger.error("❌ No news cache files found!")
-                self.logger.info("💡 Make sure NewsCalendar.get_daily_news() is called in main()")
-            
-            return found_cache
-            
-        except Exception as e:
-            self.logger.error(f"❌ Error checking news cache: {str(e)}")
-            return False
+        pass
         
     def is_hammer_candle(self, candle, direction):
         """Simplified hammer detection - only 50% wick rule"""
