@@ -5914,8 +5914,23 @@ class HammerPatternScanner:
             if criteria in ['FVG+SMT', 'SD+SMT']:
                 # Get formation time and second swing
                 formation_time = fvg_idea.get('formation_time') if criteria == 'FVG+SMT' else zone.get('formation_time')
-                smt_swings = smt_data.get('swings', [])
-                second_swing_time = smt_swings[1].get('time') if len(smt_swings) > 1 else None
+                smt_swings_dict = smt_data.get('swings', {})
+                
+                # Convert dictionary to list and sort by time
+                swings_list = []
+                for key, swing_info in smt_swings_dict.items():
+                    if isinstance(swing_info, dict) and 'time' in swing_info:
+                        swings_list.append({
+                            'time': swing_info['time'],
+                            'price': swing_info.get('price', 0),
+                            'type': swing_info.get('type', 'unknown')
+                        })
+                
+                # Sort by time
+                swings_list.sort(key=lambda x: x['time'])
+                
+                # Get second swing time if available
+                second_swing_time = swings_list[1]['time'] if len(swings_list) > 1 else None
                 
                 if formation_time and second_swing_time:
                     zone_timeframe = tf  # Use hammer timeframe for swing detection
