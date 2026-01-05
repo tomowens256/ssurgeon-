@@ -4851,7 +4851,7 @@ class HammerPatternScanner:
                     news_data = self.news_calendar.fetch_news_data(date_str)
                     
                     if 'error' in news_data:
-                        self.logger.error(f"❌ Background news fetch failed: {news_data['error']}")
+                        self.logger.error(f"❌ Background newss fetch failed: {news_data['error']}")
                     else:
                         event_count = len(news_data.get('events', []))
                         self.logger.info(f"📰 Background fetch successful: {event_count} events")
