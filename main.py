@@ -4873,43 +4873,27 @@ class HammerPatternScanner:
         self.logger.info(f"📰 Started background news fetching every {interval_hours} hours")
     
     def is_hammer_candle(self, candle, direction):
-        """Strict hammer detection - 50% wick rule with additional filters"""
+        """Simplified hammer detection - only 50% wick rule"""
         try:
             total_range = candle['high'] - candle['low']
             if total_range == 0:
                 return False, 0, 0
             
-            body_size = abs(candle['close'] - candle['open'])
             upper_wick = candle['high'] - max(candle['close'], candle['open'])
             lower_wick = min(candle['close'], candle['open']) - candle['low']
             
             # Calculate ratios
             upper_ratio = upper_wick / total_range if total_range > 0 else 0
             lower_ratio = lower_wick / total_range if total_range > 0 else 0
-            body_ratio = body_size / total_range if total_range > 0 else 0
             
-            # Additional filter: body should not be too small (not a doji)
-            if body_ratio < 0.05:  # 5% minimum body
-                return False, upper_ratio, lower_ratio
-            
-            # Additional filter: total range should be meaningful
-            # Get pip multiplier to check if range is significant
-            pip_multiplier = 100 if 'JPY' in str(candle.get('instrument', '')) else 10000
-            range_pips = total_range * pip_multiplier
-            
-            # Minimum range: 5 pips for M1-M5, 10 pips for M15
-            min_pips = 5 if 'M5' in str(candle.get('timeframe', '')) else 10
-            if range_pips < min_pips:
-                return False, upper_ratio, lower_ratio
-            
-            # Strict 50% wick rule
+            # Strict 50% wick rule (no body size or pip requirements)
             if direction == 'bearish':
                 # Bearish hammer: upper wick > 50%
-                if upper_ratio > 0.5 and lower_ratio < 0.3:
+                if upper_ratio > 0.5:
                     return True, upper_ratio, lower_ratio
             else:  # bullish
                 # Bullish hammer: lower wick > 50%
-                if lower_ratio > 0.5 and upper_ratio < 0.3:
+                if lower_ratio > 0.5:
                     return True, upper_ratio, lower_ratio
             
             return False, upper_ratio, lower_ratio
@@ -6432,6 +6416,194 @@ class HammerPatternScanner:
             
         except Exception as e:
             self.logger.error(f"❌ Error updating CSV: {str(e)}")
+            return False
+
+    def run_hammer_debug_test(self):
+        """Run a debug test to find first hammer in XAU_USD M1 and send to Telegram"""
+        try:
+            self.logger.info("🔍 STARTING HAMMER DEBUG TEST...")
+            
+            instrument = "XAU_USD"
+            timeframe = "M1"
+            
+            # Fetch recent candles
+            self.logger.info(f"📊 Fetching {instrument} {timeframe} data...")
+            df = fetch_candles(instrument, timeframe, count=100, 
+                              api_key=self.credentials['oanda_api_key'])
+            
+            if df.empty:
+                self.logger.error("❌ No data fetched for debug test")
+                return
+            
+            self.logger.info(f"📊 Checking {len(df)} candles for hammers...")
+            
+            # Look for the most recent hammer
+            hammer_found = False
+            hammer_data = None
+            
+            # Check from newest to oldest
+            for i in range(len(df)-1, -1, -1):
+                candle = df.iloc[i]
+                
+                # Check for bullish hammer
+                is_bullish_hammer, upper_ratio, lower_ratio = self.is_hammer_candle(candle, 'bullish')
+                is_bearish_hammer, _, _ = self.is_hammer_candle(candle, 'bearish')
+                
+                if is_bullish_hammer or is_bearish_hammer:
+                    hammer_found = True
+                    direction = 'bullish' if is_bullish_hammer else 'bearish'
+                    
+                    # Record detection time
+                    detection_time = datetime.now(NY_TZ)
+                    candle_time = candle['time']
+                    if isinstance(candle_time, str):
+                        candle_time = datetime.strptime(candle_time, '%Y-%m-%d %H:%M:%S')
+                    
+                    latency_seconds = (detection_time - candle_time).total_seconds()
+                    
+                    hammer_data = {
+                        'instrument': instrument,
+                        'timeframe': timeframe,
+                        'direction': direction,
+                        'candle_time': candle_time.strftime('%Y-%m-%d %H:%M:%S'),
+                        'detection_time': detection_time.strftime('%Y-%m-%d %H:%M:%S'),
+                        'latency_seconds': round(latency_seconds, 2),
+                        'open': round(candle['open'], 5),
+                        'high': round(candle['high'], 5),
+                        'low': round(candle['low'], 5),
+                        'close': round(candle['close'], 5),
+                        'upper_wick_ratio': round(upper_ratio, 3),
+                        'lower_wick_ratio': round(lower_ratio, 3)
+                    }
+                    break
+            
+            if hammer_found and hammer_data:
+                self.logger.info(f"✅ HAMMER FOUND IN DEBUG TEST!")
+                self.logger.info(f"   Direction: {hammer_data['direction']}")
+                self.logger.info(f"   Candle time: {hammer_data['candle_time']}")
+                self.logger.info(f"   Detection time: {hammer_data['detection_time']}")
+                self.logger.info(f"   Latency: {hammer_data['latency_seconds']}s")
+                self.logger.info(f"   Price: O:{hammer_data['open']} H:{hammer_data['high']} L:{hammer_data['low']} C:{hammer_data['close']}")
+                self.logger.info(f"   Wick ratios: Upper={hammer_data['upper_wick_ratio']}, Lower={hammer_data['lower_wick_ratio']}")
+                
+                # Send to Telegram
+                self._send_debug_hammer_alert(hammer_data)
+                
+                # Also test the CSV saving
+                self._save_debug_hammer_to_csv(hammer_data)
+                
+            else:
+                self.logger.info("❌ No hammers found in recent data")
+                
+                # Still send a debug message
+                message = "🔍 HAMMER DEBUG TEST COMPLETE\n"
+                message += "No hammers found in recent XAU_USD M1 data\n"
+                message += f"Checked {len(df)} candles\n"
+                message += f"Time: {datetime.now(NY_TZ).strftime('%Y-%m-%d %H:%M:%S')}"
+                
+                send_telegram(
+                    message,
+                    self.credentials['telegram_token'],
+                    self.credentials['telegram_chat_id']
+                )
+                
+        except Exception as e:
+            self.logger.error(f"❌ Error in hammer debug test: {str(e)}", exc_info=True)
+    
+    def _send_debug_hammer_alert(self, hammer_data):
+        """Send debug hammer alert to Telegram"""
+        try:
+            message = "🔨 *HAMMER DEBUG TEST - SUCCESS* 🔨\n\n"
+            message += f"*🎯 INSTRUMENT:* {hammer_data['instrument']} {hammer_data['timeframe']}\n"
+            message += f"*📊 DIRECTION:* {hammer_data['direction'].upper()} hammer\n\n"
+            
+            message += f"*⏰ TIMING:*\n"
+            message += f"• Candle formed: {hammer_data['candle_time']}\n"
+            message += f"• Detection time: {hammer_data['detection_time']}\n"
+            message += f"• Latency: *{hammer_data['latency_seconds']}s*\n\n"
+            
+            message += f"*💰 PRICE LEVELS:*\n"
+            message += f"• Open: {hammer_data['open']:.5f}\n"
+            message += f"• High: {hammer_data['high']:.5f}\n"
+            message += f"• Low: {hammer_data['low']:.5f}\n"
+            message += f"• Close: {hammer_data['close']:.5f}\n\n"
+            
+            message += f"*📈 WICK ANALYSIS:*\n"
+            message += f"• Upper wick: {hammer_data['upper_wick_ratio']:.1%}\n"
+            message += f"• Lower wick: {hammer_data['lower_wick_ratio']:.1%}\n\n"
+            
+            message += f"*💡 TEST RESULTS:*\n"
+            if hammer_data['latency_seconds'] <= 3:
+                message += "✅ EXCELLENT LATENCY! (<3s)\n"
+            elif hammer_data['latency_seconds'] <= 5:
+                message += "⚠️ ACCEPTABLE LATENCY (3-5s)\n"
+            else:
+                message += "❌ HIGH LATENCY (>5s) - NEEDS OPTIMIZATION\n"
+            
+            message += f"\n*🛠️ SYSTEM READY:* Hammer detection is working!\n"
+            message += f"#{hammer_data['instrument'].replace('_', '')} #HammerDebug #SystemTest"
+            
+            success = send_telegram(
+                message,
+                self.credentials['telegram_token'],
+                self.credentials['telegram_chat_id']
+            )
+            
+            if success:
+                self.logger.info(f"✅ Debug hammer alert sent to Telegram")
+            else:
+                self.logger.error(f"❌ Failed to send debug hammer alert")
+                
+            return success
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error sending debug alert: {str(e)}")
+            return False
+    
+    def _save_debug_hammer_to_csv(self, hammer_data):
+        """Save debug hammer to CSV"""
+        try:
+            # Create debug CSV file
+            debug_csv_path = f"{self.csv_base_path}_debug.csv"
+            
+            # Check if file exists
+            if not os.path.exists(debug_csv_path):
+                headers = [
+                    'timestamp', 'instrument', 'timeframe', 'direction',
+                    'candle_time', 'detection_time', 'latency_seconds',
+                    'open', 'high', 'low', 'close',
+                    'upper_wick_ratio', 'lower_wick_ratio'
+                ]
+                
+                with open(debug_csv_path, 'w', newline='') as f:
+                    writer = csv.writer(f)
+                    writer.writerow(headers)
+                self.logger.info(f"📁 Created debug CSV: {debug_csv_path}")
+            
+            # Save data
+            with open(debug_csv_path, 'a', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow([
+                    datetime.now(NY_TZ).strftime('%Y-%m-%d %H:%M:%S'),
+                    hammer_data['instrument'],
+                    hammer_data['timeframe'],
+                    hammer_data['direction'],
+                    hammer_data['candle_time'],
+                    hammer_data['detection_time'],
+                    hammer_data['latency_seconds'],
+                    hammer_data['open'],
+                    hammer_data['high'],
+                    hammer_data['low'],
+                    hammer_data['close'],
+                    hammer_data['upper_wick_ratio'],
+                    hammer_data['lower_wick_ratio']
+                ])
+            
+            self.logger.info(f"💾 Debug hammer saved to CSV: {debug_csv_path}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error saving debug hammer to CSV: {str(e)}")
             return False
 
 
