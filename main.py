@@ -4565,15 +4565,20 @@ class NewsCalendar:
 class TimeframeScanner:
     """Manages independent scanning for a specific timeframe"""
     
-    def __init__(self, scanner, instrument, tf, direction, zones, scan_duration):
-        self.scanner = scanner
+    def __init__(self, parent_scanner, instrument, tf, direction, zones, scan_duration, signal_data, criteria, signal_id, trigger_data):
+        self.parent = parent_scanner
         self.instrument = instrument
         self.timeframe = tf
         self.direction = direction
         self.zones = zones
         self.scan_end = datetime.now(NY_TZ) + scan_duration
+        self.signal_data = signal_data
+        self.criteria = criteria
+        self.signal_id = signal_id
+        self.trigger_data = trigger_data
         self.scanned_candles = set()
-        self.logger = scanner.logger
+        self.logger = parent_scanner.logger
+        self.hammer_count = 0
         
     def run(self):
         """Run independent scan for this timeframe"""
@@ -4581,14 +4586,36 @@ class TimeframeScanner:
             self.logger.info(f"🔍 Starting independent scan for {self.instrument} {self.timeframe}")
             
             while datetime.now(NY_TZ) < self.scan_end:
-                # Wait for this specific timeframe
-                self.scanner.wait_for_candle_open(self.timeframe)
+                # Check for CRT invalidation
+                if self.criteria == 'CRT+SMT':
+                    crt_zone = self.zones[0] if self.zones else None
+                    if crt_zone and 'invalidation_level' in crt_zone:
+                        df_current = fetch_candles(self.instrument, 'M1', count=2, 
+                                                  api_key=self.parent.credentials['oanda_api_key'])
+                        if not df_current.empty:
+                            current_price = df_current.iloc[-1]['close']
+                            
+                            if self.direction == 'bearish' and current_price > crt_zone['invalidation_level']:
+                                self.logger.info(f"❌ CRT invalidated in {self.timeframe}")
+                                break
+                            elif self.direction == 'bullish' and current_price < crt_zone['invalidation_level']:
+                                self.logger.info(f"❌ CRT invalidated in {self.timeframe}")
+                                break
+                
+                # Wait for candle close
+                if not self.parent.wait_for_candle_open(self.timeframe):
+                    time.sleep(1)
+                    continue
+                
+                # Small buffer
+                time.sleep(1)
                 
                 # Fetch data
                 df = fetch_candles(self.instrument, self.timeframe, count=10, 
-                                 api_key=self.scanner.credentials['oanda_api_key'])
+                                 api_key=self.parent.credentials['oanda_api_key'])
                 
                 if df.empty or len(df) < 2:
+                    time.sleep(1)
                     continue
                 
                 # Get last closed candle
@@ -4596,9 +4623,14 @@ class TimeframeScanner:
                 candle_key = f"{self.timeframe}_{closed_candle['time']}"
                 
                 if candle_key in self.scanned_candles:
+                    time.sleep(1)
                     continue
                 
                 self.scanned_candles.add(candle_key)
+                
+                # DEBUG logging
+                self.logger.info(f"📊 {self.timeframe}: Candle {closed_candle['time']}")
+                self.logger.info(f"   O:{closed_candle['open']:.5f} H:{closed_candle['high']:.5f} L:{closed_candle['low']:.5f} C:{closed_candle['close']:.5f}")
                 
                 # Check if in zone
                 candle_price = closed_candle['close']
@@ -4618,39 +4650,36 @@ class TimeframeScanner:
                             break
                 
                 if not in_zone:
+                    self.logger.debug(f"❌ {self.timeframe}: Not in zone")
+                    time.sleep(1)
                     continue
                 
-                # Check for hammer
-                is_hammer, upper_ratio, lower_ratio = self.scanner.is_hammer_candle(closed_candle, self.direction)
+                # Check hammer
+                is_hammer, upper_ratio, lower_ratio = self.parent.is_hammer_candle(closed_candle, self.direction)
                 
                 if is_hammer:
-                    self.logger.info(f"✅ HAMMER FOUND in {self.timeframe}!")
-                    self.logger.info(f"   Time: {closed_candle['time']}, Zone: {target_zone['ratio'] if target_zone else 'N/A'}")
+                    self.logger.info(f"✅ {self.timeframe}: HAMMER FOUND in zone!")
+                    self.hammer_count += 1
                     
-                    # Process the hammer
-                    return self.process_hammer(closed_candle, target_zone)
+                    # Process hammer
+                    success = self.parent._process_and_record_hammer(
+                        self.instrument, self.timeframe, closed_candle, self.direction,
+                        self.criteria, self.signal_data, self.signal_id, self.trigger_data
+                    )
+                    
+                    if success:
+                        self.logger.info(f"✅ {self.timeframe}: Hammer #{self.hammer_count} processed")
+                    
+                    # Continue scanning for more hammers
                 
-                # Small pause before next check
-                time.sleep(0.5)
+                time.sleep(1)
                 
-            self.logger.info(f"⏰ {self.timeframe} scan completed (time expired)")
-            return None
+            self.logger.info(f"⏰ {self.timeframe} scan completed")
+            return self.hammer_count
             
         except Exception as e:
             self.logger.error(f"❌ Error in {self.timeframe} scanner: {str(e)}")
-            return None
-    
-    def process_hammer(self, candle, zone):
-        """Process found hammer"""
-        # Return data for processing
-        return {
-            'instrument': self.instrument,
-            'timeframe': self.timeframe,
-            'candle': candle,
-            'zone': zone,
-            'direction': self.direction
-        }
-
+            return 0
 
 class HammerPatternScanner:
     """Concurrent hammer pattern scanner with minimal featuress"""
