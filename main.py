@@ -6219,6 +6219,23 @@ class HammerPatternScanner:
             instrument = trade_data['instrument']
             tf = trade_data['hammer_timeframe']
             criteria = trade_data['criteria']
+            entry_price = trade_data['entry_price']
+            sl_price = trade_data['sl_price']
+            sl_distance_pips = trade_data['sl_distance_pips']
+            
+            # Calculate lot sizes
+            # For gold: 1 pip = $1 per micro lot (0.01 move)
+            # For forex: 1 pip = $1 per micro lot for USD pairs, varies for others
+            
+            pip_multiplier = 100 if 'JPY' in instrument else 10000
+            
+            # Calculate lot sizes for $10 and $100 risk
+            if sl_distance_pips > 0:
+                risk_10_lots = 10 / sl_distance_pips  # For $10 risk
+                risk_100_lots = 100 / sl_distance_pips  # For $100 risk
+            else:
+                risk_10_lots = 0.1  # Default
+                risk_100_lots = 1.0  # Default
             
             # Get humorous phrases
             trigger_humor = get_humorous_phrase(direction.lower(), criteria)
@@ -6231,21 +6248,25 @@ class HammerPatternScanner:
             
             message += f"*📊 CRITERIA:* {criteria}\n"
             message += f"*🎯 ENTRY:* {direction} {instrument} on {tf}\n"
-            message += f"*💰 ENTRY PRICE:* {trade_data['entry_price']:.5f}\n\n"
+            message += f"*💰 ENTRY PRICE:* {entry_price:.5f}\n\n"
             
             # PRICE LEVELS
             message += f"*🛑 STOP LOSS:*\n"
-            message += f"  • Price: {trade_data['sl_price']:.5f}\n"
-            message += f"  • Distance: {trade_data['sl_distance_pips']:.1f} pips\n\n"
+            message += f"  • Price: {sl_price:.5f}\n"
+            message += f"  • Distance: {sl_distance_pips:.1f} pips\n\n"
             
-            message += f"*🎯 TAKE PROFIT 1:4:*\n"
-            message += f"  • Price: {trade_data['tp_1_4_price']:.5f}\n"
-            message += f"  • Distance: {trade_data.get('tp_1_4_distance', 0):.1f} pips\n\n"
+            if 'tp_1_4_price' in trade_data:
+                message += f"*🎯 TAKE PROFIT 1:4:*\n"
+                message += f"  • Price: {trade_data['tp_1_4_price']:.5f}\n"
+                if 'tp_1_4_distance' in trade_data:
+                    message += f"  • Distance: {trade_data['tp_1_4_distance']:.1f} pips\n\n"
+                else:
+                    message += "\n"
             
             # RISK MANAGEMENT - LOT SIZES
             message += f"*💰 RISK MANAGEMENT (MICRO LOTS):*\n"
-            message += f"  • Risk $10: {trade_data['risk_10_lots']:.2f} lots\n"
-            message += f"  • Risk $100: {trade_data['risk_100_lots']:.2f} lots\n\n"
+            message += f"  • Risk $10: {risk_10_lots:.2f} lots\n"
+            message += f"  • Risk $100: {risk_100_lots:.2f} lots\n\n"
             
             message += f"*⏰ TIME:* {trade_data['entry_time']}\n"
             message += f"*⚡ LATENCY:* {trade_data.get('signal_latency_seconds', 0):.1f}s (candle close → signal)\n\n"
@@ -6253,18 +6274,26 @@ class HammerPatternScanner:
             # Add signal context
             if criteria == 'FVG+SMT':
                 message += f"*📈 FVG+SMT Setup:*\n"
-                message += f"• SMT Cycle: {trade_data['smt_cycle']}\n"
-                message += f"• Has PSP: {'✅' if trade_data['has_psp'] else '❌'}\n"
-                message += f"• HP FVG: {'✅' if trade_data['is_hp_fvg'] else '❌'}\n"
+                if 'smt_cycle' in trade_data:
+                    message += f"• SMT Cycle: {trade_data['smt_cycle']}\n"
+                if 'has_psp' in trade_data:
+                    message += f"• Has PSP: {'✅' if trade_data['has_psp'] else '❌'}\n"
+                if 'is_hp_fvg' in trade_data:
+                    message += f"• HP FVG: {'✅' if trade_data['is_hp_fvg'] else '❌'}\n"
             elif criteria == 'SD+SMT':
                 message += f"*📈 SD+SMT Setup:*\n"
-                message += f"• SMT Cycle: {trade_data['smt_cycle']}\n"
-                message += f"• Has PSP: {'✅' if trade_data['has_psp'] else '❌'}\n"
-                message += f"• HP Zone: {'✅' if trade_data['is_hp_zone'] else '❌'}\n"
+                if 'smt_cycle' in trade_data:
+                    message += f"• SMT Cycle: {trade_data['smt_cycle']}\n"
+                if 'has_psp' in trade_data:
+                    message += f"• Has PSP: {'✅' if trade_data['has_psp'] else '❌'}\n"
+                if 'is_hp_zone' in trade_data:
+                    message += f"• HP Zone: {'✅' if trade_data['is_hp_zone'] else '❌'}\n"
             elif criteria == 'CRT+SMT':
                 message += f"*📈 CRT+SMT Setup:*\n"
-                message += f"• SMT Cycle: {trade_data['smt_cycle']}\n"
-                message += f"• Has PSP: {'✅' if trade_data['has_psp'] else '❌'}\n"
+                if 'smt_cycle' in trade_data:
+                    message += f"• SMT Cycle: {trade_data['smt_cycle']}\n"
+                if 'has_psp' in trade_data:
+                    message += f"• Has PSP: {'✅' if trade_data['has_psp'] else '❌'}\n"
             
             message += f"\n*💡 TRADER NOTE:* Signal ID: {trade_data['signal_id']} (groups all hammers)\n"
             message += f"*🤙 REMEMBER:* Trade safe, bro! Manage your risk!\n\n"
@@ -6280,10 +6309,14 @@ class HammerPatternScanner:
             
             if success:
                 self.logger.info(f"📤 Signal sent: {instrument} {tf} {direction}")
-                self.logger.info(f"📊 SL Price: {trade_data['sl_price']:.5f}, TP 1:4 Price: {trade_data['tp_1_4_price']:.5f}")
-                self.logger.info(f"💰 Lot Sizes: ${trade_data['risk_10_lots']:.2f} (risk $10), ${trade_data['risk_100_lots']:.2f} (risk $100)")
+                self.logger.info(f"📊 SL Price: {sl_price:.5f}, TP 1:4 Price: {trade_data.get('tp_1_4_price', 'N/A')}")
+                self.logger.info(f"💰 Lot Sizes: ${risk_10_lots:.2f} (risk $10), ${risk_100_lots:.2f} (risk $100)")
             else:
                 self.logger.error(f"❌ Failed to send signal")
+            
+            # Return lot sizes in trade_data for CSV
+            trade_data['risk_10_lots'] = risk_10_lots
+            trade_data['risk_100_lots'] = risk_100_lots
             
             return success
             
