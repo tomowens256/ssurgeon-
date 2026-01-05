@@ -3278,48 +3278,48 @@ class HybridTimingSystem:
         
         return False
     
-    def _get_next_candle_close_time(self, timeframe):
-        """Calculate when the next candle will close"""
-        now = datetime.now(self.ny_tz)
+    # def _get_next_candle_close_time(self, timeframe):
+    #     """Calculate when the next candle will close"""
+    #     now = datetime.now(self.ny_tz)
         
-        if timeframe == 'M5':
-            minutes_to_add = 5 - (now.minute % 5)
-            if minutes_to_add == 0:
-                minutes_to_add = 5
-            return now.replace(second=0, microsecond=0) + timedelta(minutes=minutes_to_add)
+    #     if timeframe == 'M5':
+    #         minutes_to_add = 5 - (now.minute % 5)
+    #         if minutes_to_add == 0:
+    #             minutes_to_add = 5
+    #         return now.replace(second=0, microsecond=0) + timedelta(minutes=minutes_to_add)
         
-        elif timeframe == 'M15':
-            minutes_to_add = 15 - (now.minute % 15)
-            if minutes_to_add == 0:
-                minutes_to_add = 15
-            return now.replace(second=0, microsecond=0) + timedelta(minutes=minutes_to_add)
+    #     elif timeframe == 'M15':
+    #         minutes_to_add = 15 - (now.minute % 15)
+    #         if minutes_to_add == 0:
+    #             minutes_to_add = 15
+    #         return now.replace(second=0, microsecond=0) + timedelta(minutes=minutes_to_add)
         
-        elif timeframe == 'H1':
-            next_hour = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
-            return next_hour
+    #     elif timeframe == 'H1':
+    #         next_hour = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+    #         return next_hour
         
-        elif timeframe == 'H4':
-            current_hour = now.hour
-            next_h4_hour = ((current_hour // 4) + 1) * 4
-            if next_h4_hour >= 24:
-                next_day = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
-                return next_day
-            else:
-                return now.replace(hour=next_h4_hour, minute=0, second=0, microsecond=0)
+    #     elif timeframe == 'H4':
+    #         current_hour = now.hour
+    #         next_h4_hour = ((current_hour // 4) + 1) * 4
+    #         if next_h4_hour >= 24:
+    #             next_day = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+    #             return next_day
+    #         else:
+    #             return now.replace(hour=next_h4_hour, minute=0, second=0, microsecond=0)
         
-        elif timeframe == 'D':
-            next_day = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
-            return next_day
+    #     elif timeframe == 'D':
+    #         next_day = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+    #         return next_day
         
-        elif timeframe == 'W':
-            # Next Sunday at 00:00 (assuming week starts Sunday)
-            days_ahead = 6 - now.weekday()  # 0=Monday, 6=Sunday
-            if days_ahead <= 0:
-                days_ahead += 7
-            next_sunday = now + timedelta(days=days_ahead)
-            return next_sunday.replace(hour=0, minute=0, second=0, microsecond=0)
+    #     elif timeframe == 'W':
+    #         # Next Sunday at 00:00 (assuming week starts Sunday)
+    #         days_ahead = 6 - now.weekday()  # 0=Monday, 6=Sunday
+    #         if days_ahead <= 0:
+    #             days_ahead += 7
+    #         next_sunday = now + timedelta(days=days_ahead)
+    #         return next_sunday.replace(hour=0, minute=0, second=0, microsecond=0)
         
-        return now + timedelta(minutes=5)  # Default
+    #     return now + timedelta(minutes=5)  # Default
     
     def get_timeframes_to_scan(self):
         """Get list of timeframes that should be scanned now"""
