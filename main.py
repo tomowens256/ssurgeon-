@@ -5531,26 +5531,26 @@ class HammerPatternScanner:
         except Exception as e:
             self.logger.error(f"   Error in detailed analysis: {str(e)}")
     
-    def _get_next_candle_close_time(self, timeframe, current_time):
-        """Calculate next candle close time"""
-        if timeframe.startswith('M'):
-            minutes = int(timeframe[1:])
-            current_minute = current_time.minute
-            minutes_past = current_minute % minutes
-            minutes_to_close = minutes - minutes_past
+    # def _get_next_candle_close_time(self, timeframe, current_time):
+    #     """Calculate next candle close time"""
+    #     if timeframe.startswith('M'):
+    #         minutes = int(timeframe[1:])
+    #         current_minute = current_time.minute
+    #         minutes_past = current_minute % minutes
+    #         minutes_to_close = minutes - minutes_past
             
-            # If exactly at close time, wait for next candle
-            if minutes_to_close == 0:
-                minutes_to_close = minutes
+    #         # If exactly at close time, wait for next candle
+    #         if minutes_to_close == 0:
+    #             minutes_to_close = minutes
             
-            next_close = current_time + timedelta(minutes=minutes_to_close)
-            next_close = next_close.replace(second=0, microsecond=0)
-        else:
-            # For hourly timeframes (shouldn't be used for hammer scanning)
-            next_close = current_time + timedelta(hours=1)
-            next_close = next_close.replace(minute=0, second=0, microsecond=0)
+    #         next_close = current_time + timedelta(minutes=minutes_to_close)
+    #         next_close = next_close.replace(second=0, microsecond=0)
+    #     else:
+    #         # For hourly timeframes (shouldn't be used for hammer scanning)
+    #         next_close = current_time + timedelta(hours=1)
+    #         next_close = next_close.replace(minute=0, second=0, microsecond=0)
         
-        return next_close
+    #     return next_close
     
     def _should_stop_scanning(self, instrument, trigger_data, scan_start_time, 
                              max_duration, hammer_count):
