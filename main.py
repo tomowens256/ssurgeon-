@@ -4819,8 +4819,9 @@ class HammerPatternScanner:
                     # Wait for candle to close + 3 seconds for data availability
                     total_wait_time = seconds_to_next_close + 3
                     next_candle_time = now + timedelta(seconds=total_wait_time)
-                    self.logger.info(f"⏰ Waiting {total_wait_time:.0f}s for {timeframe} data (candle closes in {seconds_to_next_close:.0f}s + 3s buffer)")
-                    self.logger.info(f"   Next data available at: {next_candle_time.strftime('%H:%M:%S')}")
+                    self.logger.info(f"⏰ {timeframe}: Candle closes in {seconds_to_next_close:.0f}s")
+                    self.logger.info(f"   Waiting {total_wait_time:.0f}s total (close + 3s buffer)")
+                    self.logger.info(f"   Next data at: {next_candle_time.strftime('%H:%M:%S')}")
                     time.sleep(total_wait_time)
                     self.logger.info(f"✅ {timeframe} data should now be available")
                     return True
@@ -4830,16 +4831,22 @@ class HammerPatternScanner:
                     if seconds_since_close < 3:
                         # Still within 3-second buffer, wait remaining time
                         remaining_buffer = 3 - seconds_since_close
-                        self.logger.info(f"⏰ Candle closed {seconds_since_close:.0f}s ago, waiting {remaining_buffer:.0f}s for data buffer")
+                        self.logger.info(f"⏰ {timeframe}: Candle closed {seconds_since_close:.0f}s ago")
+                        self.logger.info(f"   Waiting {remaining_buffer:.0f}s for data buffer")
                         time.sleep(remaining_buffer)
                     self.logger.info(f"✅ {timeframe} data should be available now")
                     return True
-                    
-            return False
-            
+            else:
+                # For non-minute timeframes, just wait 3 seconds
+                self.logger.info(f"⏰ {timeframe}: Waiting 3s for data availability")
+                time.sleep(3)
+                return True
+                
         except Exception as e:
             self.logger.error(f"Error in wait_for_candle_open: {str(e)}")
-            return False
+            # If there's an error, wait a safe amount and continue
+            time.sleep(5)
+            return True
 
     def start_news_background_fetch(self, interval_hours=6):
         """Start background news fetching thread"""
