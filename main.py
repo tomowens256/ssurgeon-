@@ -3852,11 +3852,17 @@ class SupplyDemandDetector:
 
 
 
-
 class NewsCalendar:
-    def __init__(self, rapidapi_key: str, base_path: str = '/content/drive/MyDrive', logger=None):
+    def __init__(self, rapidapi_key: str, base_path: str = '/content/drive/MyDrive', 
+                 logger=None, cache_duration: int = 43200):  # 43200 seconds = 12 hours
         """
         Initialize news calendar - WITH CACHE DIRECTORY SETUP
+        
+        Args:
+            rapidapi_key: Your RapidAPI key
+            base_path: Base directory path
+            logger: Optional logger instance
+            cache_duration: Cache duration in seconds (default: 43200 = 12 hours)
         """
         self.rapidapi_key = rapidapi_key
         self.base_path = base_path.rstrip('/')
@@ -3876,6 +3882,9 @@ class NewsCalendar:
         # === DEFINE CACHE DIRECTORY ATTRIBUTE ===
         self.cache_dir = f"{self.news_data_path}/cache"  # This fixes the error
         
+        # === SET CACHE DURATION TO 12 HOURS ===
+        self.cache_duration = cache_duration  # 43200 seconds = 12 hours
+        
         # Timezone setup
         self.utc_tz = pytz.UTC
         self.ny_tz = pytz.timezone('America/New_York')
@@ -3889,7 +3898,7 @@ class NewsCalendar:
         # Cache file for _get_from_cache/_save_to_cache methods
         self.cache_file = f"{self.cache_dir}/rapidapi_cache.json"
         
-        self.logger.info(f"📰 News Calendar initialized. Cache: {self.cache_dir}")
+        self.logger.info(f"📰 News Calendar initialized. Cache duration: {self.cache_duration//3600} hours")
 
     def get_daily_news(self, force_fetch: bool = False) -> Dict:
         """
@@ -3927,7 +3936,7 @@ class NewsCalendar:
                 try:
                     with open(cache_file, 'w') as f:
                         json.dump(processed_data, f, indent=2)
-                    self.logger.info(f"💾 News cached to {cache_file}")
+                    self.logger.info(f"💾 News cached to {cache_file} (valid for {self.cache_duration//3600} hours)")
                 except Exception as e:
                     self.logger.error(f"❌ Failed to write cache: {e}")
             
@@ -3970,10 +3979,10 @@ class NewsCalendar:
         
         cache_key = f"news_{date_str}"
         
-        # 1. Check cache first for PROCESSED data
+        # 1. Check cache first for PROCESSED data (valid for 12 hours)
         cached = self._get_from_cache(cache_key)
         if cached and 'events' in cached:
-            self.logger.info(f"📰 Using cached processed news for {date_str}")
+            self.logger.info(f"📰 Using cached processed news for {date_str} (cache valid for {self.cache_duration//3600}h)")
             return cached  # Return already-processed data
         
         try:
@@ -3991,11 +4000,6 @@ class NewsCalendar:
             
             self.logger.info(f"📰 Fetching news from RapidAPI for {date_str}...")
             response = requests.get(url, headers=headers, params=params, timeout=30)
-            raw_api_response = response.json()
-            self.logger.info(
-                f"RAW TYPE: {type(raw_api_response)} | "
-                f"PREVIEW: {str(raw_api_response)[:300]}"
-            )
             
             if response.status_code == 200:
                 # 3. Get raw API response
@@ -4227,7 +4231,7 @@ class NewsCalendar:
             self.logger.error(f"❌ Error saving to CSV: {str(e)}")
     
     def _get_from_cache(self, key: str) -> Optional[Dict]:
-        """Get data from cache if valid"""
+        """Get data from cache if valid (12 hours)"""
         try:
             if os.path.exists(self.cache_file):
                 with open(self.cache_file, 'r') as f:
@@ -4237,12 +4241,14 @@ class NewsCalendar:
                     cached_item = cache_data[key]
                     cache_time = datetime.fromisoformat(cached_item['cache_time'])
                     
-                    # Check if cache is still valid
+                    # Check if cache is still valid (12 hours)
                     age_seconds = (datetime.now(self.ny_tz) - cache_time).total_seconds()
-                    if age_seconds < self.cache_duration:
+                    if age_seconds < self.cache_duration:  # 12 hours
+                        self.logger.debug(f"📦 Cache hit for {key}, age: {age_seconds//3600}h {(age_seconds%3600)//60}m")
                         return cached_item['data']
                     
-                    # Cache expired
+                    # Cache expired (older than 12 hours)
+                    self.logger.info(f"🕒 Cache expired for {key}, age: {age_seconds//3600}h")
                     del cache_data[key]
                     with open(self.cache_file, 'w') as f:
                         json.dump(cache_data, f)
@@ -4256,28 +4262,38 @@ class NewsCalendar:
     def _save_to_cache(self, key: str, data: Dict):
         """Save data to cache - ONLY IF SUCCESSFUL"""
         try:
-            # === FIX: Only cache if we have valid data with events ===
+            # === Only cache if we have valid data with events ===
             if 'error' in data or not data.get('events'):
                 self.logger.warning(f"⚠️ Not caching error/empty data for {key}")
                 return
-            """Save data to cache"""
+            
             cache_data = {}
             if os.path.exists(self.cache_file):
-                with open(self.cache_file, 'r') as f:
-                    cache_data = json.load(f)
+                try:
+                    with open(self.cache_file, 'r') as f:
+                        cache_data = json.load(f)
+                except json.JSONDecodeError:
+                    self.logger.warning("⚠️ Cache file corrupted, starting fresh")
+                    cache_data = {}
             
             cache_data[key] = {
                 'cache_time': datetime.now(self.ny_tz).isoformat(),
-                'data': data
+                'data': data,
+                'expires_in_hours': self.cache_duration // 3600
             }
             
-            # Limit cache size
-            if len(cache_data) > 50:  # Keep last 50 entries
-                oldest_key = min(cache_data.keys(), key=lambda k: cache_data[k]['cache_time'])
-                del cache_data[oldest_key]
+            # Limit cache size to 7 days worth of data
+            if len(cache_data) > 7:  # Keep last 7 days
+                # Sort by cache time and remove oldest
+                sorted_keys = sorted(cache_data.keys(), 
+                                   key=lambda k: cache_data[k]['cache_time'])
+                for old_key in sorted_keys[:-7]:
+                    del cache_data[old_key]
             
             with open(self.cache_file, 'w') as f:
                 json.dump(cache_data, f, indent=2)
+                
+            self.logger.debug(f"💾 Cached {key} (valid for {self.cache_duration//3600}h)")
                 
         except Exception as e:
             self.logger.warning(f"⚠️ Cache write error: {str(e)}")
@@ -4313,7 +4329,7 @@ class NewsCalendar:
             # Get today's date in NY time
             date_str = signal_time.strftime('%Y-%m-%d')
             
-            # Fetch or get cached news
+            # Fetch or get cached news (uses 12-hour cache)
             news_data = self.fetch_news_data(date_str)
             
             if 'error' in news_data and news_data['error']:
@@ -4346,7 +4362,11 @@ class NewsCalendar:
                 'events': relevant_events[:10],  # Limit to first 10 for JSON storage
                 'all_events_count': len(relevant_events),
                 'fetch_status': 'success',
-                'fetch_time': news_data.get('fetch_time', '')
+                'fetch_time': news_data.get('fetch_time', ''),
+                'cache_info': {
+                    'cache_duration_hours': self.cache_duration // 3600,
+                    'cache_used': 'yes' if news_data.get('from_cache') else 'no'
+                }
             }
             
             return context
@@ -4467,7 +4487,11 @@ class NewsCalendar:
             'all_events_count': 0,
             'fetch_status': 'error' if error else 'no_news',
             'error_message': error if error else '',
-            'fetch_time': datetime.now(self.ny_tz).isoformat()
+            'fetch_time': datetime.now(self.ny_tz).isoformat(),
+            'cache_info': {
+                'cache_duration_hours': self.cache_duration // 3600,
+                'cache_used': 'no'
+            }
         }
     
     def get_daily_summary(self, date_str: str = None) -> Dict:
@@ -4495,8 +4519,43 @@ class NewsCalendar:
             'status': 'success',
             'summary': news_data.get('summary', {}),
             'events_count': len(news_data.get('events', [])),
-            'fetch_time': news_data.get('fetch_time', '')
+            'fetch_time': news_data.get('fetch_time', ''),
+            'cache_info': f"Cache valid for {self.cache_duration//3600} hours"
         }
+    
+    def clear_cache(self, older_than_hours: int = None):
+        """Clear the cache (all or older than specified hours)"""
+        try:
+            if os.path.exists(self.cache_file):
+                if older_than_hours:
+                    # Clear only entries older than specified hours
+                    with open(self.cache_file, 'r') as f:
+                        cache_data = json.load(f)
+                    
+                    cutoff_time = datetime.now(self.ny_tz) - timedelta(hours=older_than_hours)
+                    keys_to_delete = []
+                    
+                    for key, value in cache_data.items():
+                        cache_time = datetime.fromisoformat(value['cache_time'])
+                        if cache_time < cutoff_time:
+                            keys_to_delete.append(key)
+                    
+                    for key in keys_to_delete:
+                        del cache_data[key]
+                    
+                    with open(self.cache_file, 'w') as f:
+                        json.dump(cache_data, f, indent=2)
+                    
+                    self.logger.info(f"🧹 Cleared {len(keys_to_delete)} cache entries older than {older_than_hours} hours")
+                else:
+                    # Clear entire cache
+                    os.remove(self.cache_file)
+                    self.logger.info("🧹 Cleared entire cache")
+            else:
+                self.logger.info("🧹 Cache file does not exist, nothing to clear")
+                
+        except Exception as e:
+            self.logger.error(f"❌ Error clearing cache: {str(e)}")
 
 
 
