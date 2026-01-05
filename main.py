@@ -5398,14 +5398,14 @@ class HammerPatternScanner:
         return trigger_map.get(trigger_tf, ['M5', 'M15'])
     
     def scan_fibonacci_hammer(self, trigger_data):
-        """Main hammer scanning function with proper zone logics"""
+        """Main hammer scanning function with CONCURRENT timeframe scanning"""
         try:
             instrument = trigger_data.get('instrument')
             direction = trigger_data.get('direction')
             trigger_timeframe = trigger_data.get('trigger_timeframe')
             criteria = trigger_data.get('type')
-            # GET THE COMPLETE SIGNAL DATA FROM TRIGGER_DATA
             signal_data = trigger_data.get('signal_data', {})
+            
             if not signal_data:
                 self.logger.error("❌ No signal_data in trigger_data")
                 return False
@@ -5413,7 +5413,7 @@ class HammerPatternScanner:
             # DEBUG: Log what we actually received
             self.logger.info(f"📦 Signal data keys: {list(signal_data.keys())}")
             if 'smt_data' in signal_data:
-                self.logger.info(f"   SMT swings count: {len(signal_data['smt_data'].get('swings', []))}")
+                self.logger.info(f"   SMT swings count: {len(signal_data['smt_data'].get('swings', {}))}")
             
             # Get Fibonacci zones - PASS THE COMPLETE signal_data
             fib_zones = self._get_fib_zones(trigger_data)
@@ -5424,10 +5424,9 @@ class HammerPatternScanner:
             
             # Get hammer timeframes
             timeframes = self.get_aligned_timeframes(instrument, criteria, trigger_timeframe)
-            self.logger.info(f"🔨 Timeframes to scan: {timeframes}")
+            self.logger.info(f"🔨 Timeframes to scan CONCURRENTLY: {timeframes}")
             
             signal_id = self._generate_signal_id(trigger_data)
-            
             
             self.logger.info(f"🎯 Starting hammer scan for {instrument} {criteria}")
             self.logger.info(f"   Signal ID: {signal_id}")
@@ -5450,47 +5449,47 @@ class HammerPatternScanner:
             
             self.logger.info(f"⏰ Scan duration: {max_scan_duration}")
             
+            # Use threading for concurrent scanning
             hammer_count = 0
-            scanned_candles = set()
+            lock = threading.Lock()
             
-            while datetime.now(NY_TZ) < scan_end:
-                current_time = datetime.now(NY_TZ)
+            def scan_timeframe(tf):
+                """Scan a single timeframe (run in thread)"""
+                nonlocal hammer_count
+                scanned_candles = set()
                 
-                # Check for CRT invalidation
-                if criteria == 'CRT+SMT':
-                    crt_zone = fib_zones[0] if fib_zones else None
-                    if crt_zone and 'invalidation_level' in crt_zone:
-                        # Get current price
-                        df_current = fetch_candles(instrument, 'M1', count=2, api_key=self.credentials['oanda_api_key'])
-                        if not df_current.empty:
-                            current_price = df_current.iloc[-1]['close']
-                            
-                            if direction == 'bearish' and current_price > crt_zone['invalidation_level']:
-                                self.logger.info(f"❌ CRT invalidated: Price {current_price:.5f} > invalidation {crt_zone['invalidation_level']:.5f}")
-                                break
-                            elif direction == 'bullish' and current_price < crt_zone['invalidation_level']:
-                                self.logger.info(f"❌ CRT invalidated: Price {current_price:.5f} < invalidation {crt_zone['invalidation_level']:.5f}")
-                                break
-                
-                # Scan each timeframe
-                # Scan each timeframe
-                for tf in timeframes:
-                    try:
-                        # ========== NEW TIMING CODE ==========
-                        # Wait for the candle to close AND get 3-second data availability buffer
-                        self.logger.info(f"⏰ Waiting for {tf} candle to close and data to be available...")
+                try:
+                    self.logger.info(f"🔍 Starting {tf} scanner thread")
+                    
+                    while datetime.now(NY_TZ) < scan_end:
+                        current_time = datetime.now(NY_TZ)
                         
-                        if not self.wait_for_candle_open(tf):
-                            self.logger.warning(f"⚠️ Could not wait for {tf} candle open, continuing...")
-                            continue
+                        # Check for CRT invalidation
+                        if criteria == 'CRT+SMT':
+                            crt_zone = fib_zones[0] if fib_zones else None
+                            if crt_zone and 'invalidation_level' in crt_zone:
+                                # Get current price
+                                df_current = fetch_candles(instrument, 'M1', count=2, api_key=self.credentials['oanda_api_key'])
+                                if not df_current.empty:
+                                    current_price = df_current.iloc[-1]['close']
+                                    
+                                    if direction == 'bearish' and current_price > crt_zone['invalidation_level']:
+                                        self.logger.info(f"❌ CRT invalidated in {tf}: Price {current_price:.5f} > invalidation {crt_zone['invalidation_level']:.5f}")
+                                        break
+                                    elif direction == 'bullish' and current_price < crt_zone['invalidation_level']:
+                                        self.logger.info(f"❌ CRT invalidated in {tf}: Price {current_price:.5f} < invalidation {crt_zone['invalidation_level']:.5f}")
+                                        break
                         
-                        # Add a small additional buffer to ensure API has data
+                        # Wait for this specific timeframe
+                        self.logger.info(f"⏰ {tf}: Waiting for candle close...")
+                        self.wait_for_candle_open(tf)
+                        
+                        # Add small buffer for API data
                         time.sleep(1)
-                        self.logger.info(f"✅ {tf} candle should be available, fetching data...")
-                        # ========== END NEW TIMING CODE ==========
                         
-                        # Fetch data after candle close
+                        # Fetch data
                         df = fetch_candles(instrument, tf, count=10, api_key=self.credentials['oanda_api_key'])
+                        
                         if df.empty or len(df) < 2:
                             continue
                         
@@ -5502,11 +5501,9 @@ class HammerPatternScanner:
                             continue
                         
                         scanned_candles.add(candle_key)
-
-                       
+                        
                         # DEBUG: Log candle details
-                        self.logger.info(f"📊 Scanning {tf} at {datetime.now(NY_TZ).strftime('%H:%M:%S')}")
-                        self.logger.info(f"   Candle time: {closed_candle['time']}")
+                        self.logger.info(f"📊 {tf}: Candle time: {closed_candle['time']}")
                         self.logger.info(f"   Prices: O:{closed_candle['open']:.5f} H:{closed_candle['high']:.5f} L:{closed_candle['low']:.5f} C:{closed_candle['close']:.5f}")
                         self.logger.info(f"   Direction: {direction}")
                         
@@ -5516,13 +5513,11 @@ class HammerPatternScanner:
                         self.logger.info(f"   Wick ratios: upper={upper_ratio:.2f}, lower={lower_ratio:.2f}")
                         
                         if is_hammer:
-                            self.logger.info(f"✅ HAMMER DETECTED! Checking if in zone...")
-                            # Also log detailed analysis
+                            self.logger.info(f"✅ {tf}: HAMMER DETECTED! Checking if in zone...")
                             self.log_detailed_candle_analysis(closed_candle, tf, direction)
-                        # ========== END DEBUG LOGGING ==========
                         
                         # Check if candle is in Fibonacci zone
-                        candle_price = closed_candle['close']  # Use close price for zone check
+                        candle_price = closed_candle['close']
                         in_zone = False
                         target_zone = None
                         
@@ -5539,44 +5534,65 @@ class HammerPatternScanner:
                                     break
                         
                         if not in_zone:
-                            self.logger.debug(f"❌ Candle not in Fibonacci zone: {candle_price:.5f}")
+                            self.logger.debug(f"❌ {tf}: Candle not in Fibonacci zone: {candle_price:.5f}")
                             continue
                         
-                        # Check for hammer pattern
-                        is_hammer, upper_ratio, lower_ratio = self.is_hammer_candle(closed_candle, direction)
-                        
                         if is_hammer:
-                            self.logger.info(f"✅ HAMMER FOUND in Fibonacci zone!")
+                            self.logger.info(f"✅ {tf}: HAMMER FOUND in Fibonacci zone!")
                             self.logger.info(f"   Timeframe: {tf}, Time: {closed_candle['time']}")
                             self.logger.info(f"   Price: {candle_price:.5f}, Zone: {target_zone['ratio'] if target_zone else 'N/A'}")
                             self.logger.info(f"   Wick ratios: upper={upper_ratio:.2f}, lower={lower_ratio:.2f}")
                             
-                            # Wait for next candle open (3 seconds)
-                            # time.sleep(3)
+                            with lock:
+                                hammer_count += 1
                             
                             # Process and record hammer
-                            hammer_count += 1
                             success = self._process_and_record_hammer(
                                 instrument, tf, closed_candle, direction,
                                 criteria, signal_data, signal_id, trigger_data
                             )
                             
                             if success:
-                                self.logger.info(f"✅ Trade #{hammer_count} entered successfully")
+                                self.logger.info(f"✅ {tf}: Trade #{hammer_count} processed successfully")
                             
-                            # Continue scanning for more hammers
-                    
-                    except Exception as e:
-                        self.logger.error(f"❌ Error scanning {tf}: {str(e)}")
-                        continue
-                
-                # Small pause between cycles
-                time.sleep(1)
+                            # Continue scanning for more hammers in this timeframe
+                            # (Don't break, keep looking for more)
+                        
+                        # Small pause to avoid API rate limits
+                        time.sleep(1)
+                        
+                except Exception as e:
+                    self.logger.error(f"❌ Error in {tf} scanner thread: {str(e)}", exc_info=True)
             
-            self.logger.info(f"✅ Scan completed. Found {hammer_count} hammers.")
+            # Start a thread for each timeframe
+            threads = []
+            for tf in timeframes:
+                thread = threading.Thread(
+                    target=scan_timeframe,
+                    args=(tf,),
+                    name=f"HammerScan_{instrument}_{tf}",
+                    daemon=True
+                )
+                thread.start()
+                threads.append(thread)
+            
+            # Wait for scan duration or until interrupted
+            try:
+                # Calculate total seconds to wait
+                total_seconds = (scan_end - datetime.now(NY_TZ)).total_seconds()
+                if total_seconds > 0:
+                    self.logger.info(f"⏰ Main thread waiting {total_seconds:.0f}s for scan completion...")
+                    time.sleep(total_seconds)
+            except KeyboardInterrupt:
+                self.logger.info(f"🛑 Scan interrupted for {instrument}")
+            
+            # Wait for all threads to finish (they should finish when scan_end is reached)
+            for thread in threads:
+                thread.join(timeout=5)  # Wait up to 5 seconds for each thread
+            
+            self.logger.info(f"✅ Concurrent scan completed. Found {hammer_count} hammers.")
             
             if hammer_count > 0:
-                
                 return True
             
             return False
@@ -5584,7 +5600,6 @@ class HammerPatternScanner:
         except Exception as e:
             self.logger.error(f"❌ Error in hammer scan: {str(e)}", exc_info=True)
             return False
-
     def log_detailed_candle_analysis(self, candle, timeframe, direction):
         """Log detailed analysis of a candle for debugging"""
         try:
