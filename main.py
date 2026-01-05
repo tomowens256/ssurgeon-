@@ -4928,9 +4928,81 @@ class HammerPatternScanner:
             criteria = trigger_data.get('type')
             signal_data = trigger_data.get('signal_data', {})
             
+            # DEBUG LOG
+            self.logger.info(f"📊 Getting zones for {criteria}, direction: {direction}")
+            
             if criteria == 'CRT+SMT':
-                # CRT has different logic - we'll handle separately
-                return self._get_crt_zones(trigger_data)
+                # For CRT, we need a more sensible price range to scan
+                crt_signal = signal_data.get('crt_signal', {})
+                
+                # Fetch current price
+                df_current = fetch_candles(instrument, 'M1', count=2, 
+                                         api_key=self.credentials['oanda_api_key'])
+                
+                if df_current.empty:
+                    self.logger.error("❌ No current price data")
+                    return []
+                
+                current_price = df_current.iloc[-1]['close']
+                
+                # Get the previous candle's high/low for invalidation
+                trigger_tf = trigger_data.get('trigger_timeframe', 'H1')
+                df_tf = fetch_candles(instrument, trigger_tf, count=3, 
+                                    api_key=self.credentials['oanda_api_key'])
+                
+                if df_tf.empty or len(df_tf) < 2:
+                    self.logger.error(f"❌ No {trigger_tf} data for CRT")
+                    return []
+                
+                previous_candle = df_tf.iloc[-2]
+                
+                if direction == 'bearish':
+                    # Bearish CRT: invalidate above previous candle's high
+                    invalidation_level = previous_candle['high']
+                    # Calculate a reasonable scanning range - current price down to ~10 pips below
+                    pip_multiplier = 100  # Gold uses 2 decimals
+                    scan_extension_pips = 15  # 15 pips extension for scanning
+                    scan_low = current_price - (scan_extension_pips / pip_multiplier)
+                    scan_high = invalidation_level
+                    
+                    scan_range = [
+                        {
+                            'high': scan_high,
+                            'low': scan_low,
+                            'is_crt': True,
+                            'invalidation': invalidation_level,
+                            'current_price': current_price
+                        }
+                    ]
+                else:  # bullish
+                    # Bullish CRT: invalidate below previous candle's low
+                    invalidation_level = previous_candle['low']
+                    # Calculate a reasonable scanning range - current price up to ~10 pips above
+                    pip_multiplier = 100  # Gold uses 2 decimals
+                    scan_extension_pips = 15  # 15 pips extension for scanning
+                    scan_high = current_price + (scan_extension_pips / pip_multiplier)
+                    scan_low = invalidation_level
+                    
+                    scan_range = [
+                        {
+                            'low': scan_low,
+                            'high': scan_high,
+                            'is_crt': True,
+                            'invalidation': invalidation_level,
+                            'current_price': current_price
+                        }
+                    ]
+                
+                self.logger.info(f"📊 CRT {direction} setup:")
+                self.logger.info(f"   Invalidation: {invalidation_level:.5f}")
+                self.logger.info(f"   Current price: {current_price:.5f}")
+                self.logger.info(f"   Scan range: {scan_range[0]['low']:.5f} - {scan_range[0]['high']:.5f}")
+                self.logger.info(f"   Range size: {(scan_range[0]['high'] - scan_range[0]['low']) * 100:.1f} pips")
+                
+                return scan_range
+            
+            # Rest of existing code for FVG+SMT and SD+SMT...
+            # ... [keep existing code for FVG+SMT and SD+SMT zones]
             
             # Get SMT cycle and map to timeframe for data slicing
             smt_data = signal_data.get('smt_data', {})
@@ -5059,7 +5131,7 @@ class HammerPatternScanner:
             return []
     
     def _calculate_fibonacci_levels(self, level1, level2, direction):
-        """Calculate Fibonacci retracement zones between consecutive Fibonacci levels"""
+        """Calculate Fibonacci retracement zones between consecutive Fibonacci levelsz"""
         try:
             # Standard Fibonacci retracement levels in order
             fib_ratios = [0.236, 0.382, 0.5, 0.618, 0.786]
