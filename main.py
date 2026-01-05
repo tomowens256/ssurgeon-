@@ -4908,6 +4908,28 @@ class HammerPatternScanner:
             except Exception as e2:
                 self.logger.error(f"❌ Could not create emergency CSV: {str(e2)}")
 
+    def get_news_context(self, instrument, signal_time):
+        """Get news context for a hammer signal - SIMPLE VERSION"""
+        if not self.news_calendar:
+            return {
+                'news_fetch_status': 'disabled',
+                'news_high_count': 0,
+                'news_medium_count': 0,
+                'news_low_count': 0,
+                'seconds_to_next_news': None,
+                'seconds_since_last_news': None
+            }
+        
+        try:
+            news_context = self.news_calendar.get_news_for_instrument(instrument, signal_time)
+            return news_context
+        except Exception as e:
+            self.logger.error(f"❌ Error getting news context: {str(e)}")
+            return {
+                'news_fetch_status': 'error',
+                'error': str(e)
+            }
+
     def check_news_context(self, instrument, signal_time):
         """Get news context for a hammer signal"""
         if not self.news_calendar:
