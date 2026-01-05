@@ -9851,10 +9851,9 @@ class UltimateTradingManager:
         self.telegram_token = telegram_token
         self.chat_id = chat_id
         self.news_data = news_data
-        self.news_calendar = news_calendar  # Store the news calendar!
+        self.news_calendar = news_calendar  # Store it!
         self.trading_systems = {}
         
-        # Initialize all trading systems WITH news_calendar
         for pair_group, pair_config in TRADING_PAIRS.items():
             self.trading_systems[pair_group] = UltimateTradingSystem(
                 pair_group, 
@@ -9867,8 +9866,8 @@ class UltimateTradingManager:
         logger.info(f"🎯 Initialized ULTIMATE trading manager with {len(self.trading_systems)} pair groups")
         if news_calendar:
             logger.info(f"📰 News Calendar integrated into all trading systems")
-        else:
-            logger.warning(f"⚠️ No News Calendar provided - news features disabled")
+
+    
     def _format_ultimate_signal_message(self, signal):
         """Format ultimate signal for Telegram - NOW WITH TRIAD SUPPORT"""
         
@@ -10124,6 +10123,7 @@ async def main():
     telegram_token = os.getenv('TELEGRAM_BOT_TOKEN')
     telegram_chat_id = os.getenv('TELEGRAM_CHAT_ID')
     rapidapi_key = os.getenv('rapidapi_key')
+    logger.info(f"RapidAPI Key found: {'Yes' if rapidapi_key else 'No'}")
     
     if not all([api_key, telegram_token, telegram_chat_id]):
         logger.error("❌ Missing required environment variables")
@@ -10131,27 +10131,38 @@ async def main():
         return
     
     news_calendar = None
+    global_news_data = {}
+    
     if rapidapi_key:
         news_calendar = NewsCalendar(rapidapi_key=rapidapi_key,
                                       base_path='/content/drive/MyDrive',
                                       logger=logger)
         # This line makes the single API call for the day
         global_news_data = news_calendar.get_daily_news()
-        logger.info(f"📰 News Calendar initialized with cache at: {news_calendar.cache_dir}")
+        logger.info(f"📰 News Calendar initialized. Cache at: {news_calendar.cache_dir}")
     else:
         logger.warning("⚠️ RapidAPI key missing. News features disabled.")
-        global_news_data = {}
     
-    # === PASS THE DATA/CALENDAR TO MANAGER ===
+    # === PASS BOTH NEWS DATA AND CALENDAR ===
     try:
-        # Initialize the manager with BOTH news data AND calendar
         manager = UltimateTradingManager(
-            api_key=api_key, 
-            telegram_token=telegram_token, 
-            chat_id=telegram_chat_id,  # Note: parameter name is chat_id
-            news_data=global_news_data,
-            news_calendar=news_calendar  # ← PASS THIS!
+            api_key, 
+            telegram_token, 
+            telegram_chat_id, 
+            news_data=global_news_data,  # Pass the data
+            news_calendar=news_calendar   # Pass the calendar object too
         )
+        
+        # Verify news integration
+        if news_calendar:
+            logger.info(f"✅ News Calendar passed to manager: Yes")
+            # Check cache exists
+            today_str = datetime.now(NY_TZ).strftime('%Y-%m-%d')
+            cache_file = f"{news_calendar.cache_dir}/news_cache_{today_str}.json"
+            if os.path.exists(cache_file):
+                logger.info(f"✅ News cache file exists: {cache_file}")
+            else:
+                logger.warning(f"⚠️ News cache file not found: {cache_file}")
         
         await manager.run_ultimate_systems()
         
