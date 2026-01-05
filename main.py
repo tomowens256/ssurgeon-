@@ -523,7 +523,7 @@ class RobustTimingManager:
         return is_within
     
     def calculate_next_candle_time(self, timeframe):
-        """Calculate when the next candle will open for any timeframe"""
+        """Calculate when the next candle will open for any timeframes"""
         now = datetime.now(self.ny_tz)
         
         if timeframe.startswith('H'):
