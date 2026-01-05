@@ -6632,19 +6632,10 @@ class HammerPatternScanner:
         """Start the scanner"""
         self.running = True
         
-        # Check for news cache
-        self.check_news_cache_exists()
-        
-        # Test news calendar connection
-        self.test_news_calendar_connection()
-        
-        # Run debug test
-        self.logger.info("🔍 Running hammer debug test...")
-        self.run_hammer_debug_test()
-        
         # Start background news fetching if we have calendar
         if self.news_calendar:
             self.start_news_background_fetch(interval_hours=6)
+            self.logger.info(f"📰 Started background news fetching")
         else:
             self.logger.warning("⚠️ No news calendar - background fetch disabled")
         
