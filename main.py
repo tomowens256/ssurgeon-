@@ -5389,6 +5389,24 @@ class HammerPatternScanner:
                             continue
                         
                         scanned_candles.add(candle_key)
+
+                       
+                        # DEBUG: Log candle details
+                        self.logger.info(f"📊 Scanning {tf} at {datetime.now(NY_TZ).strftime('%H:%M:%S')}")
+                        self.logger.info(f"   Candle time: {closed_candle['time']}")
+                        self.logger.info(f"   Prices: O:{closed_candle['open']:.5f} H:{closed_candle['high']:.5f} L:{closed_candle['low']:.5f} C:{closed_candle['close']:.5f}")
+                        self.logger.info(f"   Direction: {direction}")
+                        
+                        # Check hammer pattern
+                        is_hammer, upper_ratio, lower_ratio = self.is_hammer_candle(closed_candle, direction)
+                        self.logger.info(f"   Hammer check: {is_hammer}")
+                        self.logger.info(f"   Wick ratios: upper={upper_ratio:.2f}, lower={lower_ratio:.2f}")
+                        
+                        if is_hammer:
+                            self.logger.info(f"✅ HAMMER DETECTED! Checking if in zone...")
+                            # Also log detailed analysis
+                            self.log_detailed_candle_analysis(closed_candle, tf, direction)
+                        # ========== END DEBUG LOGGING ==========
                         
                         # Check if candle is in Fibonacci zone
                         candle_price = closed_candle['close']  # Use close price for zone check
@@ -5453,6 +5471,48 @@ class HammerPatternScanner:
         except Exception as e:
             self.logger.error(f"❌ Error in hammer scan: {str(e)}", exc_info=True)
             return False
+
+    def log_detailed_candle_analysis(self, candle, timeframe, direction):
+        """Log detailed analysis of a candle for debugging"""
+        try:
+            total_range = candle['high'] - candle['low']
+            if total_range == 0:
+                self.logger.warning("   Zero range candle")
+                return
+            
+            upper_wick = candle['high'] - max(candle['close'], candle['open'])
+            lower_wick = min(candle['close'], candle['open']) - candle['low']
+            
+            # Calculate ratios
+            upper_ratio = upper_wick / total_range if total_range > 0 else 0
+            lower_ratio = lower_wick / total_range if total_range > 0 else 0
+            
+            # For gold, calculate pips
+            pip_multiplier = 100  # Gold uses 2 decimal places
+            range_pips = total_range * pip_multiplier
+            
+            self.logger.info(f"📊 DETAILED CANDLE ANALYSIS ({timeframe}, {direction}):")
+            self.logger.info(f"   Total range: {total_range:.5f} ({range_pips:.1f} pips)")
+            self.logger.info(f"   Upper wick: {upper_wick:.5f} ({upper_ratio:.1%})")
+            self.logger.info(f"   Lower wick: {lower_wick:.5f} ({lower_ratio:.1%})")
+            
+            if direction == 'bearish':
+                hammer_criteria = upper_ratio > 0.5
+                self.logger.info(f"   Hammer criteria: Upper wick > 50% → {hammer_criteria}")
+                if hammer_criteria:
+                    self.logger.info(f"   ✅ BEARISH HAMMER: Upper wick is {upper_ratio:.1%} (>50%)")
+                else:
+                    self.logger.info(f"   ❌ NOT A BEARISH HAMMER: Upper wick is {upper_ratio:.1%} (need >50%)")
+            else:  # bullish
+                hammer_criteria = lower_ratio > 0.5
+                self.logger.info(f"   Hammer criteria: Lower wick > 50% → {hammer_criteria}")
+                if hammer_criteria:
+                    self.logger.info(f"   ✅ BULLISH HAMMER: Lower wick is {lower_ratio:.1%} (>50%)")
+                else:
+                    self.logger.info(f"   ❌ NOT A BULLISH HAMMER: Lower wick is {lower_ratio:.1%} (need >50%)")
+                    
+        except Exception as e:
+            self.logger.error(f"   Error in detailed analysis: {str(e)}")
     
     def _get_next_candle_close_time(self, timeframe, current_time):
         """Calculate next candle close time"""
