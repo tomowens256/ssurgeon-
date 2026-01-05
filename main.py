@@ -5041,9 +5041,42 @@ class HammerPatternScanner:
         self.logger.info(f"📰 Started background news fetching every {interval_hours} hours")
 
     def test_news_calendar_connection(self):
-        pass
+        """Test if news calendar is working"""
+        if not self.news_calendar:
+            self.logger.error("❌ No News Calendar object found!")
+            return False
+        
+        try:
+            # Try to get today's news
+            today_str = datetime.now(self.NY_TZ).strftime('%Y-%m-%d')
+            news_data = self.news_calendar.get_daily_news()
+            
+            if 'error' in news_data:
+                self.logger.error(f"❌ News Calendar test failed: {news_data['error']}")
+                return False
+            else:
+                event_count = len(news_data.get('events', []))
+                self.logger.info(f"✅ News Calendar test passed: {event_count} events")
+                return True
+        except Exception as e:
+            self.logger.error(f"❌ News Calendar test failed: {str(e)}")
+            return False
+    
     def check_news_cache_exists(self):
-        pass
+        """Check if news cache exists"""
+        if not self.news_calendar:
+            self.logger.warning("⚠️ No News Calendar - cannot check cache")
+            return False
+        
+        today_str = datetime.now(self.NY_TZ).strftime('%Y-%m-%d')
+        cache_file = f"{self.news_calendar.cache_dir}/news_cache_{today_str}.json"
+        
+        if os.path.exists(cache_file):
+            self.logger.info(f"✅ News cache exists: {cache_file}")
+            return True
+        else:
+            self.logger.warning(f"⚠️ News cache NOT found: {cache_file}")
+            return False
         
     def is_hammer_candle(self, candle, direction):
         """Simplified hammer detection - only 50% wick rule"""
