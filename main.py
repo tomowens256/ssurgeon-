@@ -5369,9 +5369,14 @@ class HammerPatternScanner:
                 # Scan each timeframe
                 for tf in timeframes:
                     try:
-                        # Calculate next candle close time
-                        next_close = self._get_next_candle_close_time(tf, current_time)
-                        wait_seconds = (next_close - current_time).total_seconds()
+                        # Wait for the candle to close AND get 3-second data availability buffer
+                        if not self.wait_for_candle_open(tf):
+                            self.logger.warning(f"⚠️ Could not wait for {tf} candle open, continuing...")
+                            continue
+                        
+                        # Add a small additional buffer to ensure API has data
+                        time.sleep(2)
+                        self.logger.info(f"✅ {tf} candle should be available, fetching data...")
                         
                         if wait_seconds > 0:
                             self.logger.debug(f"⏰ Waiting {wait_seconds:.0f}s for {tf} close")
@@ -5441,7 +5446,7 @@ class HammerPatternScanner:
                             self.logger.info(f"   Wick ratios: upper={upper_ratio:.2f}, lower={lower_ratio:.2f}")
                             
                             # Wait for next candle open (3 seconds)
-                            time.sleep(3)
+                            # time.sleep(3)
                             
                             # Process and record hammer
                             hammer_count += 1
