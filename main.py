@@ -3986,13 +3986,16 @@ class NewsCalendar:
             }
             
             params = {
-                "timezone": "GMT+0",
-                "volatility": "NONE",  # Gets ALL volatility levels
                 "limit": "50"
             }
             
             self.logger.info(f"📰 Fetching news from RapidAPI for {date_str}...")
             response = requests.get(url, headers=headers, params=params, timeout=30)
+            raw_api_response = response.json()
+            self.logger.info(
+                f"RAW TYPE: {type(raw_api_response)} | "
+                f"PREVIEW: {str(raw_api_response)[:300]}"
+            )
             
             if response.status_code == 200:
                 # 3. Get raw API response
@@ -4002,7 +4005,7 @@ class NewsCalendar:
                 processed_data = self._process_raw_news(raw_api_response, date_str)
                 
                 # 5. Only cache if we have valid processed data
-                if 'events' in processed_data:
+                if processed_data.get("events"):
                     self._save_to_cache(cache_key, processed_data)
                     
                     # Save to processed CSV
