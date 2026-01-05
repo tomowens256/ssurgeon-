@@ -259,15 +259,19 @@ def send_telegram(message, token=None, chat_id=None):
 
 def fetch_candles(instrument, timeframe, count=100, api_key=None, since=None):
     """Fetch candles from OANDA API - ENFORCE UTC-4, incremental since."""
-   
+    
     if not api_key:
         logger.error("Oanda API key missing")
         return pd.DataFrame()
-       
+    
     try:
         from oandapyV20 import API
         from oandapyV20.endpoints import instruments as instruments
+        import logging  # Ensure logging is imported
+        
         api = API(access_token=api_key, environment="practice")
+
+        logging.getLogger('oandapyV20.oandapyV20').setLevel(logging.WARNING)
     except Exception as e:
         logger.error(f"Oanda API initialization failed: {str(e)}")
         return pd.DataFrame()
