@@ -5028,38 +5028,7 @@ class HammerPatternScanner:
         self.logger.info(f"📰 Started background news fetching every {interval_hours} hours")
 
     def test_news_calendar_connection(self):
-        """Test if news calendar is properly connected"""
-        try:
-            self.logger.info("🔍 TESTING NEWS CALENDAR CONNECTION...")
-            
-            if self.news_calendar:
-                self.logger.info(f"✅ News Calendar found!")
-                self.logger.info(f"   Cache dir: {self.news_calendar.cache_dir}")
-                
-                # Try to get today's news
-                today_str = datetime.now(NY_TZ).strftime('%Y-%m-%d')
-                cache_file = f"{self.news_calendar.cache_dir}/news_cache_{today_str}.json"
-                
-                if os.path.exists(cache_file):
-                    self.logger.info(f"✅ News cache file exists: {cache_file}")
-                    with open(cache_file, 'r') as f:
-                        news_data = json.load(f)
-                    event_count = len(news_data.get('events', []))
-                    self.logger.info(f"📰 Cached news has {event_count} events")
-                else:
-                    self.logger.warning(f"⚠️ No news cache file found at {cache_file}")
-                    
-                return True
-            else:
-                self.logger.error("❌ No News Calendar object found!")
-                self.logger.info(f"   news_calendar: {self.news_calendar}")
-                self.logger.info(f"   news_cache_dir: {self.news_cache_dir}")
-                return False
-                
-        except Exception as e:
-            self.logger.error(f"❌ News calendar test failed: {str(e)}")
-            return False
-
+        pass
     def check_news_cache_exists(self):
         pass
         
