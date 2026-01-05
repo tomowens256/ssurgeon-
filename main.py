@@ -9890,30 +9890,28 @@ class UltimateTradingSystem:
 # ================================
 # ULTIMATE MAIN MANAGER
 # ================================
-
 class UltimateTradingManager:
     def __init__(self, api_key, telegram_token, chat_id, news_data=None, news_calendar=None):
         self.api_key = api_key
         self.telegram_token = telegram_token
         self.chat_id = chat_id
         self.news_data = news_data
-        self.news_calendar = news_calendar  # Store it!
+        self.news_calendar = news_calendar  # Store it
         self.trading_systems = {}
         
+        # Initialize all trading systems
         for pair_group, pair_config in TRADING_PAIRS.items():
             self.trading_systems[pair_group] = UltimateTradingSystem(
                 pair_group, 
                 pair_config, 
                 telegram_token=telegram_token, 
                 telegram_chat_id=chat_id,
-                news_calendar=news_calendar  # Pass it here!
+                news_calendar=news_calendar  # Pass it here
             )
         
-        logger.info(f"🎯 Initialized ULTIMATE trading manager with {len(self.trading_systems)} pair groups")
+        logger.info(f"🎯 Initialized ULTIMATE trading manager")
         if news_calendar:
-            logger.info(f"📰 News Calendar integrated into all trading systems")
-
-    
+            logger.info(f"📰 News Calendar passed to all trading systems")
     def _format_ultimate_signal_message(self, signal):
         """Format ultimate signal for Telegram - NOW WITH TRIAD SUPPORT"""
         
