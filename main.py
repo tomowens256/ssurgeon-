@@ -5377,24 +5377,24 @@ class HammerPatternScanner:
                                 break
                 
                 # Scan each timeframe
+                # Scan each timeframe
                 for tf in timeframes:
                     try:
+                        # ========== NEW TIMING CODE ==========
                         # Wait for the candle to close AND get 3-second data availability buffer
+                        self.logger.info(f"⏰ Waiting for {tf} candle to close and data to be available...")
+                        
                         if not self.wait_for_candle_open(tf):
                             self.logger.warning(f"⚠️ Could not wait for {tf} candle open, continuing...")
                             continue
                         
                         # Add a small additional buffer to ensure API has data
-                        time.sleep(2)
+                        time.sleep(1)
                         self.logger.info(f"✅ {tf} candle should be available, fetching data...")
-                        
-                        if wait_seconds > 0:
-                            self.logger.debug(f"⏰ Waiting {wait_seconds:.0f}s for {tf} close")
-                            time.sleep(wait_seconds)
+                        # ========== END NEW TIMING CODE ==========
                         
                         # Fetch data after candle close
                         df = fetch_candles(instrument, tf, count=10, api_key=self.credentials['oanda_api_key'])
-                        
                         if df.empty or len(df) < 2:
                             continue
                         
