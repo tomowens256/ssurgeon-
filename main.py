@@ -32,7 +32,7 @@ NY_TZ = ZoneInfo("America/New_York")
 TRADING_PAIRS = {
     'precious_metals': {
         'pair1': 'XAU_USD',  # OLD structure (keep for cndnbompatibility)
-        'pair2': 'XAU_JPY',  # OLD structure (keep for compatibility)
+        'pair2': 'XAU_JPY',  # OLD structure (keep for chzvchompatibility)
         'instruments': ['XAU_USD', 'XAU_JPY'],  # NEW structure
         'timeframe_mapping': {
             'monthly': 'H4',
