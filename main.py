@@ -9736,12 +9736,34 @@ class UltimateTradingManager:
         
         return message
 
+def quick_hammer_test():
+    """Run a quick hammer test at startup"""
+    logger.info("🔨 QUICK HAMMER TEST STARTING...")
+    
+    # Create a simple hammer scanner just for testing
+    hammer_credentials = {
+        'telegram_token': os.getenv('TELEGRAM_BOT_TOKEN'),
+        'telegram_chat_id': os.getenv('TELEGRAM_CHAT_ID'),
+        'oanda_api_key': os.getenv('OANDA_API_KEY')
+    }
+    
+    test_scanner = HammerPatternScanner(
+        hammer_credentials,
+        csv_base_path='/content/drive/MyDrive/hammer_debug_test',
+        logger=logger
+    )
+    
+    # Run the debug test
+    test_scanner.run_hammer_debug_test()
+    logger.info("🔨 QUICK HAMMER TEST COMPLETED")
+
 # ================================
 # MAIN EXECUTION
 # ================================
 
 async def main():
     """Main entry point"""
+    quick_hammer_test()
     logger.info("HEY TOM'S SNIPER JUST WOKE UP")
     
     api_key = os.getenv('OANDA_API_KEY')
