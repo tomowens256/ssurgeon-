@@ -4701,34 +4701,29 @@ class HammerPatternScanner:
         self.csv_file_path = f"{self.csv_base_path}.csv"
         self.init_csv_storage()
         
-        # Store the news calendar reference
+        # Store the news calendar reference - FIXED
         self.news_calendar = news_calendar
-    
-        # Look for news cache in the standard location
-        possible_cache_dirs = [
-            '/content/drive/MyDrive/news_data/cache',  # NewsCalendar default
-            '/content/drive/MyDrive',  # Fallback
-            os.path.dirname(csv_base_path)  # Near CSV
-        ]
         
-        # Try to find existing cache directory
-        self.news_cache_dir = None
-        for cache_dir in possible_cache_dirs:
-            if os.path.exists(cache_dir):
-                self.news_cache_dir = cache_dir
-                self.logger.info(f"📰 Found news cache directory: {self.news_cache_dir}")
-                break
+        # TIMEZONE FIX - Add this!
+        self.NY_TZ = pytz.timezone('America/New_York')
         
-        # If no cache found, use the NewsCalendar's default location
-        if not self.news_cache_dir:
-            self.news_cache_dir = '/content/drive/MyDrive/news_data/cache'
-            self.logger.info(f"📁 Using default news cache: {self.news_cache_dir}")
-            # Try to create it
-            try:
-                os.makedirs(self.news_cache_dir, exist_ok=True)
-                self.logger.info(f"📁 Created news cache directory")
-            except:
-                self.logger.warning(f"⚠️ Could not create news cache directory")
+        if self.news_calendar:
+            self.logger.info(f"📰 News Calendar received: {self.news_calendar.cache_dir}")
+            
+            # Check if cache exists using the news_calendar's cache_dir
+            today_str = datetime.now(self.NY_TZ).strftime('%Y-%m-%d')
+            expected_cache = f"{self.news_calendar.cache_dir}/news_cache_{today_str}.json"
+            
+            if os.path.exists(expected_cache):
+                self.logger.info(f"✅ News cache found: {expected_cache}")
+            else:
+                self.logger.warning(f"⚠️ News cache not found at {expected_cache}")
+                self.logger.info(f"   This is normal if get_daily_news() hasn't been called yet")
+        else:
+            self.logger.warning("⚠️ No News Calendar provided - news features disabled")
+        
+        
+        
         # Timeframe alignment (keep existing)
         self.timeframe_alignment = {
             'XAU_USD': {
@@ -4745,7 +4740,7 @@ class HammerPatternScanner:
         
         self.logger.info(f"🔨 Streamlined Hammer Scanner initialized")
         self.logger.info(f"📁 CSV storage: {self.csv_file_path}")
-    
+        
     def init_csv_storage(self):
         """Initialize CSV file with NEW columns - FORCE UPDATE"""
         try:
@@ -4921,6 +4916,19 @@ class HammerPatternScanner:
                 self.logger.info(f"📁 Created emergency CSV file")
             except Exception as e2:
                 self.logger.error(f"❌ Could not create emergency CSV: {str(e2)}")
+
+    def check_news_context(self, instrument, signal_time):
+        """Get news context for a hammer signal"""
+        if not self.news_calendar:
+            self.logger.warning(f"⚠️ No News Calendar - skipping news context")
+            return {}
+        
+        try:
+            news_context = self.news_calendar.get_news_for_instrument(instrument, signal_time)
+            return news_context
+        except Exception as e:
+            self.logger.error(f"❌ Error getting news context: {str(e)}")
+            return {}
     
     def _generate_signal_id(self, trigger_data):
         """Create a unique signal ID for grouping multiple hammers"""
@@ -10188,6 +10196,9 @@ async def main():
         # Make the API call and ensure cache is created
         logger.info("📰 Fetching daily news (this makes the API call)...")
         global_news_data = news_calendar.get_daily_news()
+
+        import time
+        time.sleep(2)
         
         # Verify the cache was created
         today_str = datetime.now(NY_TZ).strftime('%Y-%m-%d')
