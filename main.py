@@ -5236,7 +5236,7 @@ class HammerPatternScanner:
         return trigger_map.get(trigger_tf, ['M5', 'M15'])
     
     def scan_fibonacci_hammer(self, trigger_data):
-        """Main hammer scanning function with proper zone logic"""
+        """Main hammer scanning function with proper zone logics"""
         try:
             instrument = trigger_data.get('instrument')
             direction = trigger_data.get('direction')
