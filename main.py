@@ -9795,23 +9795,24 @@ class UltimateTradingManager:
         self.telegram_token = telegram_token
         self.chat_id = chat_id
         self.news_data = news_data
-        self.news_calendar = news_calendar  # Store news calendar
+        self.news_calendar = news_calendar  # Store the news calendar!
         self.trading_systems = {}
         
-        # Initialize all trading systems WITH the news calendar
+        # Initialize all trading systems WITH news_calendar
         for pair_group, pair_config in TRADING_PAIRS.items():
             self.trading_systems[pair_group] = UltimateTradingSystem(
                 pair_group, 
-                pair_config,
-                telegram_token=telegram_token,
+                pair_config, 
+                telegram_token=telegram_token, 
                 telegram_chat_id=chat_id,
-                news_calendar=news_calendar  # Pass it here
+                news_calendar=news_calendar  # Pass it here!
             )
         
         logger.info(f"🎯 Initialized ULTIMATE trading manager with {len(self.trading_systems)} pair groups")
         if news_calendar:
-            logger.info(f"📰 News calendar integrated into all trading systems")
-
+            logger.info(f"📰 News Calendar integrated into all trading systems")
+        else:
+            logger.warning(f"⚠️ No News Calendar provided - news features disabled")
     def _format_ultimate_signal_message(self, signal):
         """Format ultimate signal for Telegram - NOW WITH TRIAD SUPPORT"""
         
