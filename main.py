@@ -10031,59 +10031,85 @@ async def main():
     telegram_chat_id = os.getenv('TELEGRAM_CHAT_ID')
     rapidapi_key = os.getenv('rapidapi_key')
     
+    # ✅ LOG THE RAPIDAPI KEY STATUS
+    if rapidapi_key:
+        logger.info(f"✅ RapidAPI key found: {rapidapi_key[:8]}...")  # Show first 8 chars
+    else:
+        logger.error("❌ NO RapidAPI key found in environment!")
+        logger.info("💡 Set it with: os.environ['rapidapi_key'] = 'your_key_here'")
+    
     if not all([api_key, telegram_token, telegram_chat_id]):
         logger.error("❌ Missing required environment variables")
         logger.info("💡 Please set OANDA_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID")
         return
     
     news_calendar = None
-    global_news_data = {}
     
     if rapidapi_key:
-        logger.info("📰 Initializing News Calendar...")
-        news_calendar = NewsCalendar(
-            rapidapi_key=rapidapi_key,
-            base_path='/content/drive/MyDrive',
-            logger=logger
-        )
-        
-        # ========== CRITICAL FIX ==========
-        # Make the API call and ensure cache is created
-        logger.info("📰 Fetching daily news (this makes the API call)...")
-        global_news_data = news_calendar.get_daily_news()
-
-        import time
-        time.sleep(2)
-        
-        # Verify the cache was created
-        today_str = datetime.now(NY_TZ).strftime('%Y-%m-%d')
-        expected_cache_file = f"{news_calendar.cache_dir}/news_cache_{today_str}.json"
-        
-        if os.path.exists(expected_cache_file):
-            logger.info(f"✅ News cache created: {expected_cache_file}")
-            with open(expected_cache_file, 'r') as f:
-                cache_data = json.load(f)
-            event_count = len(cache_data.get('events', []))
-            logger.info(f"📰 Cache contains {event_count} events")
-        else:
-            logger.error(f"❌ FAILED: News cache not created at {expected_cache_file}")
-            if 'error' in global_news_data:
-                logger.error(f"❌ API Error: {global_news_data['error']}")
-        # ========== END FIX ==========
-        
+        logger.info("📰 INITIALIZING NEWS CALENDAR...")
+        try:
+            # ✅ CREATE NEWS CALENDAR
+            news_calendar = NewsCalendar(
+                rapidapi_key=rapidapi_key,
+                base_path='/content/drive/MyDrive',
+                logger=logger
+            )
+            logger.info(f"✅ News Calendar created: cache_dir={news_calendar.cache_dir}")
+            
+            # ✅ FORCE FETCH TODAY'S NEWS
+            logger.info("📰 FORCE FETCHING TODAY'S NEWS...")
+            today_str = datetime.now(news_calendar.ny_tz).strftime('%Y-%m-%d')
+            news_data = news_calendar.get_daily_news(force_fetch=True)  # Force API call
+            
+            if 'error' in news_data:
+                logger.error(f"❌ News fetch failed: {news_data['error']}")
+            else:
+                event_count = len(news_data.get('events', []))
+                logger.info(f"✅ News fetched: {event_count} events for {today_str}")
+                
+                # ✅ VERIFY CACHE WAS CREATED
+                cache_file = f"{news_calendar.cache_dir}/news_cache_{today_str}.json"
+                if os.path.exists(cache_file):
+                    logger.info(f"✅ Cache file created: {cache_file}")
+                    # Read and log cache contents
+                    with open(cache_file, 'r') as f:
+                        cache_content = json.load(f)
+                    logger.info(f"📰 Cache has {len(cache_content.get('events', []))} events")
+                else:
+                    logger.error(f"❌ Cache file NOT created: {cache_file}")
+                    
+        except Exception as e:
+            logger.error(f"❌ Failed to initialize News Calendar: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
+            news_calendar = None
     else:
         logger.warning("⚠️ RapidAPI key missing. News features disabled.")
     
+    # ✅ DEBUG: Check if news_calendar exists
+    if news_calendar:
+        logger.info(f"✅ News Calendar ready to pass to manager")
+        logger.info(f"   Cache dir: {news_calendar.cache_dir}")
+    else:
+        logger.warning("⚠️ NO News Calendar created - will pass None to manager")
+    
     # === PASS TO MANAGER ===
     try:
-        # Create the manager - pass news_calendar as well
+        # Create the manager - pass news_calendar
+        logger.info("🎯 Creating UltimateTradingManager...")
         manager = UltimateTradingManager(
             api_key=api_key,
             telegram_token=telegram_token,
             chat_id=telegram_chat_id,
-            news_data=global_news_data,
-            news_calendar=news_calendar  # Pass the calendar object
+            news_calendar=news_calendar  # This should NOT be None if rapidapi_key exists
         )
+        
+        # ✅ DEBUG: Check what was passed
+        logger.info(f"✅ Manager created")
+        if manager.news_calendar:
+            logger.info(f"✅ Manager has News Calendar: {manager.news_calendar.cache_dir}")
+        else:
+            logger.error("❌ Manager does NOT have News Calendar!")
         
         await manager.run_ultimate_systems()
         
