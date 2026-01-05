@@ -10008,15 +10008,22 @@ async def main():
         logger.warning("⚠️ RapidAPI key missing. News features disabled.")
         global_news_data = {}
     
-    # === PASS BOTH NEWS DATA AND NEWS CALENDAR ===
+    # Initialize the manager with news calendar
     try:
         manager = UltimateTradingManager(
             api_key, 
             telegram_token, 
-            telegram_chat_id, 
+            telegram_chat_id,
             news_data=global_news_data,
-            news_calendar=news_calendar  # Pass the calendar object too
+            news_calendar=news_calendar  # Pass the calendar object
         )
+        
+        # Start all hammer scanners (they should already be started in initialization)
+        for pair_group, system in manager.trading_systems.items():
+            if hasattr(system, 'hammer_scanner'):
+                if not system.hammer_scanner.running:
+                    system.hammer_scanner.start()
+                    logger.info(f"✅ Hammer scanner started for {pair_group}")
         
         await manager.run_ultimate_systems()
         
