@@ -5326,6 +5326,12 @@ class HammerPatternScanner:
             
             signal_id = self._generate_signal_id(trigger_data)
             
+            
+            self.logger.info(f"🎯 Starting hammer scan for {instrument} {criteria}")
+            self.logger.info(f"   Signal ID: {signal_id}")
+            self.logger.info(f"   Direction: {direction}")
+            self.logger.info(f"   Trigger TF: {trigger_timeframe}")
+            
             # Set scan duration based on criteria
             if criteria == 'CRT+SMT':
                 if trigger_timeframe == 'H1':
@@ -5441,9 +5447,9 @@ class HammerPatternScanner:
                             # Wait for next candle open (3 seconds)
                             time.sleep(3)
                             
-                            # Enter trade
+                            # Process and record hammer
                             hammer_count += 1
-                            success = self._enter_hammer_trade(
+                            success = self._process_and_record_hammer(
                                 instrument, tf, closed_candle, direction,
                                 criteria, signal_data, signal_id, trigger_data
                             )
