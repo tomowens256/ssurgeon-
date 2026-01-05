@@ -5055,9 +5055,9 @@ class HammerPatternScanner:
             return []
     
     def _calculate_fibonacci_levels(self, level1, level2, direction):
-        """Calculate Fibonacci retracement levels between two prices"""
+        """Calculate Fibonacci retracement zones between consecutive Fibonacci levels"""
         try:
-            # Standard Fibonacci retracement levels
+            # Standard Fibonacci retracement levels in order
             fib_ratios = [0.236, 0.382, 0.5, 0.618, 0.786]
             
             if direction == 'bearish':
@@ -5065,40 +5065,56 @@ class HammerPatternScanner:
                 price_range = level1 - level2
                 
                 zones = []
-                for ratio in fib_ratios:
+                for i, ratio in enumerate(fib_ratios):
+                    # Calculate the high boundary of this zone (at current ratio)
                     zone_high = level1 - (price_range * ratio)
-                    zone_low = level1 - (price_range * (ratio + 0.1)) if ratio < 0.786 else level2
+                    
+                    # Calculate the low boundary of this zone
+                    if i == 0:  # First zone: from 0.236 to 1.0 (TP)
+                        zone_low = level2  # TP is at 1.0
+                    else:  # Subsequent zones: from current ratio to previous ratio
+                        prev_ratio = fib_ratios[i-1]
+                        zone_low = level1 - (price_range * prev_ratio)
                     
                     zones.append({
                         'ratio': ratio,
                         'high': zone_high,
                         'low': zone_low,
-                        'mid': (zone_high + zone_low) / 2
+                        'mid': (zone_high + zone_low) / 2,
+                        'zone_name': f'Fib_{ratio}_to_{prev_ratio if i > 0 else 1.0}'
                     })
                 
                 self.logger.info(f"📊 Fibonacci zones for bearish:")
                 for zone in zones:
-                    self.logger.info(f"   {zone['ratio']}: {zone['low']:.5f} - {zone['high']:.5f}")
+                    self.logger.info(f"   {zone['zone_name']}: {zone['low']:.5f} - {zone['high']:.5f}")
                 
             else:  # bullish
                 # For bullish: level1 is SL (lower), level2 is TP (higher)
                 price_range = level2 - level1
                 
                 zones = []
-                for ratio in fib_ratios:
+                for i, ratio in enumerate(fib_ratios):
+                    # Calculate the low boundary of this zone (at current ratio)
                     zone_low = level1 + (price_range * ratio)
-                    zone_high = level1 + (price_range * (ratio + 0.1)) if ratio < 0.786 else level2
+                    
+                    # Calculate the high boundary of this zone
+                    if i == 0:  # First zone: from 0.236 to 1.0 (TP)
+                        zone_high = level2  # TP is at 1.0
+                    else:  # Subsequent zones: from current ratio to previous ratio
+                        prev_ratio = fib_ratios[i-1]
+                        zone_high = level1 + (price_range * prev_ratio)
                     
                     zones.append({
                         'ratio': ratio,
                         'low': zone_low,
                         'high': zone_high,
-                        'mid': (zone_low + zone_high) / 2
+                        'mid': (zone_low + zone_high) / 2,
+                        'zone_name': f'Fib_{ratio}_to_{prev_ratio if i > 0 else 1.0}'
                     })
                 
                 self.logger.info(f"📊 Fibonacci zones for bullish:")
                 for zone in zones:
-                    self.logger.info(f"   {zone['ratio']}: {zone['low']:.5f} - {zone['high']:.5f}")
+                    self.logger.info(f"   {zone['zone_name']}: {zone['low']:.5f} - {zone['high']:.5f}")
             
             return zones
             
