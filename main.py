@@ -5619,19 +5619,32 @@ class HammerPatternScanner:
 
 
             # Get news context from the shared cache file
+            # ========== STEP 4: GET NEWS CONTEXT ==========
             news_context = {}
-            if self.news_cache_dir:  # Make this path available to the scanner
-                today_str = datetime.now(NY_TZ).strftime('%Y-%m-%d')
-                cache_file = f"{self.news_cache_dir}/news_cache_{today_str}.json"
-                
-                if os.path.exists(cache_file):
-                    try:
+            if hasattr(self, 'news_calendar') and self.news_calendar:
+                try:
+                    # Use the news calendar's method to get filtered news
+                    news_context = self.news_calendar.get_filtered_news_for_instrument(instrument)
+                except Exception as e:
+                    self.logger.error(f"❌ Error getting news from calendar: {e}")
+                    news_context = {
+                        'error': str(e),
+                        'event_count': 0,
+                        'high_impact_count': 0,
+                        'fetch_status': 'error'
+                    }
+            elif hasattr(self, 'news_cache_dir') and self.news_cache_dir:
+                try:
+                    today_str = datetime.now(NY_TZ).strftime('%Y-%m-%d')
+                    cache_file = f"{self.news_cache_dir}/news_cache_{today_str}.json"
+                    
+                    if os.path.exists(cache_file):
                         with open(cache_file, 'r') as f:
                             cached_news = json.load(f)
                         # Process cached_news for your instrument
                         news_context = self._filter_news_for_instrument(cached_news, instrument)
-                    except Exception as e:
-                        self.logger.error(f"❌ Error reading news cache: {e}")
+                except Exception as e:
+                    self.logger.error(f"❌ Error reading news cache: {e}")
                     news_context = {
                         'error': str(e),
                         'event_count': 0,
