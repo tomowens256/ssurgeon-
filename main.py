@@ -4566,7 +4566,7 @@ class NewsCalendar:
 class HammerPatternScanner:
     """Concurrent hammer pattern scanner with minimal featuress"""
     
-    def __init__(self, credentials, csv_base_path='/content/drive/MyDrive/hammer_trades', logger=None):
+    def __init__(self, credentials, csv_base_path='/content/drive/MyDrive/hammer_trades', logger=None, news_calendar=None):
         self.credentials = credentials
         self.running = False
         self.scanner_thread = None
@@ -4583,21 +4583,17 @@ class HammerPatternScanner:
         self.csv_file_path = f"{self.csv_base_path}.csv"
         self.init_csv_storage()
         
-        # Initialize NewsCalendar if RapidAPI key is available now
-        self.news_calendar = None
-        rapidapi_key = os.getenv('rapidapi_key')
-        if rapidapi_key:
-            try:
-                self.news_calendar = NewsCalendar(
-                    rapidapi_key=rapidapi_key,
-                    base_path='/content/drive/MyDrive',
-                    logger=self.logger
-                )
-                self.logger.info(f"📰 News Calendar initialized")
-            except Exception as e:
-                self.logger.error(f"❌ Failed to initialize News Calendar: {str(e)}")
+        # Store the news calendar reference
+        self.news_calendar = news_calendar
+        
+        # Get cache directory from news calendar or set default
+        if news_calendar and hasattr(news_calendar, 'cache_dir'):
+            self.news_cache_dir = news_calendar.cache_dir
+            self.logger.info(f"📰 Using News Calendar cache directory: {self.news_cache_dir}")
         else:
-            self.logger.warning(f"⚠️ No RapidAPI key provided - News Calendar disabled")
+            self.news_cache_dir = '/content/drive/MyDrive/news_data/cache'
+            self.logger.warning(f"⚠️ News Calendar not provided, using default cache: {self.news_cache_dir}")
+        
         
         # Timeframe alignment (keep existing)
         self.timeframe_alignment = {
