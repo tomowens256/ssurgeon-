@@ -4564,7 +4564,7 @@ class NewsCalendar:
 
 
 class HammerPatternScanner:
-    """Concurrent hammer pattern scanner with minimal features"""
+    """Concurrent hammer pattern scanner with minimal featuress"""
     
     def __init__(self, credentials, csv_base_path='/content/drive/MyDrive/hammer_trades', logger=None):
         self.credentials = credentials
