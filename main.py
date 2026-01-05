@@ -6844,6 +6844,7 @@ class UltimateTradingSystem:
         # Handle Telegram credentials
         self.telegram_token = telegram_token
         self.telegram_chat_id = telegram_chat_id
+        self.news_calendar = news_calendar  # Store news calendar
         
         # BACKWARD COMPATIBLE: Handle both old and new structures
         if 'instruments' in pair_config:
