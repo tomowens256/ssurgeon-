@@ -4562,6 +4562,95 @@ class NewsCalendar:
             self.logger.error(f"❌ Error clearing cache: {str(e)}")
 
 
+class TimeframeScanner:
+    """Manages independent scanning for a specific timeframe"""
+    
+    def __init__(self, scanner, instrument, tf, direction, zones, scan_duration):
+        self.scanner = scanner
+        self.instrument = instrument
+        self.timeframe = tf
+        self.direction = direction
+        self.zones = zones
+        self.scan_end = datetime.now(NY_TZ) + scan_duration
+        self.scanned_candles = set()
+        self.logger = scanner.logger
+        
+    def run(self):
+        """Run independent scan for this timeframe"""
+        try:
+            self.logger.info(f"🔍 Starting independent scan for {self.instrument} {self.timeframe}")
+            
+            while datetime.now(NY_TZ) < self.scan_end:
+                # Wait for this specific timeframe
+                self.scanner.wait_for_candle_open(self.timeframe)
+                
+                # Fetch data
+                df = fetch_candles(self.instrument, self.timeframe, count=10, 
+                                 api_key=self.scanner.credentials['oanda_api_key'])
+                
+                if df.empty or len(df) < 2:
+                    continue
+                
+                # Get last closed candle
+                closed_candle = df.iloc[-2]
+                candle_key = f"{self.timeframe}_{closed_candle['time']}"
+                
+                if candle_key in self.scanned_candles:
+                    continue
+                
+                self.scanned_candles.add(candle_key)
+                
+                # Check if in zone
+                candle_price = closed_candle['close']
+                in_zone = False
+                target_zone = None
+                
+                for zone in self.zones:
+                    if self.direction == 'bearish':
+                        if zone['low'] <= candle_price <= zone['high']:
+                            in_zone = True
+                            target_zone = zone
+                            break
+                    else:
+                        if zone['low'] <= candle_price <= zone['high']:
+                            in_zone = True
+                            target_zone = zone
+                            break
+                
+                if not in_zone:
+                    continue
+                
+                # Check for hammer
+                is_hammer, upper_ratio, lower_ratio = self.scanner.is_hammer_candle(closed_candle, self.direction)
+                
+                if is_hammer:
+                    self.logger.info(f"✅ HAMMER FOUND in {self.timeframe}!")
+                    self.logger.info(f"   Time: {closed_candle['time']}, Zone: {target_zone['ratio'] if target_zone else 'N/A'}")
+                    
+                    # Process the hammer
+                    return self.process_hammer(closed_candle, target_zone)
+                
+                # Small pause before next check
+                time.sleep(0.5)
+                
+            self.logger.info(f"⏰ {self.timeframe} scan completed (time expired)")
+            return None
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error in {self.timeframe} scanner: {str(e)}")
+            return None
+    
+    def process_hammer(self, candle, zone):
+        """Process found hammer"""
+        # Return data for processing
+        return {
+            'instrument': self.instrument,
+            'timeframe': self.timeframe,
+            'candle': candle,
+            'zone': zone,
+            'direction': self.direction
+        }
+
 
 class HammerPatternScanner:
     """Concurrent hammer pattern scanner with minimal featuress"""
