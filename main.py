@@ -4703,17 +4703,32 @@ class HammerPatternScanner:
         
         # Store the news calendar reference
         self.news_calendar = news_calendar
+    
+        # Look for news cache in the standard location
+        possible_cache_dirs = [
+            '/content/drive/MyDrive/news_data/cache',  # NewsCalendar default
+            '/content/drive/MyDrive',  # Fallback
+            os.path.dirname(csv_base_path)  # Near CSV
+        ]
         
-        # Get cache directory from news calendar or set default
-        # If news_calendar is provided, use its cache directory
-        if news_calendar and hasattr(news_calendar, 'cache_dir'):
-            self.news_cache_dir = news_calendar.cache_dir
-            self.logger.info(f"📰 Using News Calendar cache directory: {self.news_cache_dir}")
-        else:
-            # Set a sensible default
-            self.news_cache_dir = '/content/drive/MyDrive'
-            self.logger.info(f"📁 Using default directory for news cache: {self.news_cache_dir}")
+        # Try to find existing cache directory
+        self.news_cache_dir = None
+        for cache_dir in possible_cache_dirs:
+            if os.path.exists(cache_dir):
+                self.news_cache_dir = cache_dir
+                self.logger.info(f"📰 Found news cache directory: {self.news_cache_dir}")
+                break
         
+        # If no cache found, use the NewsCalendar's default location
+        if not self.news_cache_dir:
+            self.news_cache_dir = '/content/drive/MyDrive/news_data/cache'
+            self.logger.info(f"📁 Using default news cache: {self.news_cache_dir}")
+            # Try to create it
+            try:
+                os.makedirs(self.news_cache_dir, exist_ok=True)
+                self.logger.info(f"📁 Created news cache directory")
+            except:
+                self.logger.warning(f"⚠️ Could not create news cache directory")
         # Timeframe alignment (keep existing)
         self.timeframe_alignment = {
             'XAU_USD': {
