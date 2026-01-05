@@ -4802,7 +4802,7 @@ class HammerPatternScanner:
         return f"{instrument}_{timeframe}_{timestamp}"
     
     def wait_for_candle_open(self, timeframe):
-        """Wait precisely for next candle open (3 seconds delay)"""
+        """Wait precisely for next candle open (3 seconds delay) - IMPROVED"""
         try:
             now = datetime.now(NY_TZ)
             
@@ -4812,17 +4812,27 @@ class HammerPatternScanner:
                 minutes_past = current_minute % minutes
                 seconds_past = now.second + (now.microsecond / 1000000)
                 
-                # Calculate seconds until next candle
-                seconds_to_next = (minutes - minutes_past - 1) * 60 + (60 - seconds_past)
+                # Calculate seconds until next candle CLOSE (which is when next candle opens)
+                seconds_to_next_close = (minutes - minutes_past - 1) * 60 + (60 - seconds_past)
                 
-                if seconds_to_next > 0:
-                    wait_time = seconds_to_next + 3
-                    self.logger.info(f"⏰ Waiting {wait_time:.0f}s for {timeframe} candle open (next at {now + timedelta(seconds=wait_time)})")
-                    time.sleep(wait_time)  # 3 seconds for data availability
-                    self.logger.info(f"✅ {timeframe} candle open, proceeding with scan")
+                if seconds_to_next_close > 0:
+                    # Wait for candle to close + 3 seconds for data availability
+                    total_wait_time = seconds_to_next_close + 3
+                    next_candle_time = now + timedelta(seconds=total_wait_time)
+                    self.logger.info(f"⏰ Waiting {total_wait_time:.0f}s for {timeframe} data (candle closes in {seconds_to_next_close:.0f}s + 3s buffer)")
+                    self.logger.info(f"   Next data available at: {next_candle_time.strftime('%H:%M:%S')}")
+                    time.sleep(total_wait_time)
+                    self.logger.info(f"✅ {timeframe} data should now be available")
                     return True
                 else:
-                    self.logger.info(f"✅ {timeframe} candle is already open, proceeding immediately")
+                    # Candle already closed, check if we need to wait for next candle
+                    seconds_since_close = -seconds_to_next_close
+                    if seconds_since_close < 3:
+                        # Still within 3-second buffer, wait remaining time
+                        remaining_buffer = 3 - seconds_since_close
+                        self.logger.info(f"⏰ Candle closed {seconds_since_close:.0f}s ago, waiting {remaining_buffer:.0f}s for data buffer")
+                        time.sleep(remaining_buffer)
+                    self.logger.info(f"✅ {timeframe} data should be available now")
                     return True
                     
             return False
