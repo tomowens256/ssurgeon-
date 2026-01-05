@@ -5093,13 +5093,18 @@ class HammerPatternScanner:
             direction = trigger_data.get('direction')
             trigger_timeframe = trigger_data.get('trigger_timeframe')
             criteria = trigger_data.get('type')
+            # GET THE COMPLETE SIGNAL DATA FROM TRIGGER_DATA
             signal_data = trigger_data.get('signal_data', {})
+            if not signal_data:
+                self.logger.error("❌ No signal_data in trigger_data")
+                return False
             
-            self.logger.info(f"🔨 Starting hammer scan for {instrument}")
-            self.logger.info(f"   Criteria: {criteria}, Direction: {direction}")
+            # DEBUG: Log what we actually received
+            self.logger.info(f"📦 Signal data keys: {list(signal_data.keys())}")
+            if 'smt_data' in signal_data:
+                self.logger.info(f"   SMT swings count: {len(signal_data['smt_data'].get('swings', []))}")
             
-            
-            # Get Fibonacci zones
+            # Get Fibonacci zones - PASS THE COMPLETE signal_data
             fib_zones = self._get_fib_zones(trigger_data)
             
             if not fib_zones:
