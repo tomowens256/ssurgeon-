@@ -5427,7 +5427,7 @@ class HammerPatternScanner:
         return trigger_map.get(trigger_tf, ['M5', 'M15'])
     
     def scan_fibonacci_hammer(self, trigger_data):
-        """Main hammer scanning function with CONCURRENT timeframe scanning"""
+        """Main hammer scanning function with CONCURRENT timeframe scanning - COMPLETE VERSION"""
         try:
             instrument = trigger_data.get('instrument')
             direction = trigger_data.get('direction')
@@ -5442,9 +5442,12 @@ class HammerPatternScanner:
             # DEBUG: Log what we actually received
             self.logger.info(f"📦 Signal data keys: {list(signal_data.keys())}")
             if 'smt_data' in signal_data:
-                self.logger.info(f"   SMT swings count: {len(signal_data['smt_data'].get('swings', {}))}")
+                swings = signal_data['smt_data'].get('swings', {})
+                self.logger.info(f"   SMT swings count: {len(swings)}")
+                for key, swing in swings.items():
+                    self.logger.info(f"   Swing {key}: {swing.get('type', 'unknown')} at {swing.get('price', 0):.5f}")
             
-            # Get Fibonacci zones - PASS THE COMPLETE signal_data
+            # Get Fibonacci zones
             fib_zones = self._get_fib_zones(trigger_data)
             
             if not fib_zones:
@@ -5457,7 +5460,7 @@ class HammerPatternScanner:
             
             signal_id = self._generate_signal_id(trigger_data)
             
-            self.logger.info(f"🎯 Starting hammer scan for {instrument} {criteria}")
+            self.logger.info(f"🎯 Starting CONCURRENT hammer scan for {instrument} {criteria}")
             self.logger.info(f"   Signal ID: {signal_id}")
             self.logger.info(f"   Direction: {direction}")
             self.logger.info(f"   Trigger TF: {trigger_timeframe}")
@@ -5478,80 +5481,119 @@ class HammerPatternScanner:
             
             self.logger.info(f"⏰ Scan duration: {max_scan_duration}")
             
-            # Use threading for concurrent scanning
-            hammer_count = 0
-            lock = threading.Lock()
+            # Create a shared state for all scanners
+            shared_state = {
+                'hammer_count': 0,
+                'scan_end': scan_end,
+                'fib_zones': fib_zones,
+                'instrument': instrument,
+                'direction': direction,
+                'criteria': criteria,
+                'signal_data': signal_data,
+                'signal_id': signal_id,
+                'trigger_data': trigger_data,
+                'scanned_candles': {},  # Dict of sets per timeframe
+                'lock': threading.Lock()  # Lock for thread safety
+            }
+            
+            # Initialize scanned_candles for each timeframe
+            for tf in timeframes:
+                shared_state['scanned_candles'][tf] = set()
             
             def scan_timeframe(tf):
-                """Scan a single timeframe (run in thread)"""
-                nonlocal hammer_count
-                scanned_candles = set()
-                
+                """Scan a single timeframe (runs in separate thread)"""
                 try:
                     self.logger.info(f"🔍 Starting {tf} scanner thread")
+                    tf_scanned_candles = shared_state['scanned_candles'][tf]
                     
-                    while datetime.now(NY_TZ) < scan_end:
-                        current_time = datetime.now(NY_TZ)
-                        
-                        # Check for CRT invalidation
-                        if criteria == 'CRT+SMT':
-                            crt_zone = fib_zones[0] if fib_zones else None
+                    while datetime.now(NY_TZ) < shared_state['scan_end']:
+                        # 1. Check for CRT invalidation (if applicable)
+                        if shared_state['criteria'] == 'CRT+SMT':
+                            crt_zone = shared_state['fib_zones'][0] if shared_state['fib_zones'] else None
                             if crt_zone and 'invalidation_level' in crt_zone:
-                                # Get current price
-                                df_current = fetch_candles(instrument, 'M1', count=2, api_key=self.credentials['oanda_api_key'])
+                                df_current = fetch_candles(
+                                    shared_state['instrument'], 
+                                    'M1', 
+                                    count=2, 
+                                    api_key=self.credentials['oanda_api_key']
+                                )
                                 if not df_current.empty:
                                     current_price = df_current.iloc[-1]['close']
                                     
-                                    if direction == 'bearish' and current_price > crt_zone['invalidation_level']:
-                                        self.logger.info(f"❌ CRT invalidated in {tf}: Price {current_price:.5f} > invalidation {crt_zone['invalidation_level']:.5f}")
+                                    if (shared_state['direction'] == 'bearish' and 
+                                        current_price > crt_zone['invalidation_level']):
+                                        self.logger.info(
+                                            f"❌ CRT invalidated in {tf}: "
+                                            f"Price {current_price:.5f} > invalidation {crt_zone['invalidation_level']:.5f}"
+                                        )
                                         break
-                                    elif direction == 'bullish' and current_price < crt_zone['invalidation_level']:
-                                        self.logger.info(f"❌ CRT invalidated in {tf}: Price {current_price:.5f} < invalidation {crt_zone['invalidation_level']:.5f}")
+                                    elif (shared_state['direction'] == 'bullish' and 
+                                          current_price < crt_zone['invalidation_level']):
+                                        self.logger.info(
+                                            f"❌ CRT invalidated in {tf}: "
+                                            f"Price {current_price:.5f} < invalidation {crt_zone['invalidation_level']:.5f}"
+                                        )
                                         break
                         
-                        # Wait for this specific timeframe
+                        # 2. Wait for this specific timeframe's candle
                         self.logger.info(f"⏰ {tf}: Waiting for candle close...")
-                        self.wait_for_candle_open(tf)
-                        
-                        # Add small buffer for API data
-                        time.sleep(1)
-                        
-                        # Fetch data
-                        df = fetch_candles(instrument, tf, count=10, api_key=self.credentials['oanda_api_key'])
-                        
-                        if df.empty or len(df) < 2:
+                        if not self.wait_for_candle_open(tf):
+                            self.logger.warning(f"⚠️ {tf}: Could not wait for candle open, continuing...")
+                            time.sleep(1)
                             continue
                         
-                        # Get the last CLOSED candle (index -2)
+                        # 3. Add small buffer for API data
+                        time.sleep(1)
+                        self.logger.info(f"✅ {tf}: Candle should be available, fetching data...")
+                        
+                        # 4. Fetch data after candle close
+                        df = fetch_candles(
+                            shared_state['instrument'], 
+                            tf, 
+                            count=10, 
+                            api_key=self.credentials['oanda_api_key']
+                        )
+                        
+                        if df.empty or len(df) < 2:
+                            time.sleep(1)
+                            continue
+                        
+                        # 5. Get the last CLOSED candle (index -2)
                         closed_candle = df.iloc[-2]
                         candle_key = f"{tf}_{closed_candle['time']}"
                         
-                        if candle_key in scanned_candles:
+                        if candle_key in tf_scanned_candles:
+                            time.sleep(1)
                             continue
                         
-                        scanned_candles.add(candle_key)
+                        tf_scanned_candles.add(candle_key)
                         
-                        # DEBUG: Log candle details
-                        self.logger.info(f"📊 {tf}: Candle time: {closed_candle['time']}")
-                        self.logger.info(f"   Prices: O:{closed_candle['open']:.5f} H:{closed_candle['high']:.5f} L:{closed_candle['low']:.5f} C:{closed_candle['close']:.5f}")
-                        self.logger.info(f"   Direction: {direction}")
+                        # 6. DEBUG: Log candle details
+                        self.logger.info(f"📊 {tf}: Scanning at {datetime.now(NY_TZ).strftime('%H:%M:%S')}")
+                        self.logger.info(f"   Candle time: {closed_candle['time']}")
+                        self.logger.info(f"   Prices: O:{closed_candle['open']:.5f} H:{closed_candle['high']:.5f} "
+                                       f"L:{closed_candle['low']:.5f} C:{closed_candle['close']:.5f}")
+                        self.logger.info(f"   Direction: {shared_state['direction']}")
                         
-                        # Check hammer pattern
-                        is_hammer, upper_ratio, lower_ratio = self.is_hammer_candle(closed_candle, direction)
+                        # 7. Check hammer pattern
+                        is_hammer, upper_ratio, lower_ratio = self.is_hammer_candle(
+                            closed_candle, 
+                            shared_state['direction']
+                        )
                         self.logger.info(f"   Hammer check: {is_hammer}")
                         self.logger.info(f"   Wick ratios: upper={upper_ratio:.2f}, lower={lower_ratio:.2f}")
                         
                         if is_hammer:
                             self.logger.info(f"✅ {tf}: HAMMER DETECTED! Checking if in zone...")
-                            self.log_detailed_candle_analysis(closed_candle, tf, direction)
+                            self.log_detailed_candle_analysis(closed_candle, tf, shared_state['direction'])
                         
-                        # Check if candle is in Fibonacci zone
+                        # 8. Check if candle is in Fibonacci zone
                         candle_price = closed_candle['close']
                         in_zone = False
                         target_zone = None
                         
-                        for zone in fib_zones:
-                            if direction == 'bearish':
+                        for zone in shared_state['fib_zones']:
+                            if shared_state['direction'] == 'bearish':
                                 if zone['low'] <= candle_price <= zone['high']:
                                     in_zone = True
                                     target_zone = zone
@@ -5564,32 +5606,44 @@ class HammerPatternScanner:
                         
                         if not in_zone:
                             self.logger.debug(f"❌ {tf}: Candle not in Fibonacci zone: {candle_price:.5f}")
+                            time.sleep(1)
                             continue
                         
+                        # 9. If hammer AND in zone, process it
                         if is_hammer:
                             self.logger.info(f"✅ {tf}: HAMMER FOUND in Fibonacci zone!")
                             self.logger.info(f"   Timeframe: {tf}, Time: {closed_candle['time']}")
-                            self.logger.info(f"   Price: {candle_price:.5f}, Zone: {target_zone['ratio'] if target_zone else 'N/A'}")
+                            self.logger.info(f"   Price: {candle_price:.5f}, "
+                                           f"Zone: {target_zone['ratio'] if target_zone else 'N/A'}")
                             self.logger.info(f"   Wick ratios: upper={upper_ratio:.2f}, lower={lower_ratio:.2f}")
                             
-                            with lock:
-                                hammer_count += 1
+                            # 10. Process and record hammer with thread safety
+                            with shared_state['lock']:
+                                shared_state['hammer_count'] += 1
+                                current_hammer_count = shared_state['hammer_count']
                             
-                            # Process and record hammer
                             success = self._process_and_record_hammer(
-                                instrument, tf, closed_candle, direction,
-                                criteria, signal_data, signal_id, trigger_data
+                                shared_state['instrument'], 
+                                tf, 
+                                closed_candle, 
+                                shared_state['direction'],
+                                shared_state['criteria'], 
+                                shared_state['signal_data'], 
+                                shared_state['signal_id'], 
+                                shared_state['trigger_data']
                             )
                             
                             if success:
-                                self.logger.info(f"✅ {tf}: Trade #{hammer_count} processed successfully")
+                                self.logger.info(f"✅ {tf}: Trade #{current_hammer_count} processed successfully")
                             
                             # Continue scanning for more hammers in this timeframe
                             # (Don't break, keep looking for more)
                         
-                        # Small pause to avoid API rate limits
+                        # Small pause to avoid API rate limits and excessive CPU
                         time.sleep(1)
                         
+                    self.logger.info(f"⏰ {tf} scanner thread completed")
+                    
                 except Exception as e:
                     self.logger.error(f"❌ Error in {tf} scanner thread: {str(e)}", exc_info=True)
             
@@ -5604,24 +5658,35 @@ class HammerPatternScanner:
                 )
                 thread.start()
                 threads.append(thread)
+                self.logger.info(f"🚀 Started {tf} scanner thread")
             
-            # Wait for scan duration or until interrupted
+            # Main thread waits for scan duration or until interrupted
             try:
                 # Calculate total seconds to wait
-                total_seconds = (scan_end - datetime.now(NY_TZ)).total_seconds()
+                total_seconds = (shared_state['scan_end'] - datetime.now(NY_TZ)).total_seconds()
                 if total_seconds > 0:
                     self.logger.info(f"⏰ Main thread waiting {total_seconds:.0f}s for scan completion...")
                     time.sleep(total_seconds)
+                else:
+                    self.logger.warning(f"⚠️ Scan duration has already passed")
             except KeyboardInterrupt:
                 self.logger.info(f"🛑 Scan interrupted for {instrument}")
+            except Exception as e:
+                self.logger.error(f"❌ Error in main thread wait: {str(e)}")
             
             # Wait for all threads to finish (they should finish when scan_end is reached)
             for thread in threads:
                 thread.join(timeout=5)  # Wait up to 5 seconds for each thread
+                self.logger.info(f"✓ {thread.name} joined")
             
-            self.logger.info(f"✅ Concurrent scan completed. Found {hammer_count} hammers.")
+            total_hammers = shared_state['hammer_count']
+            self.logger.info(f"✅ CONCURRENT scan completed. Found {total_hammers} hammers.")
             
-            if hammer_count > 0:
+            # Log summary of scanned candles
+            for tf, candles in shared_state['scanned_candles'].items():
+                self.logger.info(f"📊 {tf}: Scanned {len(candles)} candles")
+            
+            if total_hammers > 0:
                 return True
             
             return False
@@ -5644,12 +5709,8 @@ class HammerPatternScanner:
             upper_ratio = upper_wick / total_range if total_range > 0 else 0
             lower_ratio = lower_wick / total_range if total_range > 0 else 0
             
-            # For gold, calculate pips
-            pip_multiplier = 100  # Gold uses 2 decimal places
-            range_pips = total_range * pip_multiplier
-            
             self.logger.info(f"📊 DETAILED CANDLE ANALYSIS ({timeframe}, {direction}):")
-            self.logger.info(f"   Total range: {total_range:.5f} ({range_pips:.1f} pips)")
+            self.logger.info(f"   Total range: {total_range:.5f}")
             self.logger.info(f"   Upper wick: {upper_wick:.5f} ({upper_ratio:.1%})")
             self.logger.info(f"   Lower wick: {lower_wick:.5f} ({lower_ratio:.1%})")
             
