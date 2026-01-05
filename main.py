@@ -9678,17 +9678,27 @@ class UltimateTradingSystem:
 # ================================
 
 class UltimateTradingManager:
-    def __init__(self, api_key, telegram_token, chat_id):
+    def __init__(self, api_key, telegram_token, chat_id, news_data=None, news_calendar=None):
         self.api_key = api_key
         self.telegram_token = telegram_token
         self.chat_id = chat_id
+        self.news_data = news_data
+        self.news_calendar = news_calendar  # Store news calendar
         self.trading_systems = {}
         
+        # Initialize all trading systems WITH the news calendar
         for pair_group, pair_config in TRADING_PAIRS.items():
-            self.trading_systems[pair_group] = UltimateTradingSystem(pair_group, pair_config)
+            self.trading_systems[pair_group] = UltimateTradingSystem(
+                pair_group, 
+                pair_config,
+                telegram_token=telegram_token,
+                telegram_chat_id=chat_id,
+                news_calendar=news_calendar  # Pass it here
+            )
         
         logger.info(f"🎯 Initialized ULTIMATE trading manager with {len(self.trading_systems)} pair groups")
-        
+        if news_calendar:
+            logger.info(f"📰 News calendar integrated into all trading systems")
 
     def _format_ultimate_signal_message(self, signal):
         """Format ultimate signal for Telegram - NOW WITH TRIAD SUPPORT"""
@@ -9963,9 +9973,8 @@ async def main():
         logger.warning("⚠️ RapidAPI key missing. News features disabled.")
         global_news_data = {}
     
-    # === PASS THE DATA/CALENDAR TO MANAGER ===
+    # === PASS BOTH NEWS DATA AND NEWS CALENDAR ===
     try:
-        # Initialize the manager with news data AND the calendar
         manager = UltimateTradingManager(
             api_key, 
             telegram_token, 
@@ -9973,13 +9982,6 @@ async def main():
             news_data=global_news_data,
             news_calendar=news_calendar  # Pass the calendar object too
         )
-        
-        # Update all hammer scanners to use the news calendar
-        for pair_group, system in manager.trading_systems.items():
-            if hasattr(system, 'hammer_scanner'):
-                system.hammer_scanner.news_calendar = news_calendar
-                system.hammer_scanner.start()
-                logger.info(f"✅ Hammer scanner updated with news calendar for {pair_group}")
         
         await manager.run_ultimate_systems()
         
@@ -9994,3 +9996,6 @@ async def main():
         import traceback
         logger.error(traceback.format_exc())
         sys.exit(1)
+
+if __name__ == "__main__":
+    asyncio.run(main())
