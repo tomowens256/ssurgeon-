@@ -10162,14 +10162,13 @@ def quick_hammer_test():
 # ================================
 
 async def main():
-    """Main entry point"""
+    """Main entry point - FIXED NEWS CALENDAR ISSUE"""
     logger.info("HEY TOM'S SNIPER JUST WOKE UP")
     
     api_key = os.getenv('OANDA_API_KEY')
     telegram_token = os.getenv('TELEGRAM_BOT_TOKEN')
     telegram_chat_id = os.getenv('TELEGRAM_CHAT_ID')
     rapidapi_key = os.getenv('rapidapi_key')
-    logger.info(f"RapidAPI Key found: {'Yes' if rapidapi_key else 'No'}")
     
     if not all([api_key, telegram_token, telegram_chat_id]):
         logger.error("❌ Missing required environment variables")
@@ -10180,41 +10179,52 @@ async def main():
     global_news_data = {}
     
     if rapidapi_key:
-        news_calendar = NewsCalendar(rapidapi_key=rapidapi_key,
-                                      base_path='/content/drive/MyDrive',
-                                      logger=logger)
-        # This line makes the single API call for the day
+        logger.info("📰 Initializing News Calendar...")
+        news_calendar = NewsCalendar(
+            rapidapi_key=rapidapi_key,
+            base_path='/content/drive/MyDrive',
+            logger=logger
+        )
+        
+        # ========== CRITICAL FIX ==========
+        # Make the API call and ensure cache is created
+        logger.info("📰 Fetching daily news (this makes the API call)...")
         global_news_data = news_calendar.get_daily_news()
-        logger.info(f"📰 News Calendar initialized. Cache at: {news_calendar.cache_dir}")
+        
+        # Verify the cache was created
+        today_str = datetime.now(NY_TZ).strftime('%Y-%m-%d')
+        expected_cache_file = f"{news_calendar.cache_dir}/news_cache_{today_str}.json"
+        
+        if os.path.exists(expected_cache_file):
+            logger.info(f"✅ News cache created: {expected_cache_file}")
+            with open(expected_cache_file, 'r') as f:
+                cache_data = json.load(f)
+            event_count = len(cache_data.get('events', []))
+            logger.info(f"📰 Cache contains {event_count} events")
+        else:
+            logger.error(f"❌ FAILED: News cache not created at {expected_cache_file}")
+            if 'error' in global_news_data:
+                logger.error(f"❌ API Error: {global_news_data['error']}")
+        # ========== END FIX ==========
+        
     else:
         logger.warning("⚠️ RapidAPI key missing. News features disabled.")
     
-    # === PASS BOTH NEWS DATA AND CALENDAR ===
+    # === PASS TO MANAGER ===
     try:
+        # Create the manager - pass news_calendar as well
         manager = UltimateTradingManager(
-            api_key, 
-            telegram_token, 
-            telegram_chat_id, 
-            news_data=global_news_data,  # Pass the data
-            news_calendar=news_calendar   # Pass the calendar object too
+            api_key=api_key,
+            telegram_token=telegram_token,
+            chat_id=telegram_chat_id,
+            news_data=global_news_data,
+            news_calendar=news_calendar  # Pass the calendar object
         )
-        
-        # Verify news integration
-        if news_calendar:
-            logger.info(f"✅ News Calendar passed to manager: Yes")
-            # Check cache exists
-            today_str = datetime.now(NY_TZ).strftime('%Y-%m-%d')
-            cache_file = f"{news_calendar.cache_dir}/news_cache_{today_str}.json"
-            if os.path.exists(cache_file):
-                logger.info(f"✅ News cache file exists: {cache_file}")
-            else:
-                logger.warning(f"⚠️ News cache file not found: {cache_file}")
         
         await manager.run_ultimate_systems()
         
     except KeyboardInterrupt:
         logger.info("🛑 System stopped by user")
-        # Stop all hammer scanners
         for pair_group, system in manager.trading_systems.items():
             if hasattr(system, 'hammer_scanner'):
                 system.hammer_scanner.stop()
