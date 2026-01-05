@@ -4705,13 +4705,14 @@ class HammerPatternScanner:
         self.news_calendar = news_calendar
         
         # Get cache directory from news calendar or set default
+        # If news_calendar is provided, use its cache directory
         if news_calendar and hasattr(news_calendar, 'cache_dir'):
             self.news_cache_dir = news_calendar.cache_dir
             self.logger.info(f"📰 Using News Calendar cache directory: {self.news_cache_dir}")
         else:
-            self.news_cache_dir = '/content/drive/MyDrive/news_data/cache'
-            self.logger.warning(f"⚠️ News Calendar not provided, using default cache: {self.news_cache_dir}")
-        
+            # Set a sensible default
+            self.news_cache_dir = '/content/drive/MyDrive'
+            self.logger.info(f"📁 Using default directory for news cache: {self.news_cache_dir}")
         
         # Timeframe alignment (keep existing)
         self.timeframe_alignment = {
