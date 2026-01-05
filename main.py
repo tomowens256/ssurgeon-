@@ -1535,6 +1535,37 @@ class UltimateSMTDetector:
                 if not (asset1_prev_high['time'] < asset1_curr_high['time'] and asset2_prev_high['time'] < asset2_curr_high['time']):
                     return None
     
+                # Create swings array for bearish case
+                swings = {
+                    'asset1_prev': {
+                        'time': asset1_prev_high['time'],
+                        'price': asset1_prev_high['price'],
+                        'type': 'high'
+                    },
+                    'asset1_curr': {
+                        'time': asset1_curr_high['time'],
+                        'price': asset1_curr_high['price'],
+                        'type': 'high'
+                    },
+                    'asset2_prev': {
+                        'time': asset2_prev_high['time'],
+                        'price': asset2_prev_high['price'],
+                        'type': 'high'
+                    },
+                    'asset2_curr': {
+                        'time': asset2_curr_high['time'],
+                        'price': asset2_curr_high['price'],
+                        'type': 'high'
+                    }
+                }
+    
+                swing_time_key = f"{asset1_prev_high['time'].strftime('%H%M')}_{asset1_curr_high['time'].strftime('%H%M')}"
+                swing_times = {
+                    'asset1_prev': asset1_prev_high['time'],
+                    'asset1_curr': asset1_curr_high['time'],
+                    'asset2_prev': asset2_prev_high['time'],
+                    'asset2_curr': asset2_curr_high['time']
+                }
             else:
                 direction = 'bullish'
                 smt_type = 'Lower Swing Low'
@@ -1553,15 +1584,30 @@ class UltimateSMTDetector:
                 if not (asset1_prev_low['time'] < asset1_curr_low['time'] and asset2_prev_low['time'] < asset2_curr_low['time']):
                     return None
     
-            if direction == 'bearish':
-                swing_time_key = f"{asset1_prev_high['time'].strftime('%H%M')}_{asset1_curr_high['time'].strftime('%H%M')}"
-                swing_times = {
-                    'asset1_prev': asset1_prev_high['time'],
-                    'asset1_curr': asset1_curr_high['time'],
-                    'asset2_prev': asset2_prev_high['time'],
-                    'asset2_curr': asset2_curr_high['time']
+                # Create swings array for bullish case
+                swings = {
+                    'asset1_prev': {
+                        'time': asset1_prev_low['time'],
+                        'price': asset1_prev_low['price'],
+                        'type': 'low'
+                    },
+                    'asset1_curr': {
+                        'time': asset1_curr_low['time'],
+                        'price': asset1_curr_low['price'],
+                        'type': 'low'
+                    },
+                    'asset2_prev': {
+                        'time': asset2_prev_low['time'],
+                        'price': asset2_prev_low['price'],
+                        'type': 'low'
+                    },
+                    'asset2_curr': {
+                        'time': asset2_curr_low['time'],
+                        'price': asset2_curr_low['price'],
+                        'type': 'low'
+                    }
                 }
-            else:
+    
                 swing_time_key = f"{asset1_prev_low['time'].strftime('%H%M')}_{asset1_curr_low['time'].strftime('%H%M')}"
                 swing_times = {
                     'asset1_prev': asset1_prev_low['time'],
@@ -1593,7 +1639,8 @@ class UltimateSMTDetector:
                 'critical_level': critical_level,
                 'timeframe': self.pair_config['timeframe_mapping'][cycle_type],
                 'swing_times': swing_times,
-                'candle_time': formation_time
+                'candle_time': formation_time,
+                'swings': swings  # Added swings array with price data
             }
     
             self.smt_history.append(smt_data)
