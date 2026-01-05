@@ -7129,11 +7129,11 @@ class UltimateTradingSystem:
             hammer_credentials,
             csv_base_path='/content/drive/MyDrive/hammer_trades',
             logger=logger,
-            news_calendar=news_calendar  # Pass it here!
+            news_calendar=news_calendar  # Pass it here
         )
         
-        # Start the hammer scanner
         self.hammer_scanner.start()
+        logger.info(f"🔨 Hammer scanner started for {pair_group}")
         
         if news_calendar:
             logger.info(f"🔨 Hammer scanner initialized WITH news calendar for {pair_group}")
