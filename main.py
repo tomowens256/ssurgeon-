@@ -3340,10 +3340,10 @@ class HybridTimingSystem:
             if config['next_scan']:
                 time_until = (config['next_scan'] - now).total_seconds()
                 if time_until > 0:
-                    next_scan_times.append(20)
+                    next_scan_times.append(time_until)
         
         if not next_scan_times:
-            return 20  # Default 1 minute
+            return 60  # Default 1 minute
         
         # Return the shortest time until next scan
         min_sleep = min(next_scan_times)
