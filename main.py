@@ -2284,11 +2284,19 @@ class UltimateSignalBuilder:
 # ================================
 
 class RealTimeFeatureBox:
-    def __init__(self, pair_group, timing_manager, telegram_token=None, telegram_chat_id=None):
+    def __init__(self, pair_group, timing_manager, telegram_token=None, telegram_chat_id=None, logger=None):
         self.pair_group = pair_group
         self.timing_manager = timing_manager
         self.telegram_token = telegram_token
         self.telegram_chat_id = telegram_chat_id
+        
+        # Set up logger
+        if logger:
+            self.logger = logger
+        else:
+            # Create a default logger
+            import logging
+            self.logger = logging.getLogger(f'FeatureBox_{pair_group}')
         
         self.active_features = {
             'smt': {},      
@@ -2319,6 +2327,8 @@ class RealTimeFeatureBox:
             'sd_zone': 2880,
             'tpd': 120,     
         }
+        
+        self.logger.info(f"📦 Feature Box initialized for {pair_group}")
     
     def add_smt(self, smt_data, psp_data):
         """Add SMT feature with cycle-based expiration"""
