@@ -7599,6 +7599,10 @@ class UltimateTradingSystem:
     def _scan_crt_smt_confluence(self):
         """Check CRT with SMT confluence (CRT on higher TF, SMT on lower TF)"""
         logger.info(f"🔷 SCANNING: CRT + SMT Confluence")
+
+        # First, cleanup expired features
+        if hasattr(self, 'feature_box') and self.feature_box:
+            self.feature_box.cleanup_expired_features()
         
         # CRT timeframes to check
         crt_timeframes = ['H4', 'H1']
