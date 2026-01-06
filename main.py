@@ -5375,6 +5375,103 @@ class HammerPatternScanner:
         except Exception as e:
             self.logger.error(f"Error calculating pips: {str(e)}")
             return 0
+
+    def get_pip_value_per_micro_lot(self, instrument, current_price=None):
+        """Get pip value in USD for 1 micro lot (1000 units) of instrument"""
+        try:
+            # Forex pairs
+            forex_usd_quote = ['EUR_USD', 'GBP_USD', 'AUD_USD', 'NZD_USD', 'USD_CAD', 'USD_CHF']
+            forex_jpy_quote = ['USD_JPY', 'EUR_JPY', 'GBP_JPY', 'AUD_JPY']
+            
+            # Indices - typically quoted in the native currency
+            indices_usd = ['NAS100_USD', 'SPX500_USD', 'US30', 'US500', 'USTEC']
+            indices_eur = ['DE30_EUR', 'EU50_EUR']
+            indices_gbp = ['UK100']
+            indices_aud = ['AUS200']
+            
+            # Metals
+            metals = ['XAU_USD', 'XAG_USD', 'XAU_JPY', 'XAU_EUR']
+            
+            # Get instrument type
+            if instrument in forex_usd_quote:
+                # Forex with USD quote: 1 pip = $0.10 per micro lot
+                return 0.10
+            elif instrument in forex_jpy_quote:
+                # Forex with JPY quote: 1 pip = ~$0.09 per micro lot (approximate)
+                # Actual value depends on USD/JPY rate, but we'll use approximation
+                return 0.09
+            elif instrument in indices_usd:
+                # USD indices: 1 point = $1 per contract, micro lot = 0.01 contracts
+                return 0.01  # Approximate
+            elif instrument in indices_eur:
+                # EUR indices: 1 point = €1 per contract
+                # Need EUR/USD rate for conversion
+                if current_price:
+                    return 0.01 * current_price  # Very approximate
+                return 0.011  # Approximate at 1.10 EUR/USD
+            elif instrument == 'UK100':
+                # UK100: 1 point = £1 per contract
+                return 0.013  # Approximate at 1.30 GBP/USD
+            elif instrument == 'AUS200':
+                # AUS200: 1 point = AUD 1 per contract
+                return 0.007  # Approximate at 0.70 AUD/USD
+            elif 'XAU' in instrument:
+                # Gold: 1 pip (0.01) = $0.10 per micro lot for XAU_USD
+                if '_USD' in instrument:
+                    return 0.10
+                elif '_JPY' in instrument:
+                    return 0.09  # Approximate
+                elif '_EUR' in instrument:
+                    return 0.11  # Approximate
+            elif 'XAG' in instrument:
+                # Silver: 1 pip (0.001) = $0.05 per micro lot (approximate)
+                return 0.05
+            
+            # Default for unknown instruments
+            return 0.10
+            
+        except Exception as e:
+            self.logger.error(f"Error getting pip value: {str(e)}")
+            return 0.10  # Safe default
+    
+    def calculate_position_sizes(self, instrument, sl_distance_pips, entry_price=None):
+        """Calculate position sizes for $10 and $100 risk"""
+        try:
+            # Get pip value for this instrument
+            pip_value = self.get_pip_value_per_micro_lot(instrument, entry_price)
+            
+            if sl_distance_pips <= 0:
+                self.logger.warning(f"Invalid SL distance: {sl_distance_pips} pips")
+                return 0, 0
+            
+            # Calculate risk per micro lot
+            risk_per_micro_lot = sl_distance_pips * pip_value
+            
+            # Calculate lots for $10 and $100 risk
+            # Formula: Lots = Risk Amount / (SL Pips × Pip Value per Micro Lot)
+            risk_10_lots = 10.0 / risk_per_micro_lot if risk_per_micro_lot > 0 else 0
+            risk_100_lots = 100.0 / risk_per_micro_lot if risk_per_micro_lot > 0 else 0
+            
+            # Round to 2 decimal places
+            risk_10_lots = round(risk_10_lots, 2)
+            risk_100_lots = round(risk_100_lots, 2)
+            
+            # Cap at reasonable maximum (100 micro lots = 0.1 standard lots)
+            risk_10_lots = min(risk_10_lots, 100.0)
+            risk_100_lots = min(risk_100_lots, 100.0)
+            
+            self.logger.info(f"📊 Position sizing for {instrument}:")
+            self.logger.info(f"   SL distance: {sl_distance_pips:.1f} pips")
+            self.logger.info(f"   Pip value: ${pip_value:.3f} per micro lot")
+            self.logger.info(f"   Risk per micro lot: ${risk_per_micro_lot:.2f}")
+            self.logger.info(f"   $10 risk: {risk_10_lots:.2f} micro lots")
+            self.logger.info(f"   $100 risk: {risk_100_lots:.2f} micro lots")
+            
+            return risk_10_lots, risk_100_lots
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating position sizes: {str(e)}")
+            return 0, 0
     
     def _get_crt_zones(self, trigger_data):
         """Calculate zones for CRT setups (different logic)"""
