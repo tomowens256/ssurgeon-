@@ -9563,16 +9563,25 @@ class UltimateTradingSystem:
 # ================================
 
 class UltimateTradingManager:
-    def __init__(self, api_key, telegram_token, chat_id):
+    def __init__(self, api_key, telegram_token, chat_id, news_calendar=None):  # ADD news_calendar parameter
         self.api_key = api_key
         self.telegram_token = telegram_token
         self.chat_id = chat_id
+        self.news_calendar = news_calendar  # Store the shared calendar
         self.trading_systems = {}
         
         for pair_group, pair_config in TRADING_PAIRS.items():
-            self.trading_systems[pair_group] = UltimateTradingSystem(pair_group, pair_config)
+            self.trading_systems[pair_group] = UltimateTradingSystem(
+                pair_group, 
+                pair_config,
+                news_calendar=self.news_calendar,  # PASS TO EACH SYSTEM
+                telegram_token=telegram_token,
+                telegram_chat_id=chat_id
+            )
         
         logger.info(f"🎯 Initialized ULTIMATE trading manager with {len(self.trading_systems)} pair groups")
+        if self.news_calendar:
+            logger.info(f"📰 Using shared News Calendar instance")
         
 
     def _format_ultimate_signal_message(self, signal):
