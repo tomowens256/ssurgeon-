@@ -7280,6 +7280,165 @@ class UltimateTradingSystem:
         logger.debug(f"Sleep calculation for {cycle_type}: calculated={calculated_sleep:.1f}s, max={max_sleep}s, final={final_sleep:.1f}s")
         return final_sleep
 
+    def _signals_are_very_similar(self, signal1, signal2):
+        """Check if two signals are VERY similar (same direction and cycle pattern)"""
+        # Extract direction
+        dir1 = "BULLISH" if "BULLISH" in signal1.upper() else "BEARISH" if "BEARISH" in signal1.upper() else None
+        dir2 = "BULLISH" if "BULLISH" in signal2.upper() else "BEARISH" if "BEARISH" in signal2.upper() else None
+        
+        # Must have same direction
+        if dir1 != dir2:
+            return False
+            
+        # Extract cycles
+        cycles1 = [cycle for cycle in ['MONTHLY', 'WEEKLY', 'DAILY', '90MIN'] if cycle in signal1.upper()]
+        cycles2 = [cycle for cycle in ['MONTHLY', 'WEEKLY', 'DAILY', '90MIN'] if cycle in signal2.upper()]
+        
+        # If both have same cycle composition, consider very similar
+        if cycles1 and cycles2 and set(cycles1) == set(cycles2):
+            return True
+            
+        return False
+    
+    def _clean_old_entries(self):
+        """Clean entries older than 48 hours"""
+        current_time = datetime.now(self.ny_tz)
+        for pair_group in list(self.sent_signals.keys()):
+            for signal_key in list(self.sent_signals[pair_group].keys()):
+                if (current_time - self.sent_signals[pair_group][signal_key]).total_seconds() > 172800:  # 48 hours
+                    del self.sent_signals[pair_group][signal_key]
+    
+    def validate_chronological_order(self, prev_time, curr_time):
+        """Validate that swing times are in correct chronological order"""
+        if prev_time and curr_time:
+            time_diff = (curr_time - prev_time).total_seconds()
+            is_valid = time_diff > 0
+            if not is_valid:
+                logger.warning(f"⚠️ NON-CHRONOLOGICAL SWINGS: {prev_time.strftime('%H:%M')} → {curr_time.strftime('%H:%M')} (diff: {time_diff/60:.1f} min)")
+            return is_valid
+        return True
+    
+    def is_psp_within_bounds(self, smt_formation_time, psp_formation_time, cycle_type):
+        """Check if PSP is within reasonable time of SMT formation"""
+        if not smt_formation_time or not psp_formation_time:
+            return False
+            
+        time_diff = abs((psp_formation_time - smt_formation_time).total_seconds() / 3600)  # hours
+        
+        # Maximum allowed time difference based on cycle
+        max_hours = {
+            'monthly': 24 * 3,  # 3 days
+            'weekly': 24 * 1,   # 1 day  
+            'daily': 1,         # 1hour
+            '90min': 0.3          # 30 minutes
+        }
+        
+        max_allowed = max_hours.get(cycle_type, 3)
+        is_within = time_diff <= max_allowed
+        
+        if not is_within:
+            logger.warning(f"⚠️ PSP TOO FAR FROM SMT: {time_diff:.1f}h > {max_allowed}h for {cycle_type}")
+            
+        return is_within
+    
+    def calculate_next_candle_time(self, timeframe):
+        """Calculate when the next candle will open for any timeframes"""
+        now = datetime.now(self.ny_tz)
+        
+        if timeframe.startswith('H'):
+            hours = int(timeframe[1:])
+            return self._calculate_next_htf_candle_time(hours)
+        elif timeframe.startswith('M'):
+            minutes = int(timeframe[1:])
+            return self._calculate_next_ltf_candle_time(minutes)
+        else:
+            return self._calculate_next_htf_candle_time(1)
+    
+    def _calculate_next_htf_candle_time(self, hours):
+        """Calculate next candle time for hourly timeframes"""
+        now = datetime.now(self.ny_tz)
+        
+        if hours == 1:
+            next_hour = now.hour + 1
+            if next_hour >= 24:
+                next_time = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+            else:
+                next_time = now.replace(hour=next_hour, minute=0, second=0, microsecond=0)
+                
+        elif hours == 4:
+            current_hour = now.hour
+            next_hour = ((current_hour // 4) * 4 + 4) % 24
+            if next_hour < current_hour:
+                next_time = now.replace(hour=next_hour, minute=0, second=0, microsecond=0) + timedelta(days=1)
+            else:
+                next_time = now.replace(hour=next_hour, minute=0, second=0, microsecond=0)
+                
+        else:
+            current_hour = now.hour
+            next_hour = ((current_hour // hours) * hours + hours) % 24
+            if next_hour < current_hour:
+                next_time = now.replace(hour=next_hour, minute=0, second=0, microsecond=0) + timedelta(days=1)
+            else:
+                next_time = now.replace(hour=next_hour, minute=0, second=0, microsecond=0)
+        
+        return next_time
+    
+    def _calculate_next_ltf_candle_time(self, minutes):
+        """Calculate next candle time for minute timeframes"""
+        now = datetime.now(self.ny_tz)
+        current_timestamp = now.timestamp()
+        next_candle_timestamp = (current_timestamp // (minutes * 60) + 1) * (minutes * 60)
+        return datetime.fromtimestamp(next_candle_timestamp, self.ny_tz)
+    
+    def get_sleep_time_for_cycle(self, cycle_type):
+        """Calculate sleep time until next candle for a specific cycle"""
+        timeframe = CYCLE_SLEEP_TIMEFRAMES.get(cycle_type)
+        if not timeframe:
+            return BASE_INTERVAL
+            
+        next_candle_time = self.calculate_next_candle_time(timeframe)
+        current_time = datetime.now(self.ny_tz)
+        
+        sleep_seconds = (next_candle_time - current_time).total_seconds() + CANDLE_BUFFER_SECONDS
+        
+        max_sleep_times = {
+            '90min': 300,
+            'daily': 300, 
+            'weekly': 300,
+            'monthly': 300
+        }
+        
+        max_sleep = max_sleep_times.get(cycle_type, 300)
+        calculated_sleep = max(MIN_INTERVAL, sleep_seconds)
+        
+        final_sleep = min(calculated_sleep, max_sleep)
+        
+        logger.debug(f"Sleep calculation for {cycle_type}: calculated={calculated_sleep:.1f}s, max={max_sleep}s, final={final_sleep:.1f}s")
+        return final_sleep
+    
+    def get_sleep_time_for_crt(self, crt_timeframe):
+        """Calculate sleep time until next CRT candle"""
+        next_candle_time = self.calculate_next_candle_time(crt_timeframe)
+        current_time = datetime.now(self.ny_tz)
+        
+        sleep_seconds = (next_candle_time - current_time).total_seconds() + CANDLE_BUFFER_SECONDS
+        
+        max_sleep = 900
+        
+        final_sleep = min(max(MIN_INTERVAL, sleep_seconds), max_sleep)
+        logger.debug(f"CRT sleep calculation: calculated={sleep_seconds:.1f}s, max={max_sleep}s, final={final_sleep:.1f}s")
+        return final_sleep
+    
+    def is_crt_fresh(self, crt_timestamp, max_age_minutes=50000):  # Increased increased to infinity since we seed more confluences
+        """Check if CRT signal is fresh - MORE LENIENT"""
+        if not crt_timestamp:
+            return False
+            
+        current_time = datetime.now(self.ny_tz)
+        age_seconds = (current_time - crt_timestamp).total_seconds()
+        
+        return age_seconds <= (max_age_minutes * 6000)
+
     def _cleanup_old_sd_zone_signals(self):
         """Remove old SD zone signals from tracking (7-day cleanup)"""
         if not hasattr(self, 'sd_zone_sent') or not self.sd_zone_sent:
