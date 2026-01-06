@@ -6284,20 +6284,21 @@ class HammerPatternScanner:
                 'time_to_exit_seconds': 0,
                 'tp_level_hit': 0,
                 # News data
+                
                 'news_context_json': json.dumps(news_context) if news_context else '',
-                'news_high_count': news_context.get('high_impact_count', 0),
-                'news_medium_count': news_context.get('medium_impact_count', 0),
-                'news_low_count': news_context.get('low_impact_count', 0),
-                'next_news_time': news_context.get('timing', {}).get('closest_future_event', {}).get('ny_time', ''),
-                'next_news_event': news_context.get('timing', {}).get('closest_future_event', {}).get('event', ''),
-                'next_news_currency': news_context.get('timing', {}).get('closest_future_event', {}).get('currency', ''),
-                'prev_news_time': news_context.get('timing', {}).get('closest_past_event', {}).get('ny_time', ''),
-                'prev_news_event': news_context.get('timing', {}).get('closest_past_event', {}).get('event', ''),
-                'prev_news_currency': news_context.get('timing', {}).get('closest_past_event', {}).get('currency', ''),
-                'seconds_to_next_news': news_context.get('timing', {}).get('seconds_to_next', ''),
-                'seconds_since_last_news': news_context.get('timing', {}).get('seconds_since_last', ''),
-                'news_timing_category': news_context.get('timing', {}).get('timing_category', ''),
-                'news_fetch_status': news_context.get('fetch_status', '')
+                'news_high_count': news_context.get('high_impact_count', 0) if news_context else 0,
+                'news_medium_count': news_context.get('medium_impact_count', 0) if news_context else 0,
+                'news_low_count': news_context.get('low_impact_count', 0) if news_context else 0,
+                'next_news_time': closest_future.get('ny_time', '') if closest_future else '',
+                'next_news_event': closest_future.get('event', '') if closest_future else '',
+                'next_news_currency': closest_future.get('currency', '') if closest_future else '',
+                'prev_news_time': closest_past.get('ny_time', '') if closest_past else '',
+                'prev_news_event': closest_past.get('event', '') if closest_past else '',
+                'prev_news_currency': closest_past.get('currency', '') if closest_past else '',
+                'seconds_to_next_news': timing_data.get('seconds_to_next', '') if timing_data else '',
+                'seconds_since_last_news': timing_data.get('seconds_since_last', '') if timing_data else '',
+                'news_timing_category': timing_data.get('timing_category', '') if timing_data else '',
+                'news_fetch_status': news_context.get('fetch_status', '') if news_context else ''
             }
             
             # Add advanced features
