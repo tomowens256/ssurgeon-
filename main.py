@@ -2356,9 +2356,16 @@ class RealTimeFeatureBox:
         
         self.active_features['smt'][signal_key] = feature
         
-        self.logger.info(f"📊 Added SMT feature {signal_key} with {cycle} cycle")
-        self.logger.info(f"   Formation: {formation_time.strftime('%Y-%m-%d %H:%M')}")
-        self.logger.info(f"   Expires in: {expiration_minutes} minutes ({expiration_minutes/60:.1f} hours)")
+        # SAFE LOGGING: Check if logger exists
+        if hasattr(self, 'logger'):
+            self.logger.info(f"📊 Added SMT feature {signal_key} with {cycle} cycle")
+            self.logger.info(f"   Formation: {formation_time.strftime('%Y-%m-%d %H:%M')}")
+            self.logger.info(f"   Expires in: {expiration_minutes} minutes ({expiration_minutes/60:.1f} hours)")
+        else:
+            # Fallback: print to console
+            print(f"[FeatureBox] Added SMT feature {signal_key} with {cycle} cycle")
+            print(f"[FeatureBox] Formation: {formation_time.strftime('%Y-%m-%d %H:%M')}")
+            print(f"[FeatureBox] Expires in: {expiration_minutes} minutes")
         
         return True
     
@@ -2494,7 +2501,11 @@ class RealTimeFeatureBox:
                 removed_count[feature_type] += 1
             
             if removed_count[feature_type] > 0:
-                self.logger.info(f"🧹 Removed {removed_count[feature_type]} expired {feature_type} features")
+                # SAFE LOGGING
+                if hasattr(self, 'logger'):
+                    self.logger.info(f"🧹 Removed {removed_count[feature_type]} expired {feature_type} features")
+                else:
+                    print(f"[FeatureBox] Removed {removed_count[feature_type]} expired {feature_type} features")
         
         return removed_count
     
