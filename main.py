@@ -5376,6 +5376,22 @@ class HammerPatternScanner:
             self.logger.error(f"Error calculating pips: {str(e)}")
             return 0
 
+    def _clean_string_for_csv(self, text):
+        """Clean string to avoid encoding issues in CSV"""
+        if not isinstance(text, str):
+            return str(text) if text is not None else ''
+        
+        # Replace problematic characters
+        text = text.replace('–', '-')  # en dash
+        text = text.replace('—', '-')  # em dash
+        text = text.replace('−', '-')  # minus sign
+        text = text.replace('―', '-')  # horizontal bar
+        
+        # Remove any non-ASCII characters
+        text = text.encode('ascii', 'ignore').decode('ascii')
+        
+        return text.strip()
+
     def get_pip_value_per_micro_lot(self, instrument, current_price=None):
         """Get pip value in USD for 1 micro lot (1000 units) of instrument"""
         try:
