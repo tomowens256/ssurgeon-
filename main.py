@@ -4736,14 +4736,14 @@ class HammerPatternScanner:
         # Timeframe alignment
         self.timeframe_alignment = {
             'XAU_USD': {
-                'FVG+SMT': {'M15': ['M1', 'M3', 'M5'], 'H1': ['M5', 'M15'], 'H4': ['M15']},
-                'SD+SMT': {'M15': ['M1', 'M3', 'M5'], 'H1': ['M5', 'M15'], 'H4': ['M15'], 'D': ['M15'], 'W': ['M15']},
-                'CRT+SMT': {'H1': ['M5', 'M15'], 'H4': ['M15']}
+                'FVG+SMT': {'M15': ['M1', 'M3', 'M5'], 'H1': ['M3','M5', 'M15'], 'H4': ['M5', 'M15']},
+                'SD+SMT': {'M15': ['M1', 'M3', 'M5'], 'H1': ['M5', 'M15'], 'H4': ['M5', 'M15'], 'D': ['M15'], 'W': ['M15']},
+                'CRT+SMT': {'H1': ['M5', 'M15'], 'H4': ['M5', 'M15']}
             },
             'default': {
-                'FVG+SMT': {'M15': ['M3', 'M5'], 'H1': ['M5', 'M15'], 'H4': ['M15']},
-                'SD+SMT': {'M15': ['M3', 'M5'], 'H1': ['M5', 'M15'], 'H4': ['M15'], 'D': ['M15'], 'W': ['M15']},
-                'CRT+SMT': {'H1': ['M5', 'M15'], 'H4': ['M15']}
+                'FVG+SMT': {'M15': ['M3', 'M5'], 'H1': ['M5', 'M15'], 'H4': ['M5', 'M15']},
+                'SD+SMT': {'M15': ['M3', 'M5'], 'H1': ['M5', 'M15'], 'H4': ['M5', 'M15'], 'D': ['M15'], 'W': ['M15']},
+                'CRT+SMT': {'H1': ['M5', 'M15'], 'H4': ['M5', 'M15']}
             }
         }
         
@@ -5949,42 +5949,32 @@ class HammerPatternScanner:
 
 
             # Get news context from the shared cache file
-            # ========== STEP 4: GET NEWS CONTEXT ==========
+            
             news_context = {}
             if hasattr(self, 'news_calendar') and self.news_calendar:
                 try:
-                    # Use the news calendar's method to get filtered news
-                    news_context = self.news_calendar.get_filtered_news_for_instrument(instrument)
+                    # CORRECT METHOD CALL: Use get_news_for_instrument() not get_filtered_news_for_instrument()
+                    news_context = self.news_calendar.get_news_for_instrument(instrument, current_time)
+                    
+                    # Log success
+                    self.logger.info(f"📰 Got news context for {instrument}: {news_context.get('event_count', 0)} events")
+                    
                 except Exception as e:
                     self.logger.error(f"❌ Error getting news from calendar: {e}")
                     news_context = {
                         'error': str(e),
                         'event_count': 0,
                         'high_impact_count': 0,
-                        'fetch_status': 'error'
-                    }
-            elif hasattr(self, 'news_cache_dir') and self.news_cache_dir:
-                try:
-                    today_str = datetime.now(NY_TZ).strftime('%Y-%m-%d')
-                    cache_file = f"{self.news_cache_dir}/news_cache_{today_str}.json"
-                    
-                    if os.path.exists(cache_file):
-                        with open(cache_file, 'r') as f:
-                            cached_news = json.load(f)
-                        # Process cached_news for your instrument
-                        news_context = self._filter_news_for_instrument(cached_news, instrument)
-                except Exception as e:
-                    self.logger.error(f"❌ Error reading news cache: {e}")
-                    news_context = {
-                        'error': str(e),
-                        'event_count': 0,
-                        'high_impact_count': 0,
+                        'medium_impact_count': 0,
+                        'low_impact_count': 0,
                         'fetch_status': 'error'
                     }
             else:
                 news_context = {
                     'event_count': 0,
                     'high_impact_count': 0,
+                    'medium_impact_count': 0,
+                    'low_impact_count': 0,
                     'fetch_status': 'disabled'
                 }
             # Calculate price levels
