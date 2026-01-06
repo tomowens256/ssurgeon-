@@ -7516,72 +7516,78 @@ class UltimateTradingSystem:
         return new_candles
     
     async def _fetch_all_data_parallel(self, api_key):
-        """Fetch data in parallel with PROVEN candle counts that WORKED"""
+        """Fetch data in parallel with different counts for different purposes"""
         tasks = []
         
-        # PROVEN CANDLE COUNTS FROM WORKING VERSION
-        proven_counts = {
-            # For SMT/CRT detection (keep these SHORT)
-            'H4': 40,   # Monthly timeframe - 40 candles (was working)
-            'H1': 40,   # Weekly timeframe - 40 candles (was working)  
-            'M15': 40,   # Daily timeframe - 40 candles (was working)
-            'M5': 40,    # 90min timeframe - 40 candles (was working)
-            
-            # For CRT only
-            'H1': 10, 'H4': 10,
-            
-            # For SD Zones ONLY - use MORE candles
-            'SD_H4': 100,  # For SD zones on H4
-            'SD_H1': 100,  # For SD zones on H1  
-            'SD_M15': 100, # For SD zones on M15
-            'SD_M5': 100,  # For SD zones on M5
+        # Define counts for different purposes
+        smt_counts = {
+            'H4': 40,   # Monthly
+            'H1': 40,   # Weekly  
+            'M15': 40,   # Daily
+            'M5': 40,    # 90min
         }
         
-        # Combine all required timeframes
-        required_timeframes = []
+        crt_counts = {
+            'H1': 10,
+            'H4': 10,
+        }
         
-        # 1. Add SMT/CRT timeframes (SHORT lookback)
-        for cycle in self.pair_config['timeframe_mapping'].values():
-            if cycle not in required_timeframes:
-                required_timeframes.append(cycle)
+        sd_counts = {
+            'M15': 101,
+            'H1': 101,
+            'H4': 101,
+            'D': 101,
+            'W': 101,
+            'M5': 101 if 'XAU_USD' in self.instruments else 0,
+        }
         
-        # 2. Add CRT timeframes
-        for tf in CRT_TIMEFRAMES:
-            if tf not in required_timeframes:
-                required_timeframes.append(tf)
-        
-        # 3. ADD SD Zone timeframes (LONG lookback - separate calls)
-        sd_timeframes = ['M15', 'H1', 'H4','D' , 'W']
-        if 'XAU_USD' in self.instruments:
-            sd_timeframes.append('M5')
+        # Get required timeframes from config
+        smt_timeframes = list(self.pair_config['timeframe_mapping'].values())
         
         # Create fetch tasks
         for instrument in self.instruments:
-            # FIRST: Fetch SHORT data for SMT/CRT
-            for tf in required_timeframes:
-                count = proven_counts.get(tf, 40)  # Default to 40
+            # 1. Fetch SMT data (40 candles)
+            for tf in smt_timeframes:
+                if tf in smt_counts:
+                    count = smt_counts[tf]
+                    task = asyncio.create_task(
+                        self._fetch_single_instrument_data(instrument, tf, count, api_key, purpose="SMT")
+                    )
+                    tasks.append(task)
+            
+            # 2. Fetch CRT data (10 candles)
+            for tf in crt_counts.keys():
+                count = crt_counts[tf]
                 task = asyncio.create_task(
-                    self._fetch_single_instrument_data(instrument, tf, count, api_key)
+                    self._fetch_single_instrument_data(instrument, tf, count, api_key, purpose="CRT")
                 )
                 tasks.append(task)
             
-            # THEN: Fetch LONG data for SD Zones (separate calls)
-            for tf in sd_timeframes:
-                count = 101  # 40 candles for SD zones
-                task = asyncio.create_task(
-                    self._fetch_single_instrument_data(instrument, tf, count, api_key)
-                )
-                tasks.append(task)
+            # 3. Fetch SD data (101 candles)
+            for tf, count in sd_counts.items():
+                if count > 0:  # Skip if count is 0
+                    task = asyncio.create_task(
+                        self._fetch_single_instrument_data(instrument, tf, count, api_key, purpose="SD")
+                    )
+                    tasks.append(task)
         
         # Wait for ALL data
         try:
-            await asyncio.wait_for(asyncio.gather(*tasks), timeout=45.0)
-            logger.info(f"✅ Parallel fetch: SHORT data for SMT/CRT, LONG data for SD zones")
+            results = await asyncio.wait_for(asyncio.gather(*tasks), timeout=45.0)
+            logger.info(f"✅ Parallel fetch complete for {self.pair_group}")
+            
+            # Debug: Count what we got
+            smt_count = sum(1 for r in results if r and "SMT" in str(r))
+            crt_count = sum(1 for r in results if r and "CRT" in str(r))
+            sd_count = sum(1 for r in results if r and "SD" in str(r))
+            
+            logger.info(f"   SMT fetches: {smt_count}, CRT fetches: {crt_count}, SD fetches: {sd_count}")
+            
         except asyncio.TimeoutError:
             logger.warning(f"⚠️ Parallel data fetch timeout for {self.pair_group}")
     
-    async def _fetch_single_instrument_data(self, instrument, timeframe, count, api_key):
-        """Fetch data for single instrument and convert to NY_TZ"""
+    async def _fetch_single_instrument_data(self, instrument, timeframe, count, api_key, purpose=""):
+        """Fetch data for single instrument with purpose tag"""
         try:
             from pytz import timezone
             NY_TZ = timezone('America/New_York')
@@ -7593,15 +7599,20 @@ class UltimateTradingSystem:
             if df is not None and isinstance(df, pd.DataFrame) and not df.empty:
                 # Convert timestamps to NY_TZ
                 if df['time'].dt.tz is None:
-                    # Assume UTC and convert to NY_TZ
                     df['time'] = df['time'].dt.tz_localize('UTC').dt.tz_convert(NY_TZ)
-                    # logger.debug(f"📅 Converted {instrument} {timeframe} to NY_TZ")
                 
-                self.market_data[instrument][timeframe] = df
+                # Store with purpose tag
+                key = f"{timeframe}_{purpose}" if purpose else timeframe
+                self.market_data[instrument][key] = df
+                
+                # Log the actual candle count
+                complete_candles = df[df['complete'] == True] if 'complete' in df.columns else df
+                logger.debug(f"📊 {instrument} {timeframe} {purpose}: {len(df)} candles, {len(complete_candles)} complete")
+                
                 return True
             return False
         except Exception as e:
-            logger.error(f"❌ Error fetching {instrument} {timeframe}: {str(e)}")
+            logger.error(f"❌ Error fetching {instrument} {timeframe} for {purpose}: {str(e)}")
             return False
 
     async def _fetch_single(self, inst: str, tf: str, count: int, since: datetime) -> None:
