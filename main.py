@@ -7654,8 +7654,17 @@ class UltimateTradingSystem:
             #if self._has_new_candle_data(timeframe):
             logger.info(f"🔍 Immediate scan: {cycle} cycle ({timeframe})")
                 
+            # In your SMT scanning code, use only the first 40 candles:
             asset1_data = self.market_data[self.instruments[0]].get(timeframe)
             asset2_data = self.market_data[self.instruments[1]].get(timeframe)
+            
+            if asset1_data is not None and len(asset1_data) > 40:
+                logger.warning(f"⚠️ {self.instruments[0]} {timeframe} has {len(asset1_data)} candles, using first 40 for SMT")
+                asset1_data = asset1_data.head(40)
+                
+            if asset2_data is not None and len(asset2_data) > 40:
+                logger.warning(f"⚠️ {self.instruments[1]} {timeframe} has {len(asset2_data)} candles, using first 40 for SMT")
+                asset2_data = asset2_data.head(40)
 
             logger.info(f"🔍 SMT Data Check - {self.instruments[0]} {timeframe}: "
                     f"{'Has data' if asset1_data is not None else 'NO DATA'}, "
