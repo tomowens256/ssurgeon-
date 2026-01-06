@@ -9707,46 +9707,47 @@ class UltimateTradingManager:
         return message
     
     async def run_ultimate_systems(self):
-        """Run all trading systems with ultimate decision making"""
-        logger.info("🎯 Starting ULTIMATE Multi-Pair Trading System...")
+        """Run all trading systems with ultimate decision making - CONCURRENT VERSION"""
+        logger.info("🎯 Starting CONCURRENT Multi-Pair Trading System...")
         
-        while True:
-            try:
-                tasks = []
-                sleep_times = []
-                
-                for pair_group, system in self.trading_systems.items():
-                    task = asyncio.create_task(
-                        system.run_ultimate_analysis(self.api_key),
-                        name=f"ultimate_analysis_{pair_group}"
-                    )
-                    tasks.append(task)
+        # Create and start all trading system tasks
+        tasks = {}
+        for pair_group, system in self.trading_systems.items():
+            task = asyncio.create_task(
+                self._run_system_continuously(system, pair_group),
+                name=f"system_{pair_group}"
+            )
+            tasks[pair_group] = task
+            logger.info(f"🚀 Started concurrent task for {pair_group}")
+        
+        # Wait for all tasks (they run forever until cancelled)
+        await asyncio.gather(*tasks.values())
+        
+        logger.info("🛑 All trading system tasks completed")
+    
+    async def _run_system_continuously(self, system, pair_group):
+        """Run a single trading system continuously with its own timing"""
+        try:
+            while True:
+                try:
+                    # Run analysis for this specific systemss
+                    await system.run_ultimate_analysis(self.api_key)
                     
-                    # FIXED: Use system.get_sleep_time() instead of get_sleep_time_for_cycle
-                    sleep_time = system.get_sleep_time()
-                    sleep_times.append(sleep_time)
-                
-                results = await asyncio.gather(*tasks, return_exceptions=True)
-                
-                signals = []
-                for i, result in enumerate(results):
-                    pair_group = list(self.trading_systems.keys())[i]
-                    if isinstance(result, Exception):
-                        logger.error(f"❌ Ultimate analysis task failed for {pair_group}: {str(result)}")
-                    elif result is not None:
-                        signals.append(result)
-                        logger.info(f"🎯 ULTIMATE SIGNAL FOUND for {pair_group}")
-                
-                if signals:
-                    await self._process_ultimate_signals(signals)
-                
-                sleep_time = min(sleep_times) if sleep_times else 60  # Default 60 seconds
-                logger.info(f"⏰ Ultimate cycle complete. Sleeping for {sleep_time:.1f} seconds")
-                await asyncio.sleep(sleep_time)
-                
-            except Exception as e:
-                logger.error(f"❌ Error in ultimate main loop: {str(e)}")
-                await asyncio.sleep(60)
+                    # Get sleep time specific to THIS system
+                    sleep_time = system.get_sleep_time()  # FIXED METHOD NAME
+                    
+                    logger.info(f"⏰ {pair_group}: Sleeping for {sleep_time:.1f}s")
+                    await asyncio.sleep(sleep_time)
+                    
+                except Exception as e:
+                    logger.error(f"❌ Error in {pair_group} system: {str(e)}")
+                    await asyncio.sleep(60)  # Error cooldown
+                    
+        except asyncio.CancelledError:
+            logger.info(f"🛑 {pair_group} task cancelled")
+            raise
+        except Exception as e:
+            logger.error(f"💥 Fatal error in {pair_group} task: {str(e)}")
     
     async def _process_ultimate_signals(self, signals):
         """Process and send ultimate signals to Telegram"""
