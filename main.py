@@ -6735,13 +6735,15 @@ class HammerPatternScanner:
 # ================================
 
 class UltimateTradingSystem:
-    def __init__(self, pair_group, pair_config, telegram_token=None, telegram_chat_id=None):
+    def __init__(self, pair_group, pair_config, news_calendar=None, telegram_token=None, telegram_chat_id=None):  
         # Store the parameters as instance variables
         self.pair_group = pair_group
         self.pair_config = pair_config
-        self.sd_detector = SupplyDemandDetector(min_zone_pct=0)  # 0.5% minimum zone
+        self.sd_detector = SupplyDemandDetector(min_zone_pct=0)
         self.volatile_pairs = ['XAU_USD']
         
+        # Store the shared news calendar
+        self.news_calendar = news_calendar
         
         # Handle Telegram credentials
         self.telegram_token = telegram_token
@@ -6749,13 +6751,12 @@ class UltimateTradingSystem:
         
         # BACKWARD COMPATIBLE: Handle both old and new structures
         if 'instruments' in pair_config:
-            self.instruments = pair_config['instruments']  # NEW structure
+            self.instruments = pair_config['instruments']
         else:
-            # OLD structure: convert pair1/pair2 to instruments list
             self.instruments = [pair_config['pair1'], pair_config['pair2']]
             logger.info(f"🔄 Converted old structure for {pair_group} to instruments: {self.instruments}")
         
-        # Initialize components - REORDERED!
+        # Initialize components
         self.timing_manager = RobustTimingManager()
         self.quarter_manager = RobustQuarterManager()
         
@@ -6770,7 +6771,7 @@ class UltimateTradingSystem:
         # THEN create detectors and connect FeatureBox
         self.smt_detector = UltimateSMTDetector(pair_config, self.timing_manager)
         self.crt_detector = RobustCRTDetector(self.timing_manager)
-        self.crt_detector.feature_box = self.feature_box  # ← NOW THIS WORKS!
+        self.crt_detector.feature_box = self.feature_box
         self.feature_box.sd_detector = self.sd_detector
         
         # Data storage for all instruments
@@ -6779,37 +6780,42 @@ class UltimateTradingSystem:
         logger.info(f"🎯 Initialized ULTIMATE trading system for {self.pair_group}: {', '.join(self.instruments)}")
         logger.info(f"🎯 FVG Analyzer initialized for {pair_group}")
         self.fvg_detector = FVGDetector(min_gap_pct=0.20)
-        self.fvg_smt_tap_sent = {}  # Track FVG+SMT tap signals sent
+        self.fvg_smt_tap_sent = {}
         self.crt_smt_ideas_sent = {}
-        self.sd_zone_sent = {}  # For Supply/Demand zone signals
-        self.sd_hp_sent = {}    # For High Probability SD zone signals    
+        self.sd_zone_sent = {}
+        self.sd_hp_sent = {}
         self.fvg_ideas_sent = {}
         self.double_smt_sent = {}
         self.hybrid_timing = HybridTimingSystem(pair_group)
         self.last_candle_scan = {}
-        # Cooldown periods (in seconds)
-        self.COOLDOWN_HOURS = 24 * 3600  # 24 hours
-        self.CLEANUP_DAYS = 7 * 24 * 3600  # Clean up after 7 days
+        self.COOLDOWN_HOURS = 24 * 3600
+        self.CLEANUP_DAYS = 7 * 24 * 3600
         self.timeframe_cycle_map = {
-                'H4': ['weekly', 'daily'],   # Monthly removed
-                'H1': ['daily'], 
-                'M15': ['daily', '90min']
-            }
-        # In UltimateTradingSystem.__init__
+            'H4': ['weekly', 'daily'],
+            'H1': ['daily'], 
+            'M15': ['daily', '90min']
+        }
+        
+        # Create hammer credentials
         hammer_credentials = {
             'telegram_token': telegram_token,
             'telegram_chat_id': telegram_chat_id,
             'oanda_api_key': os.getenv('OANDA_API_KEY')
         }
+        
+        # Pass the shared news calendar to hammer scanner
         self.hammer_scanner = HammerPatternScanner(
             hammer_credentials,
-            csv_base_path='/content/drive/MyDrive/hammer_trades',  # Just the base path, no extension
-            logger=logger
+            csv_base_path='/content/drive/MyDrive/hammer_trades',
+            logger=logger,
+            news_calendar=self.news_calendar  # PASS SHARED CALENDAR
         )
-        self.hammer_scanner = HammerPatternScanner(hammer_credentials)
-        self.hammer_scanner.start()
         
         logger.info(f"🔨 Hammer Pattern Scanner initialized for {pair_group}")
+        
+        # Start the hammer scanner if we have a news calendar
+        if self.news_calendar:
+            self.hammer_scanner.start()
         
     def get_sleep_time(self):
         """Use smart timing instead of fixed intervals"""
