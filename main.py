@@ -9849,26 +9849,42 @@ async def main():
         logger.info("💡 Please set OANDA_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID")
         return
     
+    # Create ONE NewsCalendar instance with 24-hour cache
     news_calendar = None
     if rapidapi_key:
-        news_calendar = NewsCalendar(rapidapi_key=rapidapi_key,
-                                      base_path='/content/drive/MyDrive',
-                                      logger=logger)
-        # This line makes the single API call for the day
-        global_news_data = news_calendar.get_daily_news()
+        news_calendar = NewsCalendar(
+            rapidapi_key=rapidapi_key,
+            base_path='/content/drive/MyDrive',
+            logger=logger,
+            cache_duration=86400  # 24 hours = 86400 seconds
+        )
+        
+        # Mark it as shared to prevent background fetches
+        news_calendar._is_shared = True
+        
+        # Fetch news ONCE at startup
+        logger.info("📰 Fetching news ONCE at startup...")
+        news_calendar.get_daily_news(force_fetch=True)  # Force fetch to get fresh data
+        
+        # Also fetch for today to ensure cache is created
+        today_str = datetime.now(pytz.timezone('America/New_York')).strftime('%Y-%m-%d')
+        news_calendar.fetch_news_data(today_str)
+        
+        logger.info(f"📰 News fetched and cached for today ({today_str})")
     else:
         logger.warning("⚠️ RapidAPI key missing. News features disabled.")
-        global_news_data = {}
     
-    # === PASS THE DATA/CALENDAR TO MANAGER ===
+    # === PASS THE CALENDAR TO MANAGER ===
     try:
-        # Initialize the manager with news data
-        manager = UltimateTradingManager(api_key, 
-                                         telegram_token, 
-                                         telegram_chat_id, 
-                                         news_data=global_news_data)
+        # Initialize the manager with the shared news calendar
+        manager = UltimateTradingManager(
+            api_key, 
+            telegram_token, 
+            telegram_chat_id, 
+            news_calendar=news_calendar  # PASS THE SHARED CALENDAR
+        )
         
-        # Make sure all hammer scanners in each trading system are started
+        # Make sure all hammer scanners are started
         logger.info("🔨 Starting all hammer scanners...")
         for pair_group, system in manager.trading_systems.items():
             if hasattr(system, 'hammer_scanner'):
