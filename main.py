@@ -2289,7 +2289,6 @@ class RealTimeFeatureBox:
         self.timing_manager = timing_manager
         self.telegram_token = telegram_token
         self.telegram_chat_id = telegram_chat_id
-        self.instruments = instruments or []
         
         self.active_features = {
             'smt': {},      
@@ -2304,6 +2303,15 @@ class RealTimeFeatureBox:
         self.sent_signal_signatures = {}  
         self.signature_expiry_hours = 24
         
+        # SMT CYCLE EXPIRATION TIMES (in minutes)
+        self.smt_cycle_expiration = {
+            '90min': 120,    # 2 hours = 120 minutes
+            'daily': 540,    # 9 hours = 540 minutes
+            'weekly': 1500,  # 25 hours = 1500 minutes
+            'monthly': 11520 # 8 days = 11520 minutes
+        }
+        
+        # Original expiration times for other features
         self.expiration_times = {
             'smt': 1200,    
             'crt': 120,     
@@ -2311,6 +2319,62 @@ class RealTimeFeatureBox:
             'sd_zone': 2880,
             'tpd': 120,     
         }
+    
+    def add_smt(self, smt_data, psp_data):
+        """Add SMT feature with cycle-based expiration"""
+        signal_key = smt_data.get('signal_key')
+        if signal_key in self.active_features['smt']:
+            return False
+        
+        # Get the expiration time based on SMT cycle
+        cycle = smt_data.get('cycle', 'daily')
+        expiration_minutes = self.smt_cycle_expiration.get(cycle, self.expiration_times['smt'])
+        
+        # Get the formation time from SMT data
+        formation_time = smt_data.get('formation_time', datetime.now(NY_TZ))
+        
+        feature = {
+            'type': 'smt',
+            'smt_data': smt_data,
+            'psp_data': psp_data,
+            'timestamp': datetime.now(NY_TZ),
+            'formation_time': formation_time,
+            'expiration': formation_time + timedelta(minutes=expiration_minutes),
+            'cycle': cycle,
+            'expiration_minutes': expiration_minutes
+        }
+        
+        self.active_features['smt'][signal_key] = feature
+        
+        self.logger.info(f"📊 Added SMT feature {signal_key} with {cycle} cycle")
+        self.logger.info(f"   Formation: {formation_time.strftime('%Y-%m-%d %H:%M')}")
+        self.logger.info(f"   Expires in: {expiration_minutes} minutes ({expiration_minutes/60:.1f} hours)")
+        
+        return True
+    
+    def _is_feature_expired(self, feature):
+        """Check if feature is expired based on its expiration time"""
+        current_time = datetime.now(NY_TZ)
+        
+        # For SMT features, also check if formation time is too old based on cycle
+        if feature.get('type') == 'smt':
+            cycle = feature.get('cycle', 'daily')
+            formation_time = feature.get('formation_time')
+            
+            if formation_time:
+                # Calculate age based on cycle
+                age_minutes = (current_time - formation_time).total_seconds() / 60
+                max_age = self.smt_cycle_expiration.get(cycle, 1200)  # Default 20 hours
+                
+                if age_minutes > max_age:
+                    return True
+        
+        # Check general expiration time
+        expiration = feature.get('expiration')
+        if expiration and current_time > expiration:
+            return True
+        
+        return False
     
     def add_sd_zone(self, zone_data):
         zone_name = zone_data['zone_name']
@@ -2367,41 +2431,62 @@ class RealTimeFeatureBox:
         for zone_name in zones_to_remove:
             del self.active_features['sd_zone'][zone_name]
     
-    def add_smt(self, smt_data, psp_data):
-        signal_key = smt_data.get('signal_key')
-        if signal_key in self.active_features['smt']:
-            return False
+    # def add_smt(self, smt_data, psp_data):
+    #     signal_key = smt_data.get('signal_key')
+    #     if signal_key in self.active_features['smt']:
+    #         return False
         
-        feature = {
-            'type': 'smt',
-            'smt_data': smt_data,
-            'psp_data': psp_data,
-            'timestamp': datetime.now(NY_TZ),
-            'expiration': datetime.now(NY_TZ) + timedelta(minutes=self.expiration_times['smt'])
-        }
+    #     feature = {
+    #         'type': 'smt',
+    #         'smt_data': smt_data,
+    #         'psp_data': psp_data,
+    #         'timestamp': datetime.now(NY_TZ),
+    #         'expiration': datetime.now(NY_TZ) + timedelta(minutes=self.expiration_times['smt'])
+    #     }
         
-        self.active_features['smt'][signal_key] = feature
-        return True
+    #     self.active_features['smt'][signal_key] = feature
+    #     return True
 
-    def _is_feature_expired(self, feature):
-        feature_type = feature.get('type')
-        creation_time = feature.get('timestamp')
+    # def _is_feature_expired(self, feature):
+    #     feature_type = feature.get('type')
+    #     creation_time = feature.get('timestamp')
         
-        if not creation_time:
-            return True
+    #     if not creation_time:
+    #         return True
         
-        expiry_hours = {
-            'smt': 10,    
-            'crt': 2,
-            'psp': 1
-        }
+    #     expiry_hours = {
+    #         'smt': 10,    
+    #         'crt': 2,
+    #         'psp': 1
+    #     }
         
-        current_time = datetime.now(NY_TZ)
-        hours_passed = (current_time - creation_time).total_seconds() / 3600
+    #     current_time = datetime.now(NY_TZ)
+    #     hours_passed = (current_time - creation_time).total_seconds() / 3600
         
-        expired = hours_passed > expiry_hours.get(feature_type, 1)
+    #     expired = hours_passed > expiry_hours.get(feature_type, 1)
         
-        return expired
+    #     return expired
+    def cleanup_expired_features(self):
+        """Remove all expired features from the active features"""
+        removed_count = {}
+        
+        for feature_type in self.active_features:
+            removed_count[feature_type] = 0
+            features_to_remove = []
+            
+            for feature_key, feature in self.active_features[feature_type].items():
+                if self._is_feature_expired(feature):
+                    features_to_remove.append(feature_key)
+            
+            # Remove expired features
+            for feature_key in features_to_remove:
+                del self.active_features[feature_type][feature_key]
+                removed_count[feature_type] += 1
+            
+            if removed_count[feature_type] > 0:
+                self.logger.info(f"🧹 Removed {removed_count[feature_type]} expired {feature_type} features")
+        
+        return removed_count
     
     def add_crt(self, crt_data, psp_data=None):
         if not crt_data:
