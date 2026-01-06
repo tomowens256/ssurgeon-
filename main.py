@@ -4842,21 +4842,21 @@ class HammerPatternScanner:
             # Check if file exists
             if not os.path.exists(self.csv_file_path):
                 # Create new file with headers
-                with open(self.csv_file_path, 'w', newline='') as f:
+                with open(self.csv_file_path, 'w', newline='', encoding='utf-8') as f:
                     writer = csv.writer(f)
                     writer.writerow(headers)
                 self.logger.info(f"📁 Created NEW CSV with {len(headers)} columns")
                 return
             
             # File exists - check and update headers
-            with open(self.csv_file_path, 'r', newline='') as f:
+            with open(self.csv_file_path, 'r', newline='', encoding='utf-8') as f:
                 try:
                     reader = csv.reader(f)
                     existing_headers = next(reader, None)
                     
                     # If file is empty, write headers
                     if existing_headers is None or len(existing_headers) == 0:
-                        with open(self.csv_file_path, 'w', newline='') as f2:
+                        with open(self.csv_file_path, 'w', newline='', encoding='utf-8') as f2:
                             writer = csv.writer(f2)
                             writer.writerow(headers)
                         self.logger.info(f"📁 File was empty, wrote {len(headers)} headers")
@@ -4878,7 +4878,7 @@ class HammerPatternScanner:
                     # Create backup of old file
                     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
                     backup_path = f"{self.csv_base_path}_backup_{timestamp}.csv"
-                    with open(backup_path, 'w', newline='') as backup:
+                    with open(backup_path, 'w', newline='', encoding='utf-8') as backup:
                         writer = csv.writer(backup)
                         writer.writerow(existing_headers)
                         for row in all_rows:
@@ -4893,7 +4893,7 @@ class HammerPatternScanner:
                             old_to_new[old_header] = old_header
                     
                     # Write new file with updated headers
-                    with open(self.csv_file_path, 'w', newline='') as f2:
+                    with open(self.csv_file_path, 'w', newline='', encoding='utf-8') as f2:
                         writer = csv.DictWriter(f2, fieldnames=headers)
                         writer.writeheader()
                         
