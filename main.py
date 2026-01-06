@@ -10055,12 +10055,10 @@ async def main():
     telegram_chat_id = os.getenv('TELEGRAM_CHAT_ID')
     rapidapi_key = os.getenv('rapidapi_key')
     
-    # ✅ LOG THE RAPIDAPI KEY STATUS
+    # ✅ CRITICAL DEBUG LOG
+    logger.info(f"🔍 DEBUG: RapidAPI key exists: {bool(rapidapi_key)}")
     if rapidapi_key:
-        logger.info(f"✅ RapidAPI key found: {rapidapi_key[:8]}...")  # Show first 8 chars
-    else:
-        logger.error("❌ NO RapidAPI key found in environment!")
-        logger.info("💡 Set it with: os.environ['rapidapi_key'] = 'your_key_here'")
+        logger.info(f"🔍 DEBUG: RapidAPI key length: {len(rapidapi_key)} chars")
     
     if not all([api_key, telegram_token, telegram_chat_id]):
         logger.error("❌ Missing required environment variables")
@@ -10068,73 +10066,82 @@ async def main():
         return
     
     news_calendar = None
+    global_news_data = {}
     
     if rapidapi_key:
         logger.info("📰 INITIALIZING NEWS CALENDAR...")
         try:
-            # ✅ CREATE NEWS CALENDAR
+            # ========== CRITICAL: Create NewsCalendar ==========
             news_calendar = NewsCalendar(
                 rapidapi_key=rapidapi_key,
                 base_path='/content/drive/MyDrive',
                 logger=logger
             )
-            logger.info(f"✅ News Calendar created: cache_dir={news_calendar.cache_dir}")
+            logger.info(f"✅ NewsCalendar created successfully")
+            logger.info(f"📦 NewsCalendar object: {news_calendar}")
+            logger.info(f"📁 Cache dir: {news_calendar.cache_dir}")
             
-            # ✅ FORCE FETCH TODAY'S NEWS
-            logger.info("📰 FORCE FETCHING TODAY'S NEWS...")
+            # ========== CRITICAL: Force API call ==========
+            logger.info("📡 FORCING API CALL TO GET NEWS...")
             today_str = datetime.now(news_calendar.ny_tz).strftime('%Y-%m-%d')
-            news_data = news_calendar.get_daily_news(force_fetch=True)  # Force API call
             
-            if 'error' in news_data:
-                logger.error(f"❌ News fetch failed: {news_data['error']}")
+            # Use get_daily_news with force_fetch to ensure API call
+            global_news_data = news_calendar.get_daily_news(force_fetch=True)
+            
+            if 'error' in global_news_data:
+                logger.error(f"❌ API call failed: {global_news_data['error']}")
             else:
-                event_count = len(news_data.get('events', []))
-                logger.info(f"✅ News fetched: {event_count} events for {today_str}")
+                event_count = len(global_news_data.get('events', []))
+                logger.info(f"✅ API call successful: {event_count} events fetched")
                 
-                # ✅ VERIFY CACHE WAS CREATED
+                # Verify cache file
                 cache_file = f"{news_calendar.cache_dir}/news_cache_{today_str}.json"
                 if os.path.exists(cache_file):
                     logger.info(f"✅ Cache file created: {cache_file}")
-                    # Read and log cache contents
-                    with open(cache_file, 'r') as f:
-                        cache_content = json.load(f)
-                    logger.info(f"📰 Cache has {len(cache_content.get('events', []))} events")
                 else:
-                    logger.error(f"❌ Cache file NOT created: {cache_file}")
+                    logger.error(f"❌ Cache file NOT created at: {cache_file}")
                     
         except Exception as e:
-            logger.error(f"❌ Failed to initialize News Calendar: {str(e)}")
+            logger.error(f"❌ Failed to initialize NewsCalendar: {str(e)}")
             import traceback
             logger.error(traceback.format_exc())
             news_calendar = None
     else:
-        logger.warning("⚠️ RapidAPI key missing. News features disabled.")
+        logger.error("❌ RAPIDAPI KEY IS EMPTY OR NOT SET!")
+        logger.info("💡 Check if os.environ['rapidapi_key'] is set correctly")
     
-    # ✅ DEBUG: Check if news_calendar exists
+    # ✅ DEBUG: Verify news_calendar before passing
     if news_calendar:
-        logger.info(f"✅ News Calendar ready to pass to manager")
-        logger.info(f"   Cache dir: {news_calendar.cache_dir}")
+        logger.info(f"✅ READY: news_calendar exists, passing to manager")
     else:
-        logger.warning("⚠️ NO News Calendar created - will pass None to manager")
+        logger.error(f"❌ FAILED: news_calendar is None, will not be passed")
     
     # === PASS TO MANAGER ===
     try:
-        # Create the manager - pass news_calendar
+        # Create the manager
         logger.info("🎯 Creating UltimateTradingManager...")
+        
+        # DEBUG: Log what we're passing
+        logger.info(f"🔍 Passing to manager:")
+        logger.info(f"  - api_key: {bool(api_key)}")
+        logger.info(f"  - telegram_token: {bool(telegram_token)}")
+        logger.info(f"  - chat_id: {bool(telegram_chat_id)}")
+        logger.info(f"  - news_calendar: {bool(news_calendar)}")
+        
         manager = UltimateTradingManager(
             api_key=api_key,
             telegram_token=telegram_token,
             chat_id=telegram_chat_id,
-            news_calendar=news_calendar  # This should NOT be None if rapidapi_key exists
+            news_calendar=news_calendar
         )
         
-        # ✅ DEBUG: Check what was passed
+        # DEBUG: Check what manager received
         logger.info(f"✅ Manager created")
         if manager.news_calendar:
-            logger.info(f"✅ Manager has News Calendar: {manager.news_calendar.cache_dir}")
+            logger.info(f"✅ Manager has News Calendar: {manager.news_calendar}")
         else:
-            logger.error("❌ Manager does NOT have News Calendar!")
-        
+            logger.error(f"❌ Manager does NOT have News Calendar!")
+            
         await manager.run_ultimate_systems()
         
     except KeyboardInterrupt:
