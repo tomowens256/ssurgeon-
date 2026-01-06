@@ -1631,7 +1631,7 @@ class UltimateSMTDetector:
                 'direction': direction,
                 'type': smt_type,
                 'cycle': cycle_type,
-                'quarters': f"{prev_q}→{curr_q}",
+                'quarters': f"{prev_q}-{curr_q}",
                 'prev_q': prev_q,
                 'curr_q': curr_q,
                 'timestamp': current_time,
