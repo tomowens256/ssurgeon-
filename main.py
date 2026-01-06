@@ -2395,26 +2395,7 @@ class RealTimeFeatureBox:
         
         return True
 
-    def validate_smt_freshness(self, smt_data):
-        """Validate if SMT is fresh enough to be added"""
-        signal_key = smt_data.get('signal_key')
-        cycle = smt_data.get('cycle', 'daily')
-        formation_time = smt_data.get('formation_time')
-        
-        if not formation_time:
-            self.logger.error(f"❌ SMT {signal_key} missing formation_time")
-            return False
-        
-        expiration_minutes = self.smt_cycle_expiration.get(cycle, self.expiration_times['smt'])
-        current_time = datetime.now(NY_TZ)
-        age_minutes = (current_time - formation_time).total_seconds() / 60
-        
-        if age_minutes > expiration_minutes:
-            self.logger.info(f"⏰ SMT {signal_key} REJECTED - Too old")
-            self.logger.info(f"   Cycle: {cycle}, Age: {age_minutes:.0f}min, Max: {expiration_minutes}min")
-            return False
-        
-        return True
+    
     
     def _is_feature_expired(self, feature):
         """Check if feature is expired based on its expiration time"""
@@ -2531,30 +2512,44 @@ class RealTimeFeatureBox:
         
     #     return expired
     def cleanup_expired_features(self):
-        """Remove all expired features from the active features"""
-        removed_count = {}
+        """Remove all expired features with detailed logging"""
+        removed_counts = {}
         
-        for feature_type in self.active_features:
-            removed_count[feature_type] = 0
+        for feature_type, features in self.active_features.items():
+            removed_counts[feature_type] = 0
             features_to_remove = []
             
-            for feature_key, feature in self.active_features[feature_type].items():
+            for feature_key, feature in features.items():
                 if self._is_feature_expired(feature):
                     features_to_remove.append(feature_key)
             
             # Remove expired features
             for feature_key in features_to_remove:
-                del self.active_features[feature_type][feature_key]
-                removed_count[feature_type] += 1
-            
-            if removed_count[feature_type] > 0:
-                # SAFE LOGGING
-                if hasattr(self, 'logger'):
-                    self.logger.info(f"🧹 Removed {removed_count[feature_type]} expired {feature_type} features")
+                feature = features[feature_key]
+                del features[feature_key]
+                removed_counts[feature_type] += 1
+                
+                # Detailed logging
+                if feature_type == 'smt':
+                    smt_data = feature.get('smt_data', {})
+                    signal_key = smt_data.get('signal_key', feature_key)
+                    formation_time = smt_data.get('formation_time')
+                    cycle = smt_data.get('cycle', 'unknown')
+                    
+                    if formation_time:
+                        age_hours = (datetime.now(NY_TZ) - formation_time).total_seconds() / 3600
+                        self.logger.info(f"🧹 REMOVED expired SMT: {signal_key}")
+                        self.logger.info(f"   Cycle: {cycle}, Age: {age_hours:.1f}h")
                 else:
-                    print(f"[FeatureBox] Removed {removed_count[feature_type]} expired {feature_type} features")
+                    self.logger.debug(f"🧹 Removed expired {feature_type}: {feature_key}")
         
-        return removed_count
+        # Log summary
+        total_removed = sum(removed_counts.values())
+        if total_removed > 0:
+            summary_parts = [f"{count} {ftype}" for ftype, count in removed_counts.items() if count > 0]
+            self.logger.info(f"🧹 Cleanup removed {total_removed} features: {', '.join(summary_parts)}")
+        
+        return removed_counts
     
     def add_crt(self, crt_data, psp_data=None):
         if not crt_data:
