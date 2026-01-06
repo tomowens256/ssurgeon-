@@ -3929,7 +3929,7 @@ class NewsCalendar:
         
         # 2. Fetch fresh data from API
         self.logger.info(f"📰 Fetching fresh news for {today_str}")
-        api_data = self._fetch_news_data()
+        api_data = self.fetch_news_data()
         
         # 3. Process and cache the new data
         if api_data and 'error' not in api_data:
