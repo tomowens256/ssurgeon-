@@ -4681,9 +4681,10 @@ class TimeframeScanner:
             return 0
 
 class HammerPatternScanner:
-    """Concurrent hammer pattern scanner with minimal features"""
-    
-    def __init__(self, credentials, csv_base_path='/content/drive/MyDrive/hammer_trades', logger=None):
+    def __init__(self, credentials, csv_base_path='/content/drive/MyDrive/hammer_trades', 
+                 logger=None, news_calendar=None):  # ADD news_calendar parameter
+        """Concurrent hammer pattern scanner with shared news calendar support"""
+        
         self.credentials = credentials
         self.running = False
         self.scanner_thread = None
@@ -4700,23 +4701,27 @@ class HammerPatternScanner:
         self.csv_file_path = f"{self.csv_base_path}.csv"
         self.init_csv_storage()
         
-        # Initialize NewsCalendar if RapidAPI key is available now
-        self.news_calendar = None
-        rapidapi_key = os.getenv('rapidapi_key')
-        if rapidapi_key:
-            try:
-                self.news_calendar = NewsCalendar(
-                    rapidapi_key=rapidapi_key,
-                    base_path='/content/drive/MyDrive',
-                    logger=self.logger
-                )
-                self.logger.info(f"📰 News Calendar initialized")
-            except Exception as e:
-                self.logger.error(f"❌ Failed to initialize News Calendar: {str(e)}")
+        # Use shared news calendar if provided, otherwise create one
+        self.news_calendar = news_calendar
+        if not self.news_calendar:
+            rapidapi_key = os.getenv('rapidapi_key')
+            if rapidapi_key:
+                try:
+                    self.news_calendar = NewsCalendar(
+                        rapidapi_key=rapidapi_key,
+                        base_path='/content/drive/MyDrive',
+                        logger=self.logger
+                    )
+                    self.logger.info(f"📰 News Calendar initialized (local instance)")
+                except Exception as e:
+                    self.logger.error(f"❌ Failed to initialize News Calendar: {str(e)}")
+            else:
+                self.logger.warning(f"⚠️ No RapidAPI key provided - News Calendar disabled")
         else:
-            self.logger.warning(f"⚠️ No RapidAPI key provided - News Calendar disabled")
+            self.logger.info(f"📰 Using shared News Calendar instance")
+            # Don't start background fetch for shared calendar - it's already managed elsewhere
         
-        # Timeframe alignment (keep existing)
+        # Timeframe alignment
         self.timeframe_alignment = {
             'XAU_USD': {
                 'FVG+SMT': {'M15': ['M1', 'M3', 'M5'], 'H1': ['M5', 'M15'], 'H4': ['M15']},
@@ -4732,6 +4737,18 @@ class HammerPatternScanner:
         
         self.logger.info(f"🔨 Streamlined Hammer Scanner initialized")
         self.logger.info(f"📁 CSV storage: {self.csv_file_path}")
+    
+    def start(self):
+        """Start the scanner - only start background fetch if using local calendar"""
+        self.running = True
+        
+        # Only start background news fetching if we have a local calendar
+        # (not a shared one)
+        if self.news_calendar and not hasattr(self.news_calendar, '_is_shared'):
+            self.start_news_background_fetch(interval_hours=24)  # Fetch once per day
+        
+        self.logger.info("🔨 Hammer Pattern Scanner started")
+        return True
     
     def init_csv_storage(self):
         """Initialize CSV file with NEW columns - FORCE UPDATE"""
