@@ -6996,24 +6996,28 @@ class UltimateTradingSystem:
         self.telegram_token = telegram_token
         self.telegram_chat_id = telegram_chat_id
         
+        # Set up instance logger
+        import logging
+        self.logger = logging.getLogger(f'UltimateTradingSystem.{pair_group}')
+        
         # BACKWARD COMPATIBLE: Handle both old and new structures
         if 'instruments' in pair_config:
             self.instruments = pair_config['instruments']
         else:
             self.instruments = [pair_config['pair1'], pair_config['pair2']]
-            logger.info(f"🔄 Converted old structure for {pair_group} to instruments: {self.instruments}")
+            self.logger.info(f"🔄 Converted old structure for {pair_group} to instruments: {self.instruments}")
         
         # Initialize components
         self.timing_manager = RobustTimingManager()
         self.quarter_manager = RobustQuarterManager()
         
-        # FIRST create FeatureBox
+        # FIRST create FeatureBox - NOW WITH THE LOGGER
         self.feature_box = RealTimeFeatureBox(
             self.pair_group, 
             self.timing_manager, 
             self.telegram_token, 
             self.telegram_chat_id,
-            logger=self.logger
+            logger=self.logger  # Now self.logger exists!
         )
         
         # THEN create detectors and connect FeatureBox
@@ -7025,8 +7029,8 @@ class UltimateTradingSystem:
         # Data storage for all instruments
         self.market_data = {inst: {} for inst in self.instruments}
         
-        logger.info(f"🎯 Initialized ULTIMATE trading system for {self.pair_group}: {', '.join(self.instruments)}")
-        logger.info(f"🎯 FVG Analyzer initialized for {pair_group}")
+        self.logger.info(f"🎯 Initialized ULTIMATE trading system for {self.pair_group}: {', '.join(self.instruments)}")
+        self.logger.info(f"🎯 FVG Analyzer initialized for {pair_group}")
         self.fvg_detector = FVGDetector(min_gap_pct=0.20)
         self.fvg_smt_tap_sent = {}
         self.crt_smt_ideas_sent = {}
