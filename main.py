@@ -10071,35 +10071,34 @@ async def main():
     if rapidapi_key:
         logger.info("📰 INITIALIZING NEWS CALENDAR...")
         try:
-            # ========== CRITICAL: Create NewsCalendar ==========
+            # ========== CRITICAL: Create and test NewsCalendar ==========
+            logger.info(f"Testing NewsCalendar with key: {rapidapi_key[:10]}...")
+            
             news_calendar = NewsCalendar(
                 rapidapi_key=rapidapi_key,
                 base_path='/content/drive/MyDrive',
                 logger=logger
             )
-            logger.info(f"✅ NewsCalendar created successfully")
-            logger.info(f"📦 NewsCalendar object: {news_calendar}")
-            logger.info(f"📁 Cache dir: {news_calendar.cache_dir}")
             
-            # ========== CRITICAL: Force API call ==========
-            logger.info("📡 FORCING API CALL TO GET NEWS...")
-            today_str = datetime.now(news_calendar.ny_tz).strftime('%Y-%m-%d')
+            logger.info("Calling get_daily_news(force_fetch=True)...")
+            news_data = news_calendar.get_daily_news(force_fetch=True)
             
-            # Use get_daily_news with force_fetch to ensure API call
-            global_news_data = news_calendar.get_daily_news(force_fetch=True)
-            
-            if 'error' in global_news_data:
-                logger.error(f"❌ API call failed: {global_news_data['error']}")
+            if 'error' in news_data:
+                logger.error(f"❌ Error: {news_data['error']}")
             else:
-                event_count = len(global_news_data.get('events', []))
-                logger.info(f"✅ API call successful: {event_count} events fetched")
+                event_count = len(news_data.get('events', []))
+                logger.info(f"✅ Success! Got {event_count} events")
                 
-                # Verify cache file
+                # Check cache file
+                today_str = datetime.now(news_calendar.ny_tz).strftime('%Y-%m-%d')
                 cache_file = f"{news_calendar.cache_dir}/news_cache_{today_str}.json"
+                logger.info(f"Cache file should be at: {cache_file}")
+                logger.info(f"Exists: {os.path.exists(cache_file)}")
+                
                 if os.path.exists(cache_file):
-                    logger.info(f"✅ Cache file created: {cache_file}")
+                    logger.info("✅ Cache file created successfully!")
                 else:
-                    logger.error(f"❌ Cache file NOT created at: {cache_file}")
+                    logger.error("❌ Cache file NOT created!")
                     
         except Exception as e:
             logger.error(f"❌ Failed to initialize NewsCalendar: {str(e)}")
@@ -10113,6 +10112,7 @@ async def main():
     # ✅ DEBUG: Verify news_calendar before passing
     if news_calendar:
         logger.info(f"✅ READY: news_calendar exists, passing to manager")
+        logger.info(f"   Cache dir: {news_calendar.cache_dir}")
     else:
         logger.error(f"❌ FAILED: news_calendar is None, will not be passed")
     
@@ -10138,7 +10138,7 @@ async def main():
         # DEBUG: Check what manager received
         logger.info(f"✅ Manager created")
         if manager.news_calendar:
-            logger.info(f"✅ Manager has News Calendar: {manager.news_calendar}")
+            logger.info(f"✅ Manager has News Calendar")
         else:
             logger.error(f"❌ Manager does NOT have News Calendar!")
             
