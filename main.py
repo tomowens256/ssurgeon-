@@ -9709,9 +9709,6 @@ class UltimateTradingManager:
     async def run_ultimate_systems(self):
         """Run all trading systems with ultimate decision making"""
         logger.info("🎯 Starting ULTIMATE Multi-Pair Trading System...")
-        test_proven_quarter_patch()
-        api_key = os.getenv('OANDA_API_KEY')
-        telegram_token = os.getenv('TELEGRAM_BOT_TOKEN')
         
         while True:
             try:
@@ -9725,8 +9722,8 @@ class UltimateTradingManager:
                     )
                     tasks.append(task)
                     
-                    # Get sleep time for the fastest cycle (usually '90min')
-                    sleep_time = system.get_sleep_time_for_cycle('90min')  # or whichever cycle type you want
+                    # FIXED: Use system.get_sleep_time() instead of get_sleep_time_for_cycle
+                    sleep_time = system.get_sleep_time()
                     sleep_times.append(sleep_time)
                 
                 results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -9743,7 +9740,7 @@ class UltimateTradingManager:
                 if signals:
                     await self._process_ultimate_signals(signals)
                 
-                sleep_time = min(sleep_times) if sleep_times else BASE_INTERVAL
+                sleep_time = min(sleep_times) if sleep_times else 60  # Default 60 seconds
                 logger.info(f"⏰ Ultimate cycle complete. Sleeping for {sleep_time:.1f} seconds")
                 await asyncio.sleep(sleep_time)
                 
