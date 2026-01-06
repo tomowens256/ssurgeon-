@@ -31,8 +31,8 @@ NY_TZ = ZoneInfo("America/New_York")
 
 TRADING_PAIRS = {
     'precious_metals': {
-        'pair1': 'XAU_USD',  # OLD structure (keep for cndnbompatibility)
-        'pair2': 'XAU_JPY',  # OLD structure (keep for chzvchompatibility)
+        'pair1': 'XAU_USD',  # OLD structure (keep for compatibility)
+        'pair2': 'XAU_JPY',  # OLD structure (keep for compatibility)
         'instruments': ['XAU_USD', 'XAU_JPY'],  # NEW structure
         'timeframe_mapping': {
             'monthly': 'H4',
@@ -259,19 +259,15 @@ def send_telegram(message, token=None, chat_id=None):
 
 def fetch_candles(instrument, timeframe, count=100, api_key=None, since=None):
     """Fetch candles from OANDA API - ENFORCE UTC-4, incremental since."""
-    
+   
     if not api_key:
         logger.error("Oanda API key missing")
         return pd.DataFrame()
-    
+       
     try:
         from oandapyV20 import API
         from oandapyV20.endpoints import instruments as instruments
-        import logging  # Ensure logging is imported
-        
         api = API(access_token=api_key, environment="practice")
-
-        logging.getLogger('oandapyV20.oandapyV20').setLevel(logging.WARNING)
     except Exception as e:
         logger.error(f"Oanda API initialization failed: {str(e)}")
         return pd.DataFrame()
@@ -523,7 +519,7 @@ class RobustTimingManager:
         return is_within
     
     def calculate_next_candle_time(self, timeframe):
-        """Calculate when the next candle will open for any timeframes"""
+        """Calculate when the next candle will open for any timeframe"""
         now = datetime.now(self.ny_tz)
         
         if timeframe.startswith('H'):
@@ -1539,37 +1535,6 @@ class UltimateSMTDetector:
                 if not (asset1_prev_high['time'] < asset1_curr_high['time'] and asset2_prev_high['time'] < asset2_curr_high['time']):
                     return None
     
-                # Create swings array for bearish case
-                swings = {
-                    'asset1_prev': {
-                        'time': asset1_prev_high['time'],
-                        'price': asset1_prev_high['price'],
-                        'type': 'high'
-                    },
-                    'asset1_curr': {
-                        'time': asset1_curr_high['time'],
-                        'price': asset1_curr_high['price'],
-                        'type': 'high'
-                    },
-                    'asset2_prev': {
-                        'time': asset2_prev_high['time'],
-                        'price': asset2_prev_high['price'],
-                        'type': 'high'
-                    },
-                    'asset2_curr': {
-                        'time': asset2_curr_high['time'],
-                        'price': asset2_curr_high['price'],
-                        'type': 'high'
-                    }
-                }
-    
-                swing_time_key = f"{asset1_prev_high['time'].strftime('%H%M')}_{asset1_curr_high['time'].strftime('%H%M')}"
-                swing_times = {
-                    'asset1_prev': asset1_prev_high['time'],
-                    'asset1_curr': asset1_curr_high['time'],
-                    'asset2_prev': asset2_prev_high['time'],
-                    'asset2_curr': asset2_curr_high['time']
-                }
             else:
                 direction = 'bullish'
                 smt_type = 'Lower Swing Low'
@@ -1588,30 +1553,15 @@ class UltimateSMTDetector:
                 if not (asset1_prev_low['time'] < asset1_curr_low['time'] and asset2_prev_low['time'] < asset2_curr_low['time']):
                     return None
     
-                # Create swings array for bullish case
-                swings = {
-                    'asset1_prev': {
-                        'time': asset1_prev_low['time'],
-                        'price': asset1_prev_low['price'],
-                        'type': 'low'
-                    },
-                    'asset1_curr': {
-                        'time': asset1_curr_low['time'],
-                        'price': asset1_curr_low['price'],
-                        'type': 'low'
-                    },
-                    'asset2_prev': {
-                        'time': asset2_prev_low['time'],
-                        'price': asset2_prev_low['price'],
-                        'type': 'low'
-                    },
-                    'asset2_curr': {
-                        'time': asset2_curr_low['time'],
-                        'price': asset2_curr_low['price'],
-                        'type': 'low'
-                    }
+            if direction == 'bearish':
+                swing_time_key = f"{asset1_prev_high['time'].strftime('%H%M')}_{asset1_curr_high['time'].strftime('%H%M')}"
+                swing_times = {
+                    'asset1_prev': asset1_prev_high['time'],
+                    'asset1_curr': asset1_curr_high['time'],
+                    'asset2_prev': asset2_prev_high['time'],
+                    'asset2_curr': asset2_curr_high['time']
                 }
-    
+            else:
                 swing_time_key = f"{asset1_prev_low['time'].strftime('%H%M')}_{asset1_curr_low['time'].strftime('%H%M')}"
                 swing_times = {
                     'asset1_prev': asset1_prev_low['time'],
@@ -1643,8 +1593,7 @@ class UltimateSMTDetector:
                 'critical_level': critical_level,
                 'timeframe': self.pair_config['timeframe_mapping'][cycle_type],
                 'swing_times': swing_times,
-                'candle_time': formation_time,
-                'swings': swings  # Added swings array with price data
+                'candle_time': formation_time
             }
     
             self.smt_history.append(smt_data)
@@ -3278,48 +3227,48 @@ class HybridTimingSystem:
         
         return False
     
-    # def _get_next_candle_close_time(self, timeframe):
-    #     """Calculate when the next candle will close"""
-    #     now = datetime.now(self.ny_tz)
+    def _get_next_candle_close_time(self, timeframe):
+        """Calculate when the next candle will close"""
+        now = datetime.now(self.ny_tz)
         
-    #     if timeframe == 'M5':
-    #         minutes_to_add = 5 - (now.minute % 5)
-    #         if minutes_to_add == 0:
-    #             minutes_to_add = 5
-    #         return now.replace(second=0, microsecond=0) + timedelta(minutes=minutes_to_add)
+        if timeframe == 'M5':
+            minutes_to_add = 5 - (now.minute % 5)
+            if minutes_to_add == 0:
+                minutes_to_add = 5
+            return now.replace(second=0, microsecond=0) + timedelta(minutes=minutes_to_add)
         
-    #     elif timeframe == 'M15':
-    #         minutes_to_add = 15 - (now.minute % 15)
-    #         if minutes_to_add == 0:
-    #             minutes_to_add = 15
-    #         return now.replace(second=0, microsecond=0) + timedelta(minutes=minutes_to_add)
+        elif timeframe == 'M15':
+            minutes_to_add = 15 - (now.minute % 15)
+            if minutes_to_add == 0:
+                minutes_to_add = 15
+            return now.replace(second=0, microsecond=0) + timedelta(minutes=minutes_to_add)
         
-    #     elif timeframe == 'H1':
-    #         next_hour = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
-    #         return next_hour
+        elif timeframe == 'H1':
+            next_hour = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+            return next_hour
         
-    #     elif timeframe == 'H4':
-    #         current_hour = now.hour
-    #         next_h4_hour = ((current_hour // 4) + 1) * 4
-    #         if next_h4_hour >= 24:
-    #             next_day = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
-    #             return next_day
-    #         else:
-    #             return now.replace(hour=next_h4_hour, minute=0, second=0, microsecond=0)
+        elif timeframe == 'H4':
+            current_hour = now.hour
+            next_h4_hour = ((current_hour // 4) + 1) * 4
+            if next_h4_hour >= 24:
+                next_day = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+                return next_day
+            else:
+                return now.replace(hour=next_h4_hour, minute=0, second=0, microsecond=0)
         
-    #     elif timeframe == 'D':
-    #         next_day = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
-    #         return next_day
+        elif timeframe == 'D':
+            next_day = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+            return next_day
         
-    #     elif timeframe == 'W':
-    #         # Next Sunday at 00:00 (assuming week starts Sunday)
-    #         days_ahead = 6 - now.weekday()  # 0=Monday, 6=Sunday
-    #         if days_ahead <= 0:
-    #             days_ahead += 7
-    #         next_sunday = now + timedelta(days=days_ahead)
-    #         return next_sunday.replace(hour=0, minute=0, second=0, microsecond=0)
+        elif timeframe == 'W':
+            # Next Sunday at 00:00 (assuming week starts Sunday)
+            days_ahead = 6 - now.weekday()  # 0=Monday, 6=Sunday
+            if days_ahead <= 0:
+                days_ahead += 7
+            next_sunday = now + timedelta(days=days_ahead)
+            return next_sunday.replace(hour=0, minute=0, second=0, microsecond=0)
         
-    #     return now + timedelta(minutes=5)  # Default
+        return now + timedelta(minutes=5)  # Default
     
     def get_timeframes_to_scan(self):
         """Get list of timeframes that should be scanned now"""
@@ -3856,17 +3805,11 @@ class SupplyDemandDetector:
 
 
 
+
 class NewsCalendar:
-    def __init__(self, rapidapi_key: str, base_path: str = '/content/drive/MyDrive', 
-                 logger=None, cache_duration: int = 43200):  # 43200 seconds = 12 hours
+    def __init__(self, rapidapi_key: str, base_path: str = '/content/drive/MyDrive', logger=None):
         """
         Initialize news calendar - WITH CACHE DIRECTORY SETUP
-        
-        Args:
-            rapidapi_key: Your RapidAPI key
-            base_path: Base directory path
-            logger: Optional logger instance
-            cache_duration: Cache duration in seconds (default: 43200 = 12 hours)
         """
         self.rapidapi_key = rapidapi_key
         self.base_path = base_path.rstrip('/')
@@ -3886,9 +3829,6 @@ class NewsCalendar:
         # === DEFINE CACHE DIRECTORY ATTRIBUTE ===
         self.cache_dir = f"{self.news_data_path}/cache"  # This fixes the error
         
-        # === SET CACHE DURATION TO 12 HOURS ===
-        self.cache_duration =43200 # cache_duration  # 43200 seconds = 12 hours
-        
         # Timezone setup
         self.utc_tz = pytz.UTC
         self.ny_tz = pytz.timezone('America/New_York')
@@ -3902,7 +3842,7 @@ class NewsCalendar:
         # Cache file for _get_from_cache/_save_to_cache methods
         self.cache_file = f"{self.cache_dir}/rapidapi_cache.json"
         
-        self.logger.info(f"📰 News Calendar initialized. Cache duration: {self.cache_duration//3600} hours")
+        self.logger.info(f"📰 News Calendar initialized. Cache: {self.cache_dir}")
 
     def get_daily_news(self, force_fetch: bool = False) -> Dict:
         """
@@ -3929,7 +3869,7 @@ class NewsCalendar:
         
         # 2. Fetch fresh data from API
         self.logger.info(f"📰 Fetching fresh news for {today_str}")
-        api_data = self.fetch_news_data(today_str)
+        api_data = self._fetch_from_api()
         
         # 3. Process and cache the new data
         if api_data and 'error' not in api_data:
@@ -3940,7 +3880,7 @@ class NewsCalendar:
                 try:
                     with open(cache_file, 'w') as f:
                         json.dump(processed_data, f, indent=2)
-                    self.logger.info(f"💾 News cached to {cache_file} (valid for {self.cache_duration//3600} hours)")
+                    self.logger.info(f"💾 News cached to {cache_file}")
                 except Exception as e:
                     self.logger.error(f"❌ Failed to write cache: {e}")
             
@@ -3983,10 +3923,10 @@ class NewsCalendar:
         
         cache_key = f"news_{date_str}"
         
-        # 1. Check cache first for PROCESSED data (valid for 12 hours)
+        # 1. Check cache first for PROCESSED data
         cached = self._get_from_cache(cache_key)
         if cached and 'events' in cached:
-            self.logger.info(f"📰 Using cached processed news for {date_str} (cache valid for {self.cache_duration//3600}h)")
+            self.logger.info(f"📰 Using cached processed news for {date_str}")
             return cached  # Return already-processed data
         
         try:
@@ -3999,6 +3939,8 @@ class NewsCalendar:
             }
             
             params = {
+                "timezone": "GMT+0",
+                "volatility": "NONE",  # Gets ALL volatility levels
                 "limit": "50"
             }
             
@@ -4013,7 +3955,7 @@ class NewsCalendar:
                 processed_data = self._process_raw_news(raw_api_response, date_str)
                 
                 # 5. Only cache if we have valid processed data
-                if processed_data.get("events"):
+                if 'events' in processed_data:
                     self._save_to_cache(cache_key, processed_data)
                     
                     # Save to processed CSV
@@ -4235,7 +4177,7 @@ class NewsCalendar:
             self.logger.error(f"❌ Error saving to CSV: {str(e)}")
     
     def _get_from_cache(self, key: str) -> Optional[Dict]:
-        """Get data from cache if valid (12 hours)"""
+        """Get data from cache if valid"""
         try:
             if os.path.exists(self.cache_file):
                 with open(self.cache_file, 'r') as f:
@@ -4245,14 +4187,12 @@ class NewsCalendar:
                     cached_item = cache_data[key]
                     cache_time = datetime.fromisoformat(cached_item['cache_time'])
                     
-                    # Check if cache is still valid (12 hours)
+                    # Check if cache is still valid
                     age_seconds = (datetime.now(self.ny_tz) - cache_time).total_seconds()
-                    if age_seconds < self.cache_duration:  # 12 hours
-                        self.logger.debug(f"📦 Cache hit for {key}, age: {age_seconds//3600}h {(age_seconds%3600)//60}m")
+                    if age_seconds < self.cache_duration:
                         return cached_item['data']
                     
-                    # Cache expired (older than 12 hours)
-                    self.logger.info(f"🕒 Cache expired for {key}, age: {age_seconds//3600}h")
+                    # Cache expired
                     del cache_data[key]
                     with open(self.cache_file, 'w') as f:
                         json.dump(cache_data, f)
@@ -4266,38 +4206,28 @@ class NewsCalendar:
     def _save_to_cache(self, key: str, data: Dict):
         """Save data to cache - ONLY IF SUCCESSFUL"""
         try:
-            # === Only cache if we have valid data with events ===
+            # === FIX: Only cache if we have valid data with events ===
             if 'error' in data or not data.get('events'):
                 self.logger.warning(f"⚠️ Not caching error/empty data for {key}")
                 return
-            
+            """Save data to cache"""
             cache_data = {}
             if os.path.exists(self.cache_file):
-                try:
-                    with open(self.cache_file, 'r') as f:
-                        cache_data = json.load(f)
-                except json.JSONDecodeError:
-                    self.logger.warning("⚠️ Cache file corrupted, starting fresh")
-                    cache_data = {}
+                with open(self.cache_file, 'r') as f:
+                    cache_data = json.load(f)
             
             cache_data[key] = {
                 'cache_time': datetime.now(self.ny_tz).isoformat(),
-                'data': data,
-                'expires_in_hours': self.cache_duration // 3600
+                'data': data
             }
             
-            # Limit cache size to 7 days worth of data
-            if len(cache_data) > 7:  # Keep last 7 days
-                # Sort by cache time and remove oldest
-                sorted_keys = sorted(cache_data.keys(), 
-                                   key=lambda k: cache_data[k]['cache_time'])
-                for old_key in sorted_keys[:-7]:
-                    del cache_data[old_key]
+            # Limit cache size
+            if len(cache_data) > 50:  # Keep last 50 entries
+                oldest_key = min(cache_data.keys(), key=lambda k: cache_data[k]['cache_time'])
+                del cache_data[oldest_key]
             
             with open(self.cache_file, 'w') as f:
                 json.dump(cache_data, f, indent=2)
-                
-            self.logger.debug(f"💾 Cached {key} (valid for {self.cache_duration//3600}h)")
                 
         except Exception as e:
             self.logger.warning(f"⚠️ Cache write error: {str(e)}")
@@ -4333,7 +4263,7 @@ class NewsCalendar:
             # Get today's date in NY time
             date_str = signal_time.strftime('%Y-%m-%d')
             
-            # Fetch or get cached news (uses 12-hour cache)
+            # Fetch or get cached news
             news_data = self.fetch_news_data(date_str)
             
             if 'error' in news_data and news_data['error']:
@@ -4366,11 +4296,7 @@ class NewsCalendar:
                 'events': relevant_events[:10],  # Limit to first 10 for JSON storage
                 'all_events_count': len(relevant_events),
                 'fetch_status': 'success',
-                'fetch_time': news_data.get('fetch_time', ''),
-                'cache_info': {
-                    'cache_duration_hours': self.cache_duration // 3600,
-                    'cache_used': 'yes' if news_data.get('from_cache') else 'no'
-                }
+                'fetch_time': news_data.get('fetch_time', '')
             }
             
             return context
@@ -4491,11 +4417,7 @@ class NewsCalendar:
             'all_events_count': 0,
             'fetch_status': 'error' if error else 'no_news',
             'error_message': error if error else '',
-            'fetch_time': datetime.now(self.ny_tz).isoformat(),
-            'cache_info': {
-                'cache_duration_hours': self.cache_duration // 3600,
-                'cache_used': 'no'
-            }
+            'fetch_time': datetime.now(self.ny_tz).isoformat()
         }
     
     def get_daily_summary(self, date_str: str = None) -> Dict:
@@ -4523,168 +4445,15 @@ class NewsCalendar:
             'status': 'success',
             'summary': news_data.get('summary', {}),
             'events_count': len(news_data.get('events', [])),
-            'fetch_time': news_data.get('fetch_time', ''),
-            'cache_info': f"Cache valid for {self.cache_duration//3600} hours"
+            'fetch_time': news_data.get('fetch_time', '')
         }
-    
-    def clear_cache(self, older_than_hours: int = None):
-        """Clear the cache (all or older than specified hours)"""
-        try:
-            if os.path.exists(self.cache_file):
-                if older_than_hours:
-                    # Clear only entries older than specified hours
-                    with open(self.cache_file, 'r') as f:
-                        cache_data = json.load(f)
-                    
-                    cutoff_time = datetime.now(self.ny_tz) - timedelta(hours=older_than_hours)
-                    keys_to_delete = []
-                    
-                    for key, value in cache_data.items():
-                        cache_time = datetime.fromisoformat(value['cache_time'])
-                        if cache_time < cutoff_time:
-                            keys_to_delete.append(key)
-                    
-                    for key in keys_to_delete:
-                        del cache_data[key]
-                    
-                    with open(self.cache_file, 'w') as f:
-                        json.dump(cache_data, f, indent=2)
-                    
-                    self.logger.info(f"🧹 Cleared {len(keys_to_delete)} cache entries older than {older_than_hours} hours")
-                else:
-                    # Clear entire cache
-                    os.remove(self.cache_file)
-                    self.logger.info("🧹 Cleared entire cache")
-            else:
-                self.logger.info("🧹 Cache file does not exist, nothing to clear")
-                
-        except Exception as e:
-            self.logger.error(f"❌ Error clearing cache: {str(e)}")
 
 
-class TimeframeScanner:
-    """Manages independent scanning for a specific timeframe"""
-    
-    def __init__(self, parent_scanner, instrument, tf, direction, zones, scan_duration, signal_data, criteria, signal_id, trigger_data):
-        self.parent = parent_scanner
-        self.instrument = instrument
-        self.timeframe = tf
-        self.direction = direction
-        self.zones = zones
-        self.scan_end = datetime.now(NY_TZ) + scan_duration
-        self.signal_data = signal_data
-        self.criteria = criteria
-        self.signal_id = signal_id
-        self.trigger_data = trigger_data
-        self.scanned_candles = set()
-        self.logger = parent_scanner.logger
-        self.hammer_count = 0
-        
-    def run(self):
-        """Run independent scan for this timeframe"""
-        try:
-            self.logger.info(f"🔍 Starting independent scan for {self.instrument} {self.timeframe}")
-            
-            while datetime.now(NY_TZ) < self.scan_end:
-                # Check for CRT invalidation
-                if self.criteria == 'CRT+SMT':
-                    crt_zone = self.zones[0] if self.zones else None
-                    if crt_zone and 'invalidation_level' in crt_zone:
-                        df_current = fetch_candles(self.instrument, 'M1', count=2, 
-                                                  api_key=self.parent.credentials['oanda_api_key'])
-                        if not df_current.empty:
-                            current_price = df_current.iloc[-1]['close']
-                            
-                            if self.direction == 'bearish' and current_price > crt_zone['invalidation_level']:
-                                self.logger.info(f"❌ CRT invalidated in {self.timeframe}")
-                                break
-                            elif self.direction == 'bullish' and current_price < crt_zone['invalidation_level']:
-                                self.logger.info(f"❌ CRT invalidated in {self.timeframe}")
-                                break
-                
-                # Wait for candle close
-                if not self.parent.wait_for_candle_open(self.timeframe):
-                    time.sleep(1)
-                    continue
-                
-                # Small buffer
-                time.sleep(1)
-                
-                # Fetch data
-                df = fetch_candles(self.instrument, self.timeframe, count=10, 
-                                 api_key=self.parent.credentials['oanda_api_key'])
-                
-                if df.empty or len(df) < 2:
-                    time.sleep(1)
-                    continue
-                
-                # Get last closed candle
-                closed_candle = df.iloc[-2]
-                candle_key = f"{self.timeframe}_{closed_candle['time']}"
-                
-                if candle_key in self.scanned_candles:
-                    time.sleep(1)
-                    continue
-                
-                self.scanned_candles.add(candle_key)
-                
-                # DEBUG logging
-                self.logger.info(f"📊 {self.timeframe}: Candle {closed_candle['time']}")
-                self.logger.info(f"   O:{closed_candle['open']:.5f} H:{closed_candle['high']:.5f} L:{closed_candle['low']:.5f} C:{closed_candle['close']:.5f}")
-                
-                # Check if in zone
-                candle_price = closed_candle['close']
-                in_zone = False
-                target_zone = None
-                
-                for zone in self.zones:
-                    if self.direction == 'bearish':
-                        if zone['low'] <= candle_price <= zone['high']:
-                            in_zone = True
-                            target_zone = zone
-                            break
-                    else:
-                        if zone['low'] <= candle_price <= zone['high']:
-                            in_zone = True
-                            target_zone = zone
-                            break
-                
-                if not in_zone:
-                    self.logger.debug(f"❌ {self.timeframe}: Not in zone")
-                    time.sleep(1)
-                    continue
-                
-                # Check hammer
-                is_hammer, upper_ratio, lower_ratio = self.parent.is_hammer_candle(closed_candle, self.direction)
-                
-                if is_hammer:
-                    self.logger.info(f"✅ {self.timeframe}: HAMMER FOUND in zone!")
-                    self.hammer_count += 1
-                    
-                    # Process hammer
-                    success = self.parent._process_and_record_hammer(
-                        self.instrument, self.timeframe, closed_candle, self.direction,
-                        self.criteria, self.signal_data, self.signal_id, self.trigger_data
-                    )
-                    
-                    if success:
-                        self.logger.info(f"✅ {self.timeframe}: Hammer #{self.hammer_count} processed")
-                    
-                    # Continue scanning for more hammers
-                
-                time.sleep(1)
-                
-            self.logger.info(f"⏰ {self.timeframe} scan completed")
-            return self.hammer_count
-            
-        except Exception as e:
-            self.logger.error(f"❌ Error in {self.timeframe} scanner: {str(e)}")
-            return 0
 
 class HammerPatternScanner:
-    """Concurrent hammer pattern scanner with minimal featuress"""
+    """Concurrent hammer pattern scanner with minimal features"""
     
-    def __init__(self, credentials, csv_base_path='/content/drive/MyDrive/hammer_trades', logger=None, news_calendar=None):
+    def __init__(self, credentials, csv_base_path='/content/drive/MyDrive/hammer_trades', logger=None):
         self.credentials = credentials
         self.running = False
         self.scanner_thread = None
@@ -4701,19 +4470,23 @@ class HammerPatternScanner:
         self.csv_file_path = f"{self.csv_base_path}.csv"
         self.init_csv_storage()
         
-        # Store the news calendar reference
-        self.news_calendar = news_calendar
-        
-        # TIMEZONE - MUST HAVE THIS!
-        self.NY_TZ = pytz.timezone('America/New_York')
-        
-        if self.news_calendar:
-            self.logger.info(f"📰 News Calendar received")
-            # You can access cache_dir if needed: self.news_calendar.cache_dir
+        # Initialize NewsCalendar if RapidAPI key is available now
+        self.news_calendar = None
+        rapidapi_key = os.getenv('rapidapi_key')
+        if rapidapi_key:
+            try:
+                self.news_calendar = NewsCalendar(
+                    rapidapi_key=rapidapi_key,
+                    base_path='/content/drive/MyDrive',
+                    logger=self.logger
+                )
+                self.logger.info(f"📰 News Calendar initialized")
+            except Exception as e:
+                self.logger.error(f"❌ Failed to initialize News Calendar: {str(e)}")
         else:
-            self.logger.warning("⚠️ No News Calendar provided - news features disabled")
+            self.logger.warning(f"⚠️ No RapidAPI key provided - News Calendar disabled")
         
-        # Timeframe alignment
+        # Timeframe alignment (keep existing)
         self.timeframe_alignment = {
             'XAU_USD': {
                 'FVG+SMT': {'M15': ['M1', 'M3', 'M5'], 'H1': ['M5', 'M15'], 'H4': ['M15']},
@@ -4729,9 +4502,7 @@ class HammerPatternScanner:
         
         self.logger.info(f"🔨 Streamlined Hammer Scanner initialized")
         self.logger.info(f"📁 CSV storage: {self.csv_file_path}")
-        
-        
-        
+    
     def init_csv_storage(self):
         """Initialize CSV file with NEW columns - FORCE UPDATE"""
         try:
@@ -4907,41 +4678,6 @@ class HammerPatternScanner:
                 self.logger.info(f"📁 Created emergency CSV file")
             except Exception as e2:
                 self.logger.error(f"❌ Could not create emergency CSV: {str(e2)}")
-
-    def get_news_context(self, instrument, signal_time):
-        """Get news context for a hammer signal - SIMPLE VERSION"""
-        if not self.news_calendar:
-            return {
-                'news_fetch_status': 'disabled',
-                'news_high_count': 0,
-                'news_medium_count': 0,
-                'news_low_count': 0,
-                'seconds_to_next_news': None,
-                'seconds_since_last_news': None
-            }
-        
-        try:
-            news_context = self.news_calendar.get_news_for_instrument(instrument, signal_time)
-            return news_context
-        except Exception as e:
-            self.logger.error(f"❌ Error getting news context: {str(e)}")
-            return {
-                'news_fetch_status': 'error',
-                'error': str(e)
-            }
-
-    def check_news_context(self, instrument, signal_time):
-        """Get news context for a hammer signal"""
-        if not self.news_calendar:
-            self.logger.warning(f"⚠️ No News Calendar - skipping news context")
-            return {}
-        
-        try:
-            news_context = self.news_calendar.get_news_for_instrument(instrument, signal_time)
-            return news_context
-        except Exception as e:
-            self.logger.error(f"❌ Error getting news context: {str(e)}")
-            return {}
     
     def _generate_signal_id(self, trigger_data):
         """Create a unique signal ID for grouping multiple hammers"""
@@ -4957,7 +4693,7 @@ class HammerPatternScanner:
         return f"{instrument}_{timeframe}_{timestamp}"
     
     def wait_for_candle_open(self, timeframe):
-        """Wait precisely for next candle open (3 seconds delay) - IMPROVED"""
+        """Wait precisely for next candle open (3 seconds delay)"""
         try:
             now = datetime.now(NY_TZ)
             
@@ -4967,41 +4703,24 @@ class HammerPatternScanner:
                 minutes_past = current_minute % minutes
                 seconds_past = now.second + (now.microsecond / 1000000)
                 
-                # Calculate seconds until next candle CLOSE (which is when next candle opens)
-                seconds_to_next_close = (minutes - minutes_past - 1) * 60 + (60 - seconds_past)
+                # Calculate seconds until next candle
+                seconds_to_next = (minutes - minutes_past - 1) * 60 + (60 - seconds_past)
                 
-                if seconds_to_next_close > 0:
-                    # Wait for candle to close + 3 seconds for data availability
-                    total_wait_time = seconds_to_next_close + 3
-                    next_candle_time = now + timedelta(seconds=total_wait_time)
-                    self.logger.info(f"⏰ {timeframe}: Candle closes in {seconds_to_next_close:.0f}s")
-                    self.logger.info(f"   Waiting {total_wait_time:.0f}s total (close + 3s buffer)")
-                    self.logger.info(f"   Next data at: {next_candle_time.strftime('%H:%M:%S')}")
-                    time.sleep(total_wait_time)
-                    self.logger.info(f"✅ {timeframe} data should now be available")
+                if seconds_to_next > 0:
+                    wait_time = seconds_to_next + 3
+                    self.logger.info(f"⏰ Waiting {wait_time:.0f}s for {timeframe} candle open (next at {now + timedelta(seconds=wait_time)})")
+                    time.sleep(wait_time)  # 3 seconds for data availability
+                    self.logger.info(f"✅ {timeframe} candle open, proceeding with scan")
                     return True
                 else:
-                    # Candle already closed, check if we need to wait for next candle
-                    seconds_since_close = -seconds_to_next_close
-                    if seconds_since_close < 3:
-                        # Still within 3-second buffer, wait remaining time
-                        remaining_buffer = 3 - seconds_since_close
-                        self.logger.info(f"⏰ {timeframe}: Candle closed {seconds_since_close:.0f}s ago")
-                        self.logger.info(f"   Waiting {remaining_buffer:.0f}s for data buffer")
-                        time.sleep(remaining_buffer)
-                    self.logger.info(f"✅ {timeframe} data should be available now")
+                    self.logger.info(f"✅ {timeframe} candle is already open, proceeding immediately")
                     return True
-            else:
-                # For non-minute timeframes, just wait 3 seconds
-                self.logger.info(f"⏰ {timeframe}: Waiting 3s for data availability")
-                time.sleep(3)
-                return True
-                
+                    
+            return False
+            
         except Exception as e:
             self.logger.error(f"Error in wait_for_candle_open: {str(e)}")
-            # If there's an error, wait a safe amount and continue
-            time.sleep(5)
-            return True
+            return False
 
     def start_news_background_fetch(self, interval_hours=6):
         """Start background news fetching thread"""
@@ -5019,7 +4738,7 @@ class HammerPatternScanner:
                     news_data = self.news_calendar.fetch_news_data(date_str)
                     
                     if 'error' in news_data:
-                        self.logger.error(f"❌ Background newss fetch failed: {news_data['error']}")
+                        self.logger.error(f"❌ Background news fetch failed: {news_data['error']}")
                     else:
                         event_count = len(news_data.get('events', []))
                         self.logger.info(f"📰 Background fetch successful: {event_count} events")
@@ -5039,67 +4758,45 @@ class HammerPatternScanner:
         )
         self.news_thread.start()
         self.logger.info(f"📰 Started background news fetching every {interval_hours} hours")
-
-    def test_news_calendar_connection(self):
-        """Test if news calendar is working"""
-        if not self.news_calendar:
-            self.logger.error("❌ No News Calendar object found!")
-            return False
-        
-        try:
-            # Try to get today's news
-            today_str = datetime.now(self.NY_TZ).strftime('%Y-%m-%d')
-            news_data = self.news_calendar.get_daily_news()
-            
-            if 'error' in news_data:
-                self.logger.error(f"❌ News Calendar test failed: {news_data['error']}")
-                return False
-            else:
-                event_count = len(news_data.get('events', []))
-                self.logger.info(f"✅ News Calendar test passed: {event_count} events")
-                return True
-        except Exception as e:
-            self.logger.error(f"❌ News Calendar test failed: {str(e)}")
-            return False
     
-    def check_news_cache_exists(self):
-        """Check if news cache exists"""
-        if not self.news_calendar:
-            self.logger.warning("⚠️ No News Calendar - cannot check cache")
-            return False
-        
-        today_str = datetime.now(self.NY_TZ).strftime('%Y-%m-%d')
-        cache_file = f"{self.news_calendar.cache_dir}/news_cache_{today_str}.json"
-        
-        if os.path.exists(cache_file):
-            self.logger.info(f"✅ News cache exists: {cache_file}")
-            return True
-        else:
-            self.logger.warning(f"⚠️ News cache NOT found: {cache_file}")
-            return False
-        
     def is_hammer_candle(self, candle, direction):
-        """Simplified hammer detection - only 50% wick rule"""
+        """Strict hammer detection - 50% wick rule with additional filters"""
         try:
             total_range = candle['high'] - candle['low']
             if total_range == 0:
                 return False, 0, 0
             
+            body_size = abs(candle['close'] - candle['open'])
             upper_wick = candle['high'] - max(candle['close'], candle['open'])
             lower_wick = min(candle['close'], candle['open']) - candle['low']
             
             # Calculate ratios
             upper_ratio = upper_wick / total_range if total_range > 0 else 0
             lower_ratio = lower_wick / total_range if total_range > 0 else 0
+            body_ratio = body_size / total_range if total_range > 0 else 0
             
-            # Strict 50% wick rule (no body size or pip requirements)
+            # Additional filter: body should not be too small (not a doji)
+            if body_ratio < 0.05:  # 5% minimum body
+                return False, upper_ratio, lower_ratio
+            
+            # Additional filter: total range should be meaningful
+            # Get pip multiplier to check if range is significant
+            pip_multiplier = 100 if 'JPY' in str(candle.get('instrument', '')) else 10000
+            range_pips = total_range * pip_multiplier
+            
+            # Minimum range: 5 pips for M1-M5, 10 pips for M15
+            min_pips = 5 if 'M5' in str(candle.get('timeframe', '')) else 10
+            if range_pips < min_pips:
+                return False, upper_ratio, lower_ratio
+            
+            # Strict 50% wick rule
             if direction == 'bearish':
                 # Bearish hammer: upper wick > 50%
-                if upper_ratio > 0.5:
+                if upper_ratio > 0.5 and lower_ratio < 0.3:
                     return True, upper_ratio, lower_ratio
             else:  # bullish
                 # Bullish hammer: lower wick > 50%
-                if lower_ratio > 0.5:
+                if lower_ratio > 0.5 and upper_ratio < 0.3:
                     return True, upper_ratio, lower_ratio
             
             return False, upper_ratio, lower_ratio
@@ -5118,81 +4815,9 @@ class HammerPatternScanner:
             criteria = trigger_data.get('type')
             signal_data = trigger_data.get('signal_data', {})
             
-            # DEBUG LOG
-            self.logger.info(f"📊 Getting zones for {criteria}, direction: {direction}")
-            
             if criteria == 'CRT+SMT':
-                # For CRT, we need a more sensible price range to scan
-                crt_signal = signal_data.get('crt_signal', {})
-                
-                # Fetch current price
-                df_current = fetch_candles(instrument, 'M1', count=2, 
-                                         api_key=self.credentials['oanda_api_key'])
-                
-                if df_current.empty:
-                    self.logger.error("❌ No current price data")
-                    return []
-                
-                current_price = df_current.iloc[-1]['close']
-                
-                # Get the previous candle's high/low for invalidation
-                trigger_tf = trigger_data.get('trigger_timeframe', 'H1')
-                df_tf = fetch_candles(instrument, trigger_tf, count=3, 
-                                    api_key=self.credentials['oanda_api_key'])
-                
-                if df_tf.empty or len(df_tf) < 2:
-                    self.logger.error(f"❌ No {trigger_tf} data for CRT")
-                    return []
-                
-                previous_candle = df_tf.iloc[-2]
-                
-                if direction == 'bearish':
-                    # Bearish CRT: invalidate above previous candle's high
-                    invalidation_level = previous_candle['high']
-                    # Calculate a reasonable scanning range - current price down to ~10 pips below
-                    pip_multiplier = 100  # Gold uses 2 decimals
-                    scan_extension_pips = 15  # 15 pips extension for scanning
-                    scan_low = current_price - (scan_extension_pips / pip_multiplier)
-                    scan_high = invalidation_level
-                    
-                    scan_range = [
-                        {
-                            'high': scan_high,
-                            'low': scan_low,
-                            'is_crt': True,
-                            'invalidation': invalidation_level,
-                            'current_price': current_price
-                        }
-                    ]
-                else:  # bullish
-                    # Bullish CRT: invalidate below previous candle's low
-                    invalidation_level = previous_candle['low']
-                    # Calculate a reasonable scanning range - current price up to ~10 pips above
-                    pip_multiplier = 100  # Gold uses 2 decimals
-                    scan_extension_pips = 15  # 15 pips extension for scanning
-                    scan_high = current_price + (scan_extension_pips / pip_multiplier)
-                    scan_low = invalidation_level
-                    
-                    scan_range = [
-                        {
-                            'low': scan_low,
-                            'high': scan_high,
-                            'is_crt': True,
-                            'invalidation': invalidation_level,
-                            'current_price': current_price
-                        }
-                    ]
-                
-                self.logger.info(f"📊 CRT {direction} setup:")
-                self.logger.info(f"   Invalidation: {invalidation_level:.5f}")
-                self.logger.info(f"   Current price: {current_price:.5f}")
-                self.logger.info(f"   Scan range: {scan_range[0]['low']:.5f} - {scan_range[0]['high']:.5f}")
-                self.logger.info(f"   Range size: {(scan_range[0]['high'] - scan_range[0]['low']) * 100:.1f} pips")
-                
-                return scan_range
-            
-            # Rest of existing code for FVG+SMT and SD+SMT...
-            # ... [keep existing code for FVG+SMT and SD+SMT zones]
+                # CRT has different logic - we'll handle separately
+                return self._get_crt_zones(trigger_data)
             
             # Get SMT cycle and map to timeframe for data slicing
             smt_data = signal_data.get('smt_data', {})
@@ -5237,40 +4862,21 @@ class HammerPatternScanner:
                 self.logger.error(f"❌ No data after formation time {formation_time}")
                 return []
             
-            # Get SMT swings data - now it's a dictionary, not a list
-            smt_swings = smt_data.get('swings', {})
+            # Get SMT swings data
+            smt_swings = smt_data.get('swings', [])
             
-            if not smt_swings:
-                self.logger.error(f"❌ No SMT swings found")
+            if not smt_swings or len(smt_swings) < 2:
+                self.logger.error(f"❌ Not enough SMT swings: {len(smt_swings)}")
                 return []
-            
-            # Convert swings dictionary to list for easier processing
-            swings_list = []
-            for key, swing_info in smt_swings.items():
-                # Only process if it has the expected structure
-                if isinstance(swing_info, dict) and 'price' in swing_info and 'time' in swing_info:
-                    swings_list.append({
-                        'time': swing_info['time'],
-                        'price': swing_info['price'],
-                        'type': swing_info.get('type', 'unknown'),
-                        'asset': key  # Keep track of which asset/swing this is
-                    })
-            
-            if len(swings_list) < 2:
-                self.logger.error(f"❌ Not enough valid SMT swings: {len(swings_list)}")
-                return []
-            
-            # Sort swings by time for chronological order
-            swings_list.sort(key=lambda x: x['time'])
             
             if direction == 'bearish':
                 # Bearish setup
-                # 1. Default SL: Highest price among all SMT swings (should be highest high)
-                default_sl = max([swing['price'] for swing in swings_list])
+                # 1. Default SL: Highest point of SMT swings
+                default_sl = max([swing.get('high', 0) for swing in smt_swings])
                 
                 # 2. Default TP: Lowest point between zone formation and second SMT swing
-                # Get second SMT swing time (chronologically)
-                second_swing_time = swings_list[1]['time'] if len(swings_list) > 1 else None
+                # Get second SMT swing time
+                second_swing_time = smt_swings[1].get('time') if len(smt_swings) > 1 else None
                 
                 if second_swing_time:
                     # Filter data between formation time and second swing
@@ -5281,7 +4887,7 @@ class HammerPatternScanner:
                     default_tp = df_from_formation['low'].min()
                 
                 self.logger.info(f"📊 Bearish setup:")
-                self.logger.info(f"   Default SL (highest swing price): {default_sl:.5f}")
+                self.logger.info(f"   Default SL (highest swing): {default_sl:.5f}")
                 self.logger.info(f"   Default TP (lowest after formation): {default_tp:.5f}")
                 
                 # Calculate Fibonacci retracement from SL to TP
@@ -5289,11 +4895,11 @@ class HammerPatternScanner:
                 
             else:  # bullish
                 # Bullish setup (flipped logic)
-                # 1. Default SL: Lowest price among all SMT swings (should be lowest low)
-                default_sl = min([swing['price'] for swing in swings_list])
+                # 1. Default SL: Lowest point of SMT swings
+                default_sl = min([swing.get('low', float('inf')) for swing in smt_swings])
                 
                 # 2. Default TP: Highest point between zone formation and second SMT swing
-                second_swing_time = swings_list[1]['time'] if len(swings_list) > 1 else None
+                second_swing_time = smt_swings[1].get('time') if len(smt_swings) > 1 else None
                 
                 if second_swing_time:
                     mask = (df_from_formation['time'] >= formation_time) & (df_from_formation['time'] <= second_swing_time)
@@ -5303,16 +4909,11 @@ class HammerPatternScanner:
                     default_tp = df_from_formation['high'].max()
                 
                 self.logger.info(f"📊 Bullish setup:")
-                self.logger.info(f"   Default SL (lowest swing price): {default_sl:.5f}")
+                self.logger.info(f"   Default SL (lowest swing): {default_sl:.5f}")
                 self.logger.info(f"   Default TP (highest after formation): {default_tp:.5f}")
                 
                 # Calculate Fibonacci retracement from SL to TP
                 fib_levels = self._calculate_fibonacci_levels(default_sl, default_tp, direction)
-            
-            # Log the swing details for debugging
-            self.logger.info(f"📊 SMT Swing details:")
-            for i, swing in enumerate(swings_list):
-                self.logger.info(f"   Swing {i+1}: {swing['asset']} - Time: {swing['time']}, Price: {swing['price']:.5f}, Type: {swing['type']}")
             
             return fib_levels
             
@@ -5321,9 +4922,9 @@ class HammerPatternScanner:
             return []
     
     def _calculate_fibonacci_levels(self, level1, level2, direction):
-        """Calculate Fibonacci retracement zones between consecutive Fibonacci levelsz"""
+        """Calculate Fibonacci retracement levels between two prices"""
         try:
-            # Standard Fibonacci retracement levels in order
+            # Standard Fibonacci retracement levels
             fib_ratios = [0.236, 0.382, 0.5, 0.618, 0.786]
             
             if direction == 'bearish':
@@ -5331,56 +4932,40 @@ class HammerPatternScanner:
                 price_range = level1 - level2
                 
                 zones = []
-                for i, ratio in enumerate(fib_ratios):
-                    # Calculate the high boundary of this zone (at current ratio)
+                for ratio in fib_ratios:
                     zone_high = level1 - (price_range * ratio)
-                    
-                    # Calculate the low boundary of this zone
-                    if i == 0:  # First zone: from 0.236 to 1.0 (TP)
-                        zone_low = level2  # TP is at 1.0
-                    else:  # Subsequent zones: from current ratio to previous ratio
-                        prev_ratio = fib_ratios[i-1]
-                        zone_low = level1 - (price_range * prev_ratio)
+                    zone_low = level1 - (price_range * (ratio + 0.1)) if ratio < 0.786 else level2
                     
                     zones.append({
                         'ratio': ratio,
                         'high': zone_high,
                         'low': zone_low,
-                        'mid': (zone_high + zone_low) / 2,
-                        'zone_name': f'Fib_{ratio}_to_{prev_ratio if i > 0 else 1.0}'
+                        'mid': (zone_high + zone_low) / 2
                     })
                 
                 self.logger.info(f"📊 Fibonacci zones for bearish:")
                 for zone in zones:
-                    self.logger.info(f"   {zone['zone_name']}: {zone['low']:.5f} - {zone['high']:.5f}")
+                    self.logger.info(f"   {zone['ratio']}: {zone['low']:.5f} - {zone['high']:.5f}")
                 
             else:  # bullish
                 # For bullish: level1 is SL (lower), level2 is TP (higher)
                 price_range = level2 - level1
                 
                 zones = []
-                for i, ratio in enumerate(fib_ratios):
-                    # Calculate the low boundary of this zone (at current ratio)
+                for ratio in fib_ratios:
                     zone_low = level1 + (price_range * ratio)
-                    
-                    # Calculate the high boundary of this zone
-                    if i == 0:  # First zone: from 0.236 to 1.0 (TP)
-                        zone_high = level2  # TP is at 1.0
-                    else:  # Subsequent zones: from current ratio to previous ratio
-                        prev_ratio = fib_ratios[i-1]
-                        zone_high = level1 + (price_range * prev_ratio)
+                    zone_high = level1 + (price_range * (ratio + 0.1)) if ratio < 0.786 else level2
                     
                     zones.append({
                         'ratio': ratio,
                         'low': zone_low,
                         'high': zone_high,
-                        'mid': (zone_low + zone_high) / 2,
-                        'zone_name': f'Fib_{ratio}_to_{prev_ratio if i > 0 else 1.0}'
+                        'mid': (zone_low + zone_high) / 2
                     })
                 
                 self.logger.info(f"📊 Fibonacci zones for bullish:")
                 for zone in zones:
-                    self.logger.info(f"   {zone['zone_name']}: {zone['low']:.5f} - {zone['high']:.5f}")
+                    self.logger.info(f"   {zone['ratio']}: {zone['low']:.5f} - {zone['high']:.5f}")
             
             return zones
             
@@ -5502,7 +5087,7 @@ class HammerPatternScanner:
         return trigger_map.get(trigger_tf, ['M5', 'M15'])
     
     def scan_fibonacci_hammer(self, trigger_data):
-        """Main hammer scanning function with CONCURRENT timeframe scanning - COMPLETE VERSION"""
+        """Main hammer scanning function with proper zone logic"""
         try:
             instrument = trigger_data.get('instrument')
             direction = trigger_data.get('direction')
@@ -5510,17 +5095,9 @@ class HammerPatternScanner:
             criteria = trigger_data.get('type')
             signal_data = trigger_data.get('signal_data', {})
             
-            if not signal_data:
-                self.logger.error("❌ No signal_data in trigger_data")
-                return False
+            self.logger.info(f"🔨 Starting hammer scan for {instrument}")
+            self.logger.info(f"   Criteria: {criteria}, Direction: {direction}")
             
-            # DEBUG: Log what we actually received
-            self.logger.info(f"📦 Signal data keys: {list(signal_data.keys())}")
-            if 'smt_data' in signal_data:
-                swings = signal_data['smt_data'].get('swings', {})
-                self.logger.info(f"   SMT swings count: {len(swings)}")
-                for key, swing in swings.items():
-                    self.logger.info(f"   Swing {key}: {swing.get('type', 'unknown')} at {swing.get('price', 0):.5f}")
             
             # Get Fibonacci zones
             fib_zones = self._get_fib_zones(trigger_data)
@@ -5531,14 +5108,9 @@ class HammerPatternScanner:
             
             # Get hammer timeframes
             timeframes = self.get_aligned_timeframes(instrument, criteria, trigger_timeframe)
-            self.logger.info(f"🔨 Timeframes to scan CONCURRENTLY: {timeframes}")
+            self.logger.info(f"🔨 Timeframes to scan: {timeframes}")
             
             signal_id = self._generate_signal_id(trigger_data)
-            
-            self.logger.info(f"🎯 Starting CONCURRENT hammer scan for {instrument} {criteria}")
-            self.logger.info(f"   Signal ID: {signal_id}")
-            self.logger.info(f"   Direction: {direction}")
-            self.logger.info(f"   Trigger TF: {trigger_timeframe}")
             
             # Set scan duration based on criteria
             if criteria == 'CRT+SMT':
@@ -5556,119 +5128,61 @@ class HammerPatternScanner:
             
             self.logger.info(f"⏰ Scan duration: {max_scan_duration}")
             
-            # Create a shared state for all scanners
-            shared_state = {
-                'hammer_count': 0,
-                'scan_end': scan_end,
-                'fib_zones': fib_zones,
-                'instrument': instrument,
-                'direction': direction,
-                'criteria': criteria,
-                'signal_data': signal_data,
-                'signal_id': signal_id,
-                'trigger_data': trigger_data,
-                'scanned_candles': {},  # Dict of sets per timeframe
-                'lock': threading.Lock()  # Lock for thread safety
-            }
+            hammer_count = 0
+            scanned_candles = set()
             
-            # Initialize scanned_candles for each timeframe
-            for tf in timeframes:
-                shared_state['scanned_candles'][tf] = set()
-            
-            def scan_timeframe(tf):
-                """Scan a single timeframe (runs in separate thread)"""
-                try:
-                    self.logger.info(f"🔍 Starting {tf} scanner thread")
-                    tf_scanned_candles = shared_state['scanned_candles'][tf]
-                    
-                    while datetime.now(NY_TZ) < shared_state['scan_end']:
-                        # 1. Check for CRT invalidation (if applicable)
-                        if shared_state['criteria'] == 'CRT+SMT':
-                            crt_zone = shared_state['fib_zones'][0] if shared_state['fib_zones'] else None
-                            if crt_zone and 'invalidation_level' in crt_zone:
-                                df_current = fetch_candles(
-                                    shared_state['instrument'], 
-                                    'M1', 
-                                    count=2, 
-                                    api_key=self.credentials['oanda_api_key']
-                                )
-                                if not df_current.empty:
-                                    current_price = df_current.iloc[-1]['close']
-                                    
-                                    if (shared_state['direction'] == 'bearish' and 
-                                        current_price > crt_zone['invalidation_level']):
-                                        self.logger.info(
-                                            f"❌ CRT invalidated in {tf}: "
-                                            f"Price {current_price:.5f} > invalidation {crt_zone['invalidation_level']:.5f}"
-                                        )
-                                        break
-                                    elif (shared_state['direction'] == 'bullish' and 
-                                          current_price < crt_zone['invalidation_level']):
-                                        self.logger.info(
-                                            f"❌ CRT invalidated in {tf}: "
-                                            f"Price {current_price:.5f} < invalidation {crt_zone['invalidation_level']:.5f}"
-                                        )
-                                        break
+            while datetime.now(NY_TZ) < scan_end:
+                current_time = datetime.now(NY_TZ)
+                
+                # Check for CRT invalidation
+                if criteria == 'CRT+SMT':
+                    crt_zone = fib_zones[0] if fib_zones else None
+                    if crt_zone and 'invalidation_level' in crt_zone:
+                        # Get current price
+                        df_current = fetch_candles(instrument, 'M1', count=2, api_key=self.credentials['oanda_api_key'])
+                        if not df_current.empty:
+                            current_price = df_current.iloc[-1]['close']
+                            
+                            if direction == 'bearish' and current_price > crt_zone['invalidation_level']:
+                                self.logger.info(f"❌ CRT invalidated: Price {current_price:.5f} > invalidation {crt_zone['invalidation_level']:.5f}")
+                                break
+                            elif direction == 'bullish' and current_price < crt_zone['invalidation_level']:
+                                self.logger.info(f"❌ CRT invalidated: Price {current_price:.5f} < invalidation {crt_zone['invalidation_level']:.5f}")
+                                break
+                
+                # Scan each timeframe
+                for tf in timeframes:
+                    try:
+                        # Calculate next candle close time
+                        next_close = self._get_next_candle_close_time(tf, current_time)
+                        wait_seconds = (next_close - current_time).total_seconds()
                         
-                        # 2. Wait for this specific timeframe's candle
-                        self.logger.info(f"⏰ {tf}: Waiting for candle close...")
-                        if not self.wait_for_candle_open(tf):
-                            self.logger.warning(f"⚠️ {tf}: Could not wait for candle open, continuing...")
-                            time.sleep(1)
-                            continue
+                        if wait_seconds > 0:
+                            self.logger.debug(f"⏰ Waiting {wait_seconds:.0f}s for {tf} close")
+                            time.sleep(wait_seconds)
                         
-                        # 3. Add small buffer for API data
-                        time.sleep(1)
-                        self.logger.info(f"✅ {tf}: Candle should be available, fetching data...")
-                        
-                        # 4. Fetch data after candle close
-                        df = fetch_candles(
-                            shared_state['instrument'], 
-                            tf, 
-                            count=10, 
-                            api_key=self.credentials['oanda_api_key']
-                        )
+                        # Fetch data after candle close
+                        df = fetch_candles(instrument, tf, count=10, api_key=self.credentials['oanda_api_key'])
                         
                         if df.empty or len(df) < 2:
-                            time.sleep(1)
                             continue
                         
-                        # 5. Get the last CLOSED candle (index -2)
+                        # Get the last CLOSED candle (index -2)
                         closed_candle = df.iloc[-2]
                         candle_key = f"{tf}_{closed_candle['time']}"
                         
-                        if candle_key in tf_scanned_candles:
-                            time.sleep(1)
+                        if candle_key in scanned_candles:
                             continue
                         
-                        tf_scanned_candles.add(candle_key)
+                        scanned_candles.add(candle_key)
                         
-                        # 6. DEBUG: Log candle details
-                        self.logger.info(f"📊 {tf}: Scanning at {datetime.now(NY_TZ).strftime('%H:%M:%S')}")
-                        self.logger.info(f"   Candle time: {closed_candle['time']}")
-                        self.logger.info(f"   Prices: O:{closed_candle['open']:.5f} H:{closed_candle['high']:.5f} "
-                                       f"L:{closed_candle['low']:.5f} C:{closed_candle['close']:.5f}")
-                        self.logger.info(f"   Direction: {shared_state['direction']}")
-                        
-                        # 7. Check hammer pattern
-                        is_hammer, upper_ratio, lower_ratio = self.is_hammer_candle(
-                            closed_candle, 
-                            shared_state['direction']
-                        )
-                        self.logger.info(f"   Hammer check: {is_hammer}")
-                        self.logger.info(f"   Wick ratios: upper={upper_ratio:.2f}, lower={lower_ratio:.2f}")
-                        
-                        if is_hammer:
-                            self.logger.info(f"✅ {tf}: HAMMER DETECTED! Checking if in zone...")
-                            self.log_detailed_candle_analysis(closed_candle, tf, shared_state['direction'])
-                        
-                        # 8. Check if candle is in Fibonacci zone
-                        candle_price = closed_candle['close']
+                        # Check if candle is in Fibonacci zone
+                        candle_price = closed_candle['close']  # Use close price for zone check
                         in_zone = False
                         target_zone = None
                         
-                        for zone in shared_state['fib_zones']:
-                            if shared_state['direction'] == 'bearish':
+                        for zone in fib_zones:
+                            if direction == 'bearish':
                                 if zone['low'] <= candle_price <= zone['high']:
                                     in_zone = True
                                     target_zone = zone
@@ -5680,88 +5194,44 @@ class HammerPatternScanner:
                                     break
                         
                         if not in_zone:
-                            self.logger.debug(f"❌ {tf}: Candle not in Fibonacci zone: {candle_price:.5f}")
-                            time.sleep(1)
+                            self.logger.debug(f"❌ Candle not in Fibonacci zone: {candle_price:.5f}")
                             continue
                         
-                        # 9. If hammer AND in zone, process it
+                        # Check for hammer pattern
+                        is_hammer, upper_ratio, lower_ratio = self.is_hammer_candle(closed_candle, direction)
+                        
                         if is_hammer:
-                            self.logger.info(f"✅ {tf}: HAMMER FOUND in Fibonacci zone!")
+                            self.logger.info(f"✅ HAMMER FOUND in Fibonacci zone!")
                             self.logger.info(f"   Timeframe: {tf}, Time: {closed_candle['time']}")
-                            self.logger.info(f"   Price: {candle_price:.5f}, "
-                                           f"Zone: {target_zone['ratio'] if target_zone else 'N/A'}")
+                            self.logger.info(f"   Price: {candle_price:.5f}, Zone: {target_zone['ratio'] if target_zone else 'N/A'}")
                             self.logger.info(f"   Wick ratios: upper={upper_ratio:.2f}, lower={lower_ratio:.2f}")
                             
-                            # 10. Process and record hammer with thread safety
-                            with shared_state['lock']:
-                                shared_state['hammer_count'] += 1
-                                current_hammer_count = shared_state['hammer_count']
+                            # Wait for next candle open (3 seconds)
+                            time.sleep(3)
                             
-                            success = self._process_and_record_hammer(
-                                shared_state['instrument'], 
-                                tf, 
-                                closed_candle, 
-                                shared_state['direction'],
-                                shared_state['criteria'], 
-                                shared_state['signal_data'], 
-                                shared_state['signal_id'], 
-                                shared_state['trigger_data']
+                            # Enter trade
+                            hammer_count += 1
+                            success = self._enter_hammer_trade(
+                                instrument, tf, closed_candle, direction,
+                                criteria, signal_data, signal_id, trigger_data
                             )
                             
                             if success:
-                                self.logger.info(f"✅ {tf}: Trade #{current_hammer_count} processed successfully")
+                                self.logger.info(f"✅ Trade #{hammer_count} entered successfully")
                             
-                            # Continue scanning for more hammers in this timeframe
-                            # (Don't break, keep looking for more)
-                        
-                        # Small pause to avoid API rate limits and excessive CPU
-                        time.sleep(1)
-                        
-                    self.logger.info(f"⏰ {tf} scanner thread completed")
+                            # Continue scanning for more hammers
                     
-                except Exception as e:
-                    self.logger.error(f"❌ Error in {tf} scanner thread: {str(e)}", exc_info=True)
+                    except Exception as e:
+                        self.logger.error(f"❌ Error scanning {tf}: {str(e)}")
+                        continue
+                
+                # Small pause between cycles
+                time.sleep(1)
             
-            # Start a thread for each timeframe
-            threads = []
-            for tf in timeframes:
-                thread = threading.Thread(
-                    target=scan_timeframe,
-                    args=(tf,),
-                    name=f"HammerScan_{instrument}_{tf}",
-                    daemon=True
-                )
-                thread.start()
-                threads.append(thread)
-                self.logger.info(f"🚀 Started {tf} scanner thread")
+            self.logger.info(f"✅ Scan completed. Found {hammer_count} hammers.")
             
-            # Main thread waits for scan duration or until interrupted
-            try:
-                # Calculate total seconds to wait
-                total_seconds = (shared_state['scan_end'] - datetime.now(NY_TZ)).total_seconds()
-                if total_seconds > 0:
-                    self.logger.info(f"⏰ Main thread waiting {total_seconds:.0f}s for scan completion...")
-                    time.sleep(total_seconds)
-                else:
-                    self.logger.warning(f"⚠️ Scan duration has already passed")
-            except KeyboardInterrupt:
-                self.logger.info(f"🛑 Scan interrupted for {instrument}")
-            except Exception as e:
-                self.logger.error(f"❌ Error in main thread wait: {str(e)}")
-            
-            # Wait for all threads to finish (they should finish when scan_end is reached)
-            for thread in threads:
-                thread.join(timeout=5)  # Wait up to 5 seconds for each thread
-                self.logger.info(f"✓ {thread.name} joined")
-            
-            total_hammers = shared_state['hammer_count']
-            self.logger.info(f"✅ CONCURRENT scan completed. Found {total_hammers} hammers.")
-            
-            # Log summary of scanned candles
-            for tf, candles in shared_state['scanned_candles'].items():
-                self.logger.info(f"📊 {tf}: Scanned {len(candles)} candles")
-            
-            if total_hammers > 0:
+            if hammer_count > 0:
+                
                 return True
             
             return False
@@ -5769,64 +5239,27 @@ class HammerPatternScanner:
         except Exception as e:
             self.logger.error(f"❌ Error in hammer scan: {str(e)}", exc_info=True)
             return False
-    def log_detailed_candle_analysis(self, candle, timeframe, direction):
-        """Log detailed analysis of a candle for debugging"""
-        try:
-            total_range = candle['high'] - candle['low']
-            if total_range == 0:
-                self.logger.warning("   Zero range candle")
-                return
-            
-            upper_wick = candle['high'] - max(candle['close'], candle['open'])
-            lower_wick = min(candle['close'], candle['open']) - candle['low']
-            
-            # Calculate ratios
-            upper_ratio = upper_wick / total_range if total_range > 0 else 0
-            lower_ratio = lower_wick / total_range if total_range > 0 else 0
-            
-            self.logger.info(f"📊 DETAILED CANDLE ANALYSIS ({timeframe}, {direction}):")
-            self.logger.info(f"   Total range: {total_range:.5f}")
-            self.logger.info(f"   Upper wick: {upper_wick:.5f} ({upper_ratio:.1%})")
-            self.logger.info(f"   Lower wick: {lower_wick:.5f} ({lower_ratio:.1%})")
-            
-            if direction == 'bearish':
-                hammer_criteria = upper_ratio > 0.5
-                self.logger.info(f"   Hammer criteria: Upper wick > 50% → {hammer_criteria}")
-                if hammer_criteria:
-                    self.logger.info(f"   ✅ BEARISH HAMMER: Upper wick is {upper_ratio:.1%} (>50%)")
-                else:
-                    self.logger.info(f"   ❌ NOT A BEARISH HAMMER: Upper wick is {upper_ratio:.1%} (need >50%)")
-            else:  # bullish
-                hammer_criteria = lower_ratio > 0.5
-                self.logger.info(f"   Hammer criteria: Lower wick > 50% → {hammer_criteria}")
-                if hammer_criteria:
-                    self.logger.info(f"   ✅ BULLISH HAMMER: Lower wick is {lower_ratio:.1%} (>50%)")
-                else:
-                    self.logger.info(f"   ❌ NOT A BULLISH HAMMER: Lower wick is {lower_ratio:.1%} (need >50%)")
-                    
-        except Exception as e:
-            self.logger.error(f"   Error in detailed analysis: {str(e)}")
     
-    # def _get_next_candle_close_time(self, timeframe, current_time):
-    #     """Calculate next candle close time"""
-    #     if timeframe.startswith('M'):
-    #         minutes = int(timeframe[1:])
-    #         current_minute = current_time.minute
-    #         minutes_past = current_minute % minutes
-    #         minutes_to_close = minutes - minutes_past
+    def _get_next_candle_close_time(self, timeframe, current_time):
+        """Calculate next candle close time"""
+        if timeframe.startswith('M'):
+            minutes = int(timeframe[1:])
+            current_minute = current_time.minute
+            minutes_past = current_minute % minutes
+            minutes_to_close = minutes - minutes_past
             
-    #         # If exactly at close time, wait for next candle
-    #         if minutes_to_close == 0:
-    #             minutes_to_close = minutes
+            # If exactly at close time, wait for next candle
+            if minutes_to_close == 0:
+                minutes_to_close = minutes
             
-    #         next_close = current_time + timedelta(minutes=minutes_to_close)
-    #         next_close = next_close.replace(second=0, microsecond=0)
-    #     else:
-    #         # For hourly timeframes (shouldn't be used for hammer scanning)
-    #         next_close = current_time + timedelta(hours=1)
-    #         next_close = next_close.replace(minute=0, second=0, microsecond=0)
+            next_close = current_time + timedelta(minutes=minutes_to_close)
+            next_close = next_close.replace(second=0, microsecond=0)
+        else:
+            # For hourly timeframes (shouldn't be used for hammer scanning)
+            next_close = current_time + timedelta(hours=1)
+            next_close = next_close.replace(minute=0, second=0, microsecond=0)
         
-    #     return next_close
+        return next_close
     
     def _should_stop_scanning(self, instrument, trigger_data, scan_start_time, 
                              max_duration, hammer_count):
@@ -5895,32 +5328,19 @@ class HammerPatternScanner:
 
 
             # Get news context from the shared cache file
-            # ========== STEP 4: GET NEWS CONTEXT ==========
             news_context = {}
-            if hasattr(self, 'news_calendar') and self.news_calendar:
-                try:
-                    # Use the news calendar's method to get filtered news
-                    news_context = self.news_calendar.get_filtered_news_for_instrument(instrument)
-                except Exception as e:
-                    self.logger.error(f"❌ Error getting news from calendar: {e}")
-                    news_context = {
-                        'error': str(e),
-                        'event_count': 0,
-                        'high_impact_count': 0,
-                        'fetch_status': 'error'
-                    }
-            elif hasattr(self, 'news_cache_dir') and self.news_cache_dir:
-                try:
-                    today_str = datetime.now(NY_TZ).strftime('%Y-%m-%d')
-                    cache_file = f"{self.news_cache_dir}/news_cache_{today_str}.json"
-                    
-                    if os.path.exists(cache_file):
+            if self.news_cache_dir:  # Make this path available to the scanner
+                today_str = datetime.now(NY_TZ).strftime('%Y-%m-%d')
+                cache_file = f"{self.news_cache_dir}/news_cache_{today_str}.json"
+                
+                if os.path.exists(cache_file):
+                    try:
                         with open(cache_file, 'r') as f:
                             cached_news = json.load(f)
                         # Process cached_news for your instrument
                         news_context = self._filter_news_for_instrument(cached_news, instrument)
-                except Exception as e:
-                    self.logger.error(f"❌ Error reading news cache: {e}")
+                    except Exception as e:
+                        self.logger.error(f"❌ Error reading news cache: {e}")
                     news_context = {
                         'error': str(e),
                         'event_count': 0,
@@ -5989,23 +5409,8 @@ class HammerPatternScanner:
             if criteria in ['FVG+SMT', 'SD+SMT']:
                 # Get formation time and second swing
                 formation_time = fvg_idea.get('formation_time') if criteria == 'FVG+SMT' else zone.get('formation_time')
-                smt_swings_dict = smt_data.get('swings', {})
-                
-                # Convert dictionary to list and sort by time
-                swings_list = []
-                for key, swing_info in smt_swings_dict.items():
-                    if isinstance(swing_info, dict) and 'time' in swing_info:
-                        swings_list.append({
-                            'time': swing_info['time'],
-                            'price': swing_info.get('price', 0),
-                            'type': swing_info.get('type', 'unknown')
-                        })
-                
-                # Sort by time
-                swings_list.sort(key=lambda x: x['time'])
-                
-                # Get second swing time if available
-                second_swing_time = swings_list[1]['time'] if len(swings_list) > 1 else None
+                smt_swings = smt_data.get('swings', [])
+                second_swing_time = smt_swings[1].get('time') if len(smt_swings) > 1 else None
                 
                 if formation_time and second_swing_time:
                     zone_timeframe = tf  # Use hammer timeframe for swing detection
@@ -6538,23 +5943,6 @@ class HammerPatternScanner:
             instrument = trade_data['instrument']
             tf = trade_data['hammer_timeframe']
             criteria = trade_data['criteria']
-            entry_price = trade_data['entry_price']
-            sl_price = trade_data['sl_price']
-            sl_distance_pips = trade_data['sl_distance_pips']
-            
-            # Calculate lot sizes
-            # For gold: 1 pip = $1 per micro lot (0.01 move)
-            # For forex: 1 pip = $1 per micro lot for USD pairs, varies for others
-            
-            pip_multiplier = 100 if 'JPY' in instrument else 10000
-            
-            # Calculate lot sizes for $10 and $100 risk
-            if sl_distance_pips > 0:
-                risk_10_lots = 10 / sl_distance_pips  # For $10 risk
-                risk_100_lots = 100 / sl_distance_pips  # For $100 risk
-            else:
-                risk_10_lots = 0.1  # Default
-                risk_100_lots = 1.0  # Default
             
             # Get humorous phrases
             trigger_humor = get_humorous_phrase(direction.lower(), criteria)
@@ -6567,25 +5955,21 @@ class HammerPatternScanner:
             
             message += f"*📊 CRITERIA:* {criteria}\n"
             message += f"*🎯 ENTRY:* {direction} {instrument} on {tf}\n"
-            message += f"*💰 ENTRY PRICE:* {entry_price:.5f}\n\n"
+            message += f"*💰 ENTRY PRICE:* {trade_data['entry_price']:.5f}\n\n"
             
             # PRICE LEVELS
             message += f"*🛑 STOP LOSS:*\n"
-            message += f"  • Price: {sl_price:.5f}\n"
-            message += f"  • Distance: {sl_distance_pips:.1f} pips\n\n"
+            message += f"  • Price: {trade_data['sl_price']:.5f}\n"
+            message += f"  • Distance: {trade_data['sl_distance_pips']:.1f} pips\n\n"
             
-            if 'tp_1_4_price' in trade_data:
-                message += f"*🎯 TAKE PROFIT 1:4:*\n"
-                message += f"  • Price: {trade_data['tp_1_4_price']:.5f}\n"
-                if 'tp_1_4_distance' in trade_data:
-                    message += f"  • Distance: {trade_data['tp_1_4_distance']:.1f} pips\n\n"
-                else:
-                    message += "\n"
+            message += f"*🎯 TAKE PROFIT 1:4:*\n"
+            message += f"  • Price: {trade_data['tp_1_4_price']:.5f}\n"
+            message += f"  • Distance: {trade_data.get('tp_1_4_distance', 0):.1f} pips\n\n"
             
             # RISK MANAGEMENT - LOT SIZES
             message += f"*💰 RISK MANAGEMENT (MICRO LOTS):*\n"
-            message += f"  • Risk $10: {risk_10_lots:.2f} lots\n"
-            message += f"  • Risk $100: {risk_100_lots:.2f} lots\n\n"
+            message += f"  • Risk $10: {trade_data['risk_10_lots']:.2f} lots\n"
+            message += f"  • Risk $100: {trade_data['risk_100_lots']:.2f} lots\n\n"
             
             message += f"*⏰ TIME:* {trade_data['entry_time']}\n"
             message += f"*⚡ LATENCY:* {trade_data.get('signal_latency_seconds', 0):.1f}s (candle close → signal)\n\n"
@@ -6593,26 +5977,18 @@ class HammerPatternScanner:
             # Add signal context
             if criteria == 'FVG+SMT':
                 message += f"*📈 FVG+SMT Setup:*\n"
-                if 'smt_cycle' in trade_data:
-                    message += f"• SMT Cycle: {trade_data['smt_cycle']}\n"
-                if 'has_psp' in trade_data:
-                    message += f"• Has PSP: {'✅' if trade_data['has_psp'] else '❌'}\n"
-                if 'is_hp_fvg' in trade_data:
-                    message += f"• HP FVG: {'✅' if trade_data['is_hp_fvg'] else '❌'}\n"
+                message += f"• SMT Cycle: {trade_data['smt_cycle']}\n"
+                message += f"• Has PSP: {'✅' if trade_data['has_psp'] else '❌'}\n"
+                message += f"• HP FVG: {'✅' if trade_data['is_hp_fvg'] else '❌'}\n"
             elif criteria == 'SD+SMT':
                 message += f"*📈 SD+SMT Setup:*\n"
-                if 'smt_cycle' in trade_data:
-                    message += f"• SMT Cycle: {trade_data['smt_cycle']}\n"
-                if 'has_psp' in trade_data:
-                    message += f"• Has PSP: {'✅' if trade_data['has_psp'] else '❌'}\n"
-                if 'is_hp_zone' in trade_data:
-                    message += f"• HP Zone: {'✅' if trade_data['is_hp_zone'] else '❌'}\n"
+                message += f"• SMT Cycle: {trade_data['smt_cycle']}\n"
+                message += f"• Has PSP: {'✅' if trade_data['has_psp'] else '❌'}\n"
+                message += f"• HP Zone: {'✅' if trade_data['is_hp_zone'] else '❌'}\n"
             elif criteria == 'CRT+SMT':
                 message += f"*📈 CRT+SMT Setup:*\n"
-                if 'smt_cycle' in trade_data:
-                    message += f"• SMT Cycle: {trade_data['smt_cycle']}\n"
-                if 'has_psp' in trade_data:
-                    message += f"• Has PSP: {'✅' if trade_data['has_psp'] else '❌'}\n"
+                message += f"• SMT Cycle: {trade_data['smt_cycle']}\n"
+                message += f"• Has PSP: {'✅' if trade_data['has_psp'] else '❌'}\n"
             
             message += f"\n*💡 TRADER NOTE:* Signal ID: {trade_data['signal_id']} (groups all hammers)\n"
             message += f"*🤙 REMEMBER:* Trade safe, bro! Manage your risk!\n\n"
@@ -6628,14 +6004,10 @@ class HammerPatternScanner:
             
             if success:
                 self.logger.info(f"📤 Signal sent: {instrument} {tf} {direction}")
-                self.logger.info(f"📊 SL Price: {sl_price:.5f}, TP 1:4 Price: {trade_data.get('tp_1_4_price', 'N/A')}")
-                self.logger.info(f"💰 Lot Sizes: ${risk_10_lots:.2f} (risk $10), ${risk_100_lots:.2f} (risk $100)")
+                self.logger.info(f"📊 SL Price: {trade_data['sl_price']:.5f}, TP 1:4 Price: {trade_data['tp_1_4_price']:.5f}")
+                self.logger.info(f"💰 Lot Sizes: ${trade_data['risk_10_lots']:.2f} (risk $10), ${trade_data['risk_100_lots']:.2f} (risk $100)")
             else:
                 self.logger.error(f"❌ Failed to send signal")
-            
-            # Return lot sizes in trade_data for CSV
-            trade_data['risk_10_lots'] = risk_10_lots
-            trade_data['risk_100_lots'] = risk_100_lots
             
             return success
             
@@ -6665,12 +6037,9 @@ class HammerPatternScanner:
         """Start the scanner"""
         self.running = True
         
-        # Start background news fetching if we have calendar
+        # Start background news fetching
         if self.news_calendar:
             self.start_news_background_fetch(interval_hours=6)
-            self.logger.info(f"📰 Started background news fetching")
-        else:
-            self.logger.warning("⚠️ No news calendar - background fetch disabled")
         
         self.logger.info("🔨 Hammer Pattern Scanner started")
         return True
@@ -6835,104 +6204,6 @@ class HammerPatternScanner:
             self.logger.error(f"❌ Error updating CSV: {str(e)}")
             return False
 
-    def run_hammer_debug_test(self):
-        pass
-    def _send_debug_hammer_alert(self, hammer_data):
-        """Send debug hammer alert to Telegram"""
-        try:
-            message = "🔨 *HAMMER DEBUG TEST - SUCCESS* 🔨\n\n"
-            message += f"*🎯 INSTRUMENT:* {hammer_data['instrument']} {hammer_data['timeframe']}\n"
-            message += f"*📊 DIRECTION:* {hammer_data['direction'].upper()} hammer\n\n"
-            
-            message += f"*⏰ TIMING:*\n"
-            message += f"• Candle formed: {hammer_data['candle_time']}\n"
-            message += f"• Detection time: {hammer_data['detection_time']}\n"
-            message += f"• Latency: *{hammer_data['latency_seconds']}s*\n\n"
-            
-            message += f"*💰 PRICE LEVELS:*\n"
-            message += f"• Open: {hammer_data['open']:.5f}\n"
-            message += f"• High: {hammer_data['high']:.5f}\n"
-            message += f"• Low: {hammer_data['low']:.5f}\n"
-            message += f"• Close: {hammer_data['close']:.5f}\n\n"
-            
-            message += f"*📈 WICK ANALYSIS:*\n"
-            message += f"• Upper wick: {hammer_data['upper_wick_ratio']:.1%}\n"
-            message += f"• Lower wick: {hammer_data['lower_wick_ratio']:.1%}\n\n"
-            
-            message += f"*💡 TEST RESULTS:*\n"
-            if hammer_data['latency_seconds'] <= 3:
-                message += "✅ EXCELLENT LATENCY! (<3s)\n"
-            elif hammer_data['latency_seconds'] <= 5:
-                message += "⚠️ ACCEPTABLE LATENCY (3-5s)\n"
-            else:
-                message += "❌ HIGH LATENCY (>5s) - NEEDS OPTIMIZATION\n"
-            
-            message += f"\n*🛠️ SYSTEM READY:* Hammer detection is working!\n"
-            message += f"#{hammer_data['instrument'].replace('_', '')} #HammerDebug #SystemTest"
-            
-            success = send_telegram(
-                message,
-                self.credentials['telegram_token'],
-                self.credentials['telegram_chat_id']
-            )
-            
-            if success:
-                self.logger.info(f"✅ Debug hammer alert sent to Telegram")
-            else:
-                self.logger.error(f"❌ Failed to send debug hammer alert")
-                
-            return success
-            
-        except Exception as e:
-            self.logger.error(f"❌ Error sending debug alert: {str(e)}")
-            return False
-    
-    def _save_debug_hammer_to_csv(self, hammer_data):
-        """Save debug hammer to CSV"""
-        try:
-            # Create debug CSV file
-            debug_csv_path = f"{self.csv_base_path}_debug.csv"
-            
-            # Check if file exists
-            if not os.path.exists(debug_csv_path):
-                headers = [
-                    'timestamp', 'instrument', 'timeframe', 'direction',
-                    'candle_time', 'detection_time', 'latency_seconds',
-                    'open', 'high', 'low', 'close',
-                    'upper_wick_ratio', 'lower_wick_ratio'
-                ]
-                
-                with open(debug_csv_path, 'w', newline='') as f:
-                    writer = csv.writer(f)
-                    writer.writerow(headers)
-                self.logger.info(f"📁 Created debug CSV: {debug_csv_path}")
-            
-            # Save data
-            with open(debug_csv_path, 'a', newline='') as f:
-                writer = csv.writer(f)
-                writer.writerow([
-                    datetime.now(NY_TZ).strftime('%Y-%m-%d %H:%M:%S'),
-                    hammer_data['instrument'],
-                    hammer_data['timeframe'],
-                    hammer_data['direction'],
-                    hammer_data['candle_time'],
-                    hammer_data['detection_time'],
-                    hammer_data['latency_seconds'],
-                    hammer_data['open'],
-                    hammer_data['high'],
-                    hammer_data['low'],
-                    hammer_data['close'],
-                    hammer_data['upper_wick_ratio'],
-                    hammer_data['lower_wick_ratio']
-                ])
-            
-            self.logger.info(f"💾 Debug hammer saved to CSV: {debug_csv_path}")
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"❌ Error saving debug hammer to CSV: {str(e)}")
-            return False
-
 
 
 
@@ -6941,30 +6212,31 @@ class HammerPatternScanner:
 # ================================
 
 class UltimateTradingSystem:
-    def __init__(self, pair_group, pair_config, telegram_token=None, telegram_chat_id=None, news_calendar=None):
+    def __init__(self, pair_group, pair_config, telegram_token=None, telegram_chat_id=None):
         # Store the parameters as instance variables
         self.pair_group = pair_group
         self.pair_config = pair_config
-        self.sd_detector = SupplyDemandDetector(min_zone_pct=0)
+        self.sd_detector = SupplyDemandDetector(min_zone_pct=0)  # 0.5% minimum zone
         self.volatile_pairs = ['XAU_USD']
+        
         
         # Handle Telegram credentials
         self.telegram_token = telegram_token
         self.telegram_chat_id = telegram_chat_id
-        self.news_calendar = news_calendar  # Store news calendar
         
         # BACKWARD COMPATIBLE: Handle both old and new structures
         if 'instruments' in pair_config:
-            self.instruments = pair_config['instruments']
+            self.instruments = pair_config['instruments']  # NEW structure
         else:
+            # OLD structure: convert pair1/pair2 to instruments list
             self.instruments = [pair_config['pair1'], pair_config['pair2']]
             logger.info(f"🔄 Converted old structure for {pair_group} to instruments: {self.instruments}")
         
-        # Initialize components
+        # Initialize components - REORDERED!
         self.timing_manager = RobustTimingManager()
         self.quarter_manager = RobustQuarterManager()
         
-        # Create FeatureBox
+        # FIRST create FeatureBox
         self.feature_box = RealTimeFeatureBox(
             self.pair_group, 
             self.timing_manager, 
@@ -6972,61 +6244,50 @@ class UltimateTradingSystem:
             self.telegram_chat_id
         )
         
-        # Create detectors and connect FeatureBox
+        # THEN create detectors and connect FeatureBox
         self.smt_detector = UltimateSMTDetector(pair_config, self.timing_manager)
         self.crt_detector = RobustCRTDetector(self.timing_manager)
-        self.crt_detector.feature_box = self.feature_box
+        self.crt_detector.feature_box = self.feature_box  # ← NOW THIS WORKS!
         self.feature_box.sd_detector = self.sd_detector
         
-        # Data storage
+        # Data storage for all instruments
         self.market_data = {inst: {} for inst in self.instruments}
         
-        # Initialize FVG detector
+        logger.info(f"🎯 Initialized ULTIMATE trading system for {self.pair_group}: {', '.join(self.instruments)}")
+        logger.info(f"🎯 FVG Analyzer initialized for {pair_group}")
         self.fvg_detector = FVGDetector(min_gap_pct=0.20)
-        self.fvg_smt_tap_sent = {}
+        self.fvg_smt_tap_sent = {}  # Track FVG+SMT tap signals sent
         self.crt_smt_ideas_sent = {}
-        self.sd_zone_sent = {}
-        self.sd_hp_sent = {}
+        self.sd_zone_sent = {}  # For Supply/Demand zone signals
+        self.sd_hp_sent = {}    # For High Probability SD zone signals    
         self.fvg_ideas_sent = {}
         self.double_smt_sent = {}
-        
-        # Timing system
         self.hybrid_timing = HybridTimingSystem(pair_group)
         self.last_candle_scan = {}
-        
-        # Cooldown periods
-        self.COOLDOWN_HOURS = 24 * 3600
-        self.CLEANUP_DAYS = 7 * 24 * 3600
-        
-        # Timeframe cycle map
+        # Cooldown periods (in seconds)
+        self.COOLDOWN_HOURS = 24 * 3600  # 24 hours
+        self.CLEANUP_DAYS = 7 * 24 * 3600  # Clean up after 7 days
         self.timeframe_cycle_map = {
-            'H4': ['weekly', 'daily'],
-            'H1': ['daily'], 
-            'M15': ['daily', '90min']
-        }
-        
-        # Initialize HammerScanner with news_calendar
+                'H4': ['weekly', 'daily'],   # Monthly removed
+                'H1': ['daily'], 
+                'M15': ['daily', '90min']
+            }
+        # In UltimateTradingSystem.__init__
         hammer_credentials = {
             'telegram_token': telegram_token,
             'telegram_chat_id': telegram_chat_id,
             'oanda_api_key': os.getenv('OANDA_API_KEY')
         }
-        
         self.hammer_scanner = HammerPatternScanner(
             hammer_credentials,
-            csv_base_path='/content/drive/MyDrive/hammer_trades',
-            logger=logger,
-            news_calendar=news_calendar  # Pass it here
+            csv_base_path='/content/drive/MyDrive/hammer_trades',  # Just the base path, no extension
+            logger=logger
         )
-        
+        self.hammer_scanner = HammerPatternScanner(hammer_credentials)
         self.hammer_scanner.start()
-        logger.info(f"🔨 Hammer scanner started for {pair_group}")
         
-        if news_calendar:
-            logger.info(f"🔨 Hammer scanner initialized WITH news calendar for {pair_group}")
-            logger.info(f"   Cache directory: {news_calendar.cache_dir}")
-        else:
-            logger.info(f"🔨 Hammer scanner initialized WITHOUT news calendar for {pair_group}")
+        logger.info(f"🔨 Hammer Pattern Scanner initialized for {pair_group}")
+        
     def get_sleep_time(self):
         """Use smart timing instead of fixed intervals"""
         return self.hybrid_timing.get_sleep_time()
@@ -7252,192 +6513,6 @@ class UltimateTradingSystem:
         active_zones = self.feature_box.get_active_sd_zones()
         
         return zones_added
-
-    def get_sleep_time_for_cycle(self, cycle_type):
-        """Calculate sleep time until next candle for a specific cycle"""
-        timeframe = CYCLE_SLEEP_TIMEFRAMES.get(cycle_type)
-        if not timeframe:
-            return BASE_INTERVAL
-            
-        next_candle_time = self.calculate_next_candle_time(timeframe)
-        current_time = datetime.now(self.ny_tz)
-        
-        sleep_seconds = (next_candle_time - current_time).total_seconds() + CANDLE_BUFFER_SECONDS
-        
-        max_sleep_times = {
-            '90min': 300,
-            'daily': 900, 
-            'weekly': 1800,
-            'monthly': 3600
-        }
-        
-        max_sleep = max_sleep_times.get(cycle_type, 300)
-        calculated_sleep = max(MIN_INTERVAL, sleep_seconds)
-        
-        final_sleep = min(calculated_sleep, max_sleep)
-        final_sleep = 20
-        
-        logger.debug(f"Sleep calculation for {cycle_type}: calculated={calculated_sleep:.1f}s, max={max_sleep}s, final={final_sleep:.1f}s")
-        return final_sleep
-
-    def _signals_are_very_similar(self, signal1, signal2):
-        """Check if two signals are VERY similar (same direction and cycle pattern)"""
-        # Extract direction
-        dir1 = "BULLISH" if "BULLISH" in signal1.upper() else "BEARISH" if "BEARISH" in signal1.upper() else None
-        dir2 = "BULLISH" if "BULLISH" in signal2.upper() else "BEARISH" if "BEARISH" in signal2.upper() else None
-        
-        # Must have same direction
-        if dir1 != dir2:
-            return False
-            
-        # Extract cycles
-        cycles1 = [cycle for cycle in ['MONTHLY', 'WEEKLY', 'DAILY', '90MIN'] if cycle in signal1.upper()]
-        cycles2 = [cycle for cycle in ['MONTHLY', 'WEEKLY', 'DAILY', '90MIN'] if cycle in signal2.upper()]
-        
-        # If both have same cycle composition, consider very similar
-        if cycles1 and cycles2 and set(cycles1) == set(cycles2):
-            return True
-            
-        return False
-    
-    def _clean_old_entries(self):
-        """Clean entries older than 48 hours"""
-        current_time = datetime.now(self.ny_tz)
-        for pair_group in list(self.sent_signals.keys()):
-            for signal_key in list(self.sent_signals[pair_group].keys()):
-                if (current_time - self.sent_signals[pair_group][signal_key]).total_seconds() > 172800:  # 48 hours
-                    del self.sent_signals[pair_group][signal_key]
-    
-    def validate_chronological_order(self, prev_time, curr_time):
-        """Validate that swing times are in correct chronological order"""
-        if prev_time and curr_time:
-            time_diff = (curr_time - prev_time).total_seconds()
-            is_valid = time_diff > 0
-            if not is_valid:
-                logger.warning(f"⚠️ NON-CHRONOLOGICAL SWINGS: {prev_time.strftime('%H:%M')} → {curr_time.strftime('%H:%M')} (diff: {time_diff/60:.1f} min)")
-            return is_valid
-        return True
-    
-    def is_psp_within_bounds(self, smt_formation_time, psp_formation_time, cycle_type):
-        """Check if PSP is within reasonable time of SMT formation"""
-        if not smt_formation_time or not psp_formation_time:
-            return False
-            
-        time_diff = abs((psp_formation_time - smt_formation_time).total_seconds() / 3600)  # hours
-        
-        # Maximum allowed time difference based on cycle
-        max_hours = {
-            'monthly': 24 * 3,  # 3 days
-            'weekly': 24 * 1,   # 1 day  
-            'daily': 1,         # 1hour
-            '90min': 0.3          # 30 minutes
-        }
-        
-        max_allowed = max_hours.get(cycle_type, 3)
-        is_within = time_diff <= max_allowed
-        
-        if not is_within:
-            logger.warning(f"⚠️ PSP TOO FAR FROM SMT: {time_diff:.1f}h > {max_allowed}h for {cycle_type}")
-            
-        return is_within
-    
-    def calculate_next_candle_time(self, timeframe):
-        """Calculate when the next candle will open for any timeframes"""
-        now = datetime.now(self.ny_tz)
-        
-        if timeframe.startswith('H'):
-            hours = int(timeframe[1:])
-            return self._calculate_next_htf_candle_time(hours)
-        elif timeframe.startswith('M'):
-            minutes = int(timeframe[1:])
-            return self._calculate_next_ltf_candle_time(minutes)
-        else:
-            return self._calculate_next_htf_candle_time(1)
-    
-    def _calculate_next_htf_candle_time(self, hours):
-        """Calculate next candle time for hourly timeframes"""
-        now = datetime.now(self.ny_tz)
-        
-        if hours == 1:
-            next_hour = now.hour + 1
-            if next_hour >= 24:
-                next_time = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
-            else:
-                next_time = now.replace(hour=next_hour, minute=0, second=0, microsecond=0)
-                
-        elif hours == 4:
-            current_hour = now.hour
-            next_hour = ((current_hour // 4) * 4 + 4) % 24
-            if next_hour < current_hour:
-                next_time = now.replace(hour=next_hour, minute=0, second=0, microsecond=0) + timedelta(days=1)
-            else:
-                next_time = now.replace(hour=next_hour, minute=0, second=0, microsecond=0)
-                
-        else:
-            current_hour = now.hour
-            next_hour = ((current_hour // hours) * hours + hours) % 24
-            if next_hour < current_hour:
-                next_time = now.replace(hour=next_hour, minute=0, second=0, microsecond=0) + timedelta(days=1)
-            else:
-                next_time = now.replace(hour=next_hour, minute=0, second=0, microsecond=0)
-        
-        return next_time
-    
-    def _calculate_next_ltf_candle_time(self, minutes):
-        """Calculate next candle time for minute timeframes"""
-        now = datetime.now(self.ny_tz)
-        current_timestamp = now.timestamp()
-        next_candle_timestamp = (current_timestamp // (minutes * 60) + 1) * (minutes * 60)
-        return datetime.fromtimestamp(next_candle_timestamp, self.ny_tz)
-    
-    def get_sleep_time_for_cycle(self, cycle_type):
-        """Calculate sleep time until next candle for a specific cycle"""
-        timeframe = CYCLE_SLEEP_TIMEFRAMES.get(cycle_type)
-        if not timeframe:
-            return BASE_INTERVAL
-            
-        next_candle_time = self.calculate_next_candle_time(timeframe)
-        current_time = datetime.now(self.ny_tz)
-        
-        sleep_seconds = (next_candle_time - current_time).total_seconds() + CANDLE_BUFFER_SECONDS
-        
-        max_sleep_times = {
-            '90min': 300,
-            'daily': 300, 
-            'weekly': 300,
-            'monthly': 300
-        }
-        
-        max_sleep = max_sleep_times.get(cycle_type, 300)
-        calculated_sleep = max(MIN_INTERVAL, sleep_seconds)
-        
-        final_sleep = min(calculated_sleep, max_sleep)
-        
-        logger.debug(f"Sleep calculation for {cycle_type}: calculated={calculated_sleep:.1f}s, max={max_sleep}s, final={final_sleep:.1f}s")
-        return final_sleep
-    
-    def get_sleep_time_for_crt(self, crt_timeframe):
-        """Calculate sleep time until next CRT candle"""
-        next_candle_time = self.calculate_next_candle_time(crt_timeframe)
-        current_time = datetime.now(self.ny_tz)
-        
-        sleep_seconds = (next_candle_time - current_time).total_seconds() + CANDLE_BUFFER_SECONDS
-        
-        max_sleep = 900
-        
-        final_sleep = min(max(MIN_INTERVAL, sleep_seconds), max_sleep)
-        logger.debug(f"CRT sleep calculation: calculated={sleep_seconds:.1f}s, max={max_sleep}s, final={final_sleep:.1f}s")
-        return final_sleep
-    
-    def is_crt_fresh(self, crt_timestamp, max_age_minutes=50000):  # Increased increased to infinity since we seed more confluences
-        """Check if CRT signal is fresh - MORE LENIENT"""
-        if not crt_timestamp:
-            return False
-            
-        current_time = datetime.now(self.ny_tz)
-        age_seconds = (current_time - crt_timestamp).total_seconds()
-        
-        return age_seconds <= (max_age_minutes * 6000)
 
     def _cleanup_old_sd_zone_signals(self):
         """Remove old SD zone signals from tracking (7-day cleanup)"""
@@ -9963,28 +9038,20 @@ class UltimateTradingSystem:
 # ================================
 # ULTIMATE MAIN MANAGER
 # ================================
+
 class UltimateTradingManager:
-    def __init__(self, api_key, telegram_token, chat_id, news_data=None, news_calendar=None):
+    def __init__(self, api_key, telegram_token, chat_id):
         self.api_key = api_key
         self.telegram_token = telegram_token
         self.chat_id = chat_id
-        self.news_data = news_data
-        self.news_calendar = news_calendar  # Store it
         self.trading_systems = {}
         
-        # Initialize all trading systems
         for pair_group, pair_config in TRADING_PAIRS.items():
-            self.trading_systems[pair_group] = UltimateTradingSystem(
-                pair_group, 
-                pair_config, 
-                telegram_token=telegram_token, 
-                telegram_chat_id=chat_id,
-                news_calendar=news_calendar  # Pass it here
-            )
+            self.trading_systems[pair_group] = UltimateTradingSystem(pair_group, pair_config)
         
-        logger.info(f"🎯 Initialized ULTIMATE trading manager")
-        if news_calendar:
-            logger.info(f"📰 News Calendar passed to all trading systems")
+        logger.info(f"🎯 Initialized ULTIMATE trading manager with {len(self.trading_systems)} pair groups")
+        
+
     def _format_ultimate_signal_message(self, signal):
         """Format ultimate signal for Telegram - NOW WITH TRIAD SUPPORT"""
         
@@ -10207,44 +9274,19 @@ class UltimateTradingManager:
         
         return message
 
-def quick_hammer_test():
-    """Run a quick hammer test at startup"""
-    logger.info("🔨 QUICK HAMMER TEST STARTING...")
-    
-    # Create a simple hammer scanner just for testing
-    hammer_credentials = {
-        'telegram_token': os.getenv('TELEGRAM_BOT_TOKEN'),
-        'telegram_chat_id': os.getenv('TELEGRAM_CHAT_ID'),
-        'oanda_api_key': os.getenv('OANDA_API_KEY')
-    }
-    
-    test_scanner = HammerPatternScanner(
-        hammer_credentials,
-        csv_base_path='/content/drive/MyDrive/hammer_debug_test',
-        logger=logger
-    )
-    
-    # Run the debug test
-    test_scanner.run_hammer_debug_test()
-    logger.info("🔨 QUICK HAMMER TEST COMPLETED")
-
 # ================================
 # MAIN EXECUTION
 # ================================
 
 async def main():
-    """Main entry point - FIXED NEWS CALENDAR ISSUE"""
+    """Main entry point"""
     logger.info("HEY TOM'S SNIPER JUST WOKE UP")
     
     api_key = os.getenv('OANDA_API_KEY')
     telegram_token = os.getenv('TELEGRAM_BOT_TOKEN')
     telegram_chat_id = os.getenv('TELEGRAM_CHAT_ID')
     rapidapi_key = os.getenv('rapidapi_key')
-    
-    # ✅ CRITICAL DEBUG LOG
-    logger.info(f"🔍 DEBUG: RapidAPI key exists: {bool(rapidapi_key)}")
-    if rapidapi_key:
-        logger.info(f"🔍 DEBUG: RapidAPI key length: {len(rapidapi_key)} chars")
+    logger.info(f"RapidAPI Key found: {'Yes' if rapidapi_key else 'No'}")
     
     if not all([api_key, telegram_token, telegram_chat_id]):
         logger.error("❌ Missing required environment variables")
@@ -10252,86 +9294,29 @@ async def main():
         return
     
     news_calendar = None
-    global_news_data = {}
-    
     if rapidapi_key:
-        logger.info("📰 INITIALIZING NEWS CALENDAR...")
-        try:
-            # ========== CRITICAL: Create and test NewsCalendar ==========
-            logger.info(f"Testing NewsCalendar with key: {rapidapi_key[:10]}...")
-            
-            news_calendar = NewsCalendar(
-                rapidapi_key=rapidapi_key,
-                base_path='/content/drive/MyDrive',
-                logger=logger
-            )
-            
-            logger.info("Calling get_daily_news(force_fetch=True)...")
-            news_data = news_calendar.get_daily_news(force_fetch=True)
-            
-            if 'error' in news_data:
-                logger.error(f"❌ Error: {news_data['error']}")
-            else:
-                event_count = len(news_data.get('events', []))
-                logger.info(f"✅ Success! Got {event_count} events")
-                
-                # Check cache file
-                today_str = datetime.now(news_calendar.ny_tz).strftime('%Y-%m-%d')
-                cache_file = f"{news_calendar.cache_dir}/news_cache_{today_str}.json"
-                logger.info(f"Cache file should be at: {cache_file}")
-                logger.info(f"Exists: {os.path.exists(cache_file)}")
-                
-                if os.path.exists(cache_file):
-                    logger.info("✅ Cache file created successfully!")
-                else:
-                    logger.error("❌ Cache file NOT created!")
-                    
-        except Exception as e:
-            logger.error(f"❌ Failed to initialize NewsCalendar: {str(e)}")
-            import traceback
-            logger.error(traceback.format_exc())
-            news_calendar = None
+        news_calendar = NewsCalendar(rapidapi_key=rapidapi_key,
+                                      base_path='/content/drive/MyDrive',
+                                      logger=logger)
+        # This line makes the single API call for the day
+        global_news_data = news_calendar.get_daily_news()
     else:
-        logger.error("❌ RAPIDAPI KEY IS EMPTY OR NOT SET!")
-        logger.info("💡 Check if os.environ['rapidapi_key'] is set correctly")
+        logger.warning("⚠️ RapidAPI key missing. News features disabled.")
+        global_news_data = {}
     
-    # ✅ DEBUG: Verify news_calendar before passing
-    if news_calendar:
-        logger.info(f"✅ READY: news_calendar exists, passing to manager")
-        logger.info(f"   Cache dir: {news_calendar.cache_dir}")
-    else:
-        logger.error(f"❌ FAILED: news_calendar is None, will not be passed")
-    
-    # === PASS TO MANAGER ===
+    # === PASS THE DATA/CALENDAR TO  MANAGER ===
     try:
-        # Create the manager
-        logger.info("🎯 Creating UltimateTradingManager...")
+        #the pre-fetched news data or calendar
+        manager = UltimateTradingManager(api_key, 
+                                         telegram_token, 
+                                         telegram_chat_id, 
+                                         news_data=global_news_data)  # Or pass the calendar object
         
-        # DEBUG: Log what we're passing
-        logger.info(f"🔍 Passing to manager:")
-        logger.info(f"  - api_key: {bool(api_key)}")
-        logger.info(f"  - telegram_token: {bool(telegram_token)}")
-        logger.info(f"  - chat_id: {bool(telegram_chat_id)}")
-        logger.info(f"  - news_calendar: {bool(news_calendar)}")
-        
-        manager = UltimateTradingManager(
-            api_key=api_key,
-            telegram_token=telegram_token,
-            chat_id=telegram_chat_id,
-            news_calendar=news_calendar
-        )
-        
-        # DEBUG: Check what manager received
-        logger.info(f"✅ Manager created")
-        if manager.news_calendar:
-            logger.info(f"✅ Manager has News Calendar")
-        else:
-            logger.error(f"❌ Manager does NOT have News Calendar!")
-            
         await manager.run_ultimate_systems()
         
     except KeyboardInterrupt:
         logger.info("🛑 System stopped by user")
+        # Stop all hammer scanners
         for pair_group, system in manager.trading_systems.items():
             if hasattr(system, 'hammer_scanner'):
                 system.hammer_scanner.stop()
