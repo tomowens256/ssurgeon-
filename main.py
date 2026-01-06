@@ -6573,16 +6573,16 @@ class HammerPatternScanner:
             self.logger.error(f"Error starting scanner: {str(e)}")
             return False
     
-    def start(self):
-        """Start the scanner"""
-        self.running = True
+    # def start(self):
+    #     """Start the scanner"""
+    #     self.running = True
         
-        # Start background news fetching
-        if self.news_calendar:
-            self.start_news_background_fetch(interval_hours=6)
+    #     # Start background news fetching
+    #     if self.news_calendar:
+    #         self.start_news_background_fetch(interval_hours=6)
         
-        self.logger.info("🔨 Hammer Pattern Scanner started")
-        return True
+    #     self.logger.info("🔨 Hammer Pattern Scanner started")
+    #     return True
     
     def stop(self):
         """Stop the scanner"""
