@@ -3332,22 +3332,34 @@ class HybridTimingSystem:
         return to_scan
     
     def get_sleep_time(self):
-        """Calculate optimal sleep time until next scan"""
+        """Calculate sleep time until next M5 candle close + buffer"""
         now = datetime.now(self.ny_tz)
-        next_scan_times = []
         
-        for tf, config in self.timeframe_configs.items():
-            if config['next_scan']:
-                time_until = (config['next_scan'] - now).total_seconds()
-                if time_until > 0:
-                    next_scan_times.append(time_until)
+        # Calculate next M5 candle close
+        current_minute = now.minute
+        minutes_past_5 = current_minute % 5
+        seconds_past_minute = now.second + (now.microsecond / 1000000)
         
-        if not next_scan_times:
-            return 60  # Default 1 minute
+        if minutes_past_5 == 0:
+            # At exact 5-minute mark
+            if seconds_past_minute < 2:
+                # Still within 2-second buffer after candle close
+                sleep_seconds = 2 - seconds_past_minute + 2  # Wait for buffer, then add 2 seconds
+            else:
+                # Candle closed more than 2 seconds ago, wait for next one
+                minutes_to_next_close = 5
+                seconds_to_next_close = (minutes_to_next_close * 60) - seconds_past_minute
+                sleep_seconds = seconds_to_next_close + 2  # Add 2-second buffer
+        else:
+            # Not at 5-minute mark
+            minutes_to_next_close = 5 - minutes_past_5
+            seconds_to_next_close = (minutes_to_next_close * 60) - seconds_past_minute
+            sleep_seconds = seconds_to_next_close + 2  # Add 2-second buffer
         
-        # Return the shortest time until next scan
-        min_sleep = min(next_scan_times)
-        return max(5, min(min_sleep, 90))  # Between 5 and 300 seconds
+        # Ensure minimum sleep of 5 seconds and maximum of 300 seconds (5 minutes)
+        sleep_seconds = max(5, min(sleep_seconds, 300))
+        
+        return sleep_seconds
     
     def mark_scanned(self, timeframe):
         """Mark a timeframe as scanned (for manual updates)"""
