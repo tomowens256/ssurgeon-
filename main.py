@@ -7253,6 +7253,33 @@ class UltimateTradingSystem:
         
         return zones_added
 
+    def get_sleep_time_for_cycle(self, cycle_type):
+        """Calculate sleep time until next candle for a specific cycle"""
+        timeframe = CYCLE_SLEEP_TIMEFRAMES.get(cycle_type)
+        if not timeframe:
+            return BASE_INTERVAL
+            
+        next_candle_time = self.calculate_next_candle_time(timeframe)
+        current_time = datetime.now(self.ny_tz)
+        
+        sleep_seconds = (next_candle_time - current_time).total_seconds() + CANDLE_BUFFER_SECONDS
+        
+        max_sleep_times = {
+            '90min': 300,
+            'daily': 900, 
+            'weekly': 1800,
+            'monthly': 3600
+        }
+        
+        max_sleep = max_sleep_times.get(cycle_type, 300)
+        calculated_sleep = max(MIN_INTERVAL, sleep_seconds)
+        
+        final_sleep = min(calculated_sleep, max_sleep)
+        final_sleep = 20
+        
+        logger.debug(f"Sleep calculation for {cycle_type}: calculated={calculated_sleep:.1f}s, max={max_sleep}s, final={final_sleep:.1f}s")
+        return final_sleep
+
     def _cleanup_old_sd_zone_signals(self):
         """Remove old SD zone signals from tracking (7-day cleanup)"""
         if not hasattr(self, 'sd_zone_sent') or not self.sd_zone_sent:
