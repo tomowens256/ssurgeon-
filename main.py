@@ -7012,7 +7012,8 @@ class UltimateTradingSystem:
             self.pair_group, 
             self.timing_manager, 
             self.telegram_token, 
-            self.telegram_chat_id
+            self.telegram_chat_id,
+            logger=self.logger
         )
         
         # THEN create detectors and connect FeatureBox
