@@ -6091,6 +6091,77 @@ class HammerPatternScanner:
         # Sleep for 70% of the shortest timeframe (in seconds)
         sleep_minutes = min_minutes * 0.7
         return int(sleep_minutes * 60)
+
+    def _get_safe_news_data(self, news_context, instrument):
+        """Safely extract news data with proper error handling"""
+        if not news_context or not isinstance(news_context, dict):
+            return {
+                'news_context_json': '',
+                'news_high_count': 0,
+                'news_medium_count': 0,
+                'news_low_count': 0,
+                'next_news_time': '',
+                'next_news_event': '',
+                'next_news_currency': '',
+                'prev_news_time': '',
+                'prev_news_event': '',
+                'prev_news_currency': '',
+                'seconds_to_next_news': '',
+                'seconds_since_last_news': '',
+                'news_timing_category': '',
+                'news_fetch_status': 'error' if news_context is None else 'disabled'
+            }
+        
+        try:
+            # Get timing data safely
+            timing_data = news_context.get('timing', {})
+            if not isinstance(timing_data, dict):
+                timing_data = {}
+            
+            # Get future and past events
+            closest_future = timing_data.get('closest_future_event')
+            closest_past = timing_data.get('closest_past_event')
+            
+            if closest_future and not isinstance(closest_future, dict):
+                closest_future = {}
+            if closest_past and not isinstance(closest_past, dict):
+                closest_past = {}
+            
+            return {
+                'news_context_json': json.dumps(news_context),
+                'news_high_count': news_context.get('high_impact_count', 0),
+                'news_medium_count': news_context.get('medium_impact_count', 0),
+                'news_low_count': news_context.get('low_impact_count', 0),
+                'next_news_time': closest_future.get('ny_time', '') if closest_future else '',
+                'next_news_event': closest_future.get('event', '') if closest_future else '',
+                'next_news_currency': closest_future.get('currency', '') if closest_future else '',
+                'prev_news_time': closest_past.get('ny_time', '') if closest_past else '',
+                'prev_news_event': closest_past.get('event', '') if closest_past else '',
+                'prev_news_currency': closest_past.get('currency', '') if closest_past else '',
+                'seconds_to_next_news': timing_data.get('seconds_to_next', ''),
+                'seconds_since_last_news': timing_data.get('seconds_since_last', ''),
+                'news_timing_category': timing_data.get('timing_category', ''),
+                'news_fetch_status': news_context.get('fetch_status', 'success')
+            }
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error extracting news data: {str(e)}")
+            return {
+                'news_context_json': '',
+                'news_high_count': 0,
+                'news_medium_count': 0,
+                'news_low_count': 0,
+                'next_news_time': '',
+                'next_news_event': '',
+                'next_news_currency': '',
+                'prev_news_time': '',
+                'prev_news_event': '',
+                'prev_news_currency': '',
+                'seconds_to_next_news': '',
+                'seconds_since_last_news': '',
+                'news_timing_category': '',
+                'news_fetch_status': f'error: {str(e)[:50]}'
+            }
     
     def _process_and_record_hammer(self, instrument, tf, candle, direction, criteria, 
                               signal_data, signal_id, trigger_data):
@@ -6117,30 +6188,44 @@ class HammerPatternScanner:
             news_context = {}
             if hasattr(self, 'news_calendar') and self.news_calendar:
                 try:
-                    # CORRECT METHOD CALL: Use get_news_for_instrument() not get_filtered_news_for_instrument()
-                    news_context = self.news_calendar.get_news_for_instrument(instrument, current_time)
-                    
-                    # Log success
-                    self.logger.info(f"📰 Got news context for {instrument}: {news_context.get('event_count', 0)} events")
-                    
+                    # Use the news calendar's method to get filtered news
+                    news_context = self.news_calendar.get_filtered_news_for_instrument(instrument)
                 except Exception as e:
                     self.logger.error(f"❌ Error getting news from calendar: {e}")
                     news_context = {
                         'error': str(e),
                         'event_count': 0,
                         'high_impact_count': 0,
-                        'medium_impact_count': 0,
-                        'low_impact_count': 0,
+                        'fetch_status': 'error'
+                    }
+            elif hasattr(self, 'news_cache_dir') and self.news_cache_dir:
+                try:
+                    today_str = datetime.now(NY_TZ).strftime('%Y-%m-%d')
+                    cache_file = f"{self.news_cache_dir}/news_cache_{today_str}.json"
+                    
+                    if os.path.exists(cache_file):
+                        with open(cache_file, 'r') as f:
+                            cached_news = json.load(f)
+                        # Process cached_news for your instrument
+                        news_context = self._filter_news_for_instrument(cached_news, instrument)
+                except Exception as e:
+                    self.logger.error(f"❌ Error reading news cache: {e}")
+                    news_context = {
+                        'error': str(e),
+                        'event_count': 0,
+                        'high_impact_count': 0,
                         'fetch_status': 'error'
                     }
             else:
                 news_context = {
                     'event_count': 0,
                     'high_impact_count': 0,
-                    'medium_impact_count': 0,
-                    'low_impact_count': 0,
                     'fetch_status': 'disabled'
                 }
+            
+            # ========== USE HELPER FUNCTION ==========
+            # Extract news data safely
+            safe_news_data = self._get_safe_news_data(news_context, instrument)
             # Calculate price levels
             hammer_high = candle['high']
             hammer_low = candle['low']
@@ -6285,20 +6370,20 @@ class HammerPatternScanner:
                 'tp_level_hit': 0,
                 # News data
                 
-                'news_context_json': json.dumps(news_context) if news_context else '',
-                'news_high_count': news_context.get('high_impact_count', 0) if news_context else 0,
-                'news_medium_count': news_context.get('medium_impact_count', 0) if news_context else 0,
-                'news_low_count': news_context.get('low_impact_count', 0) if news_context else 0,
-                'next_news_time': closest_future.get('ny_time', '') if closest_future else '',
-                'next_news_event': closest_future.get('event', '') if closest_future else '',
-                'next_news_currency': closest_future.get('currency', '') if closest_future else '',
-                'prev_news_time': closest_past.get('ny_time', '') if closest_past else '',
-                'prev_news_event': closest_past.get('event', '') if closest_past else '',
-                'prev_news_currency': closest_past.get('currency', '') if closest_past else '',
-                'seconds_to_next_news': timing_data.get('seconds_to_next', '') if timing_data else '',
-                'seconds_since_last_news': timing_data.get('seconds_since_last', '') if timing_data else '',
-                'news_timing_category': timing_data.get('timing_category', '') if timing_data else '',
-                'news_fetch_status': news_context.get('fetch_status', '') if news_context else ''
+                'news_context_json': safe_news_data['news_context_json'],
+                'news_high_count': safe_news_data['news_high_count'],
+                'news_medium_count': safe_news_data['news_medium_count'],
+                'news_low_count': safe_news_data['news_low_count'],
+                'next_news_time': safe_news_data['next_news_time'],
+                'next_news_event': safe_news_data['next_news_event'],
+                'next_news_currency': safe_news_data['next_news_currency'],
+                'prev_news_time': safe_news_data['prev_news_time'],
+                'prev_news_event': safe_news_data['prev_news_event'],
+                'prev_news_currency': safe_news_data['prev_news_currency'],
+                'seconds_to_next_news': safe_news_data['seconds_to_next_news'],
+                'seconds_since_last_news': safe_news_data['seconds_since_last_news'],
+                'news_timing_category': safe_news_data['news_timing_category'],
+                'news_fetch_status': safe_news_data['news_fetch_status']
             }
             
             # Add advanced features
