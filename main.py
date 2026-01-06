@@ -1057,16 +1057,17 @@ class RobustCRTDetector:
         c3 = current_candle
         
         try:
-            c2_range = float(c2['high']) - float(c2['low'])
-            c2_mid = float(c2['low']) + 0.5 * c2_range
+            # REMOVED: c2_range and c2_mid since we're not using them
+            # c2_range = float(c2['high']) - float(c2['low'])
+            # c2_mid = float(c2['low']) + 0.5 * c2_range
             
+            # FIXED: Simple conditions without the commented-out part
             buy_crt = (float(c2['low']) < float(c1['low']) and 
-                      float(c2['close']) > float(c1['low'])  # and 
-                      # float(c3['open']) > c2_mid)
+                      float(c2['close']) > float(c1['low']))
             
+            # FIXED: Simple conditions without the commented-out part
             sell_crt = (float(c2['high']) > float(c1['high']) and 
-                       float(c2['close']) < float(c1['high']) # and 
-                       # float(c3['open']) < c2_mid)
+                       float(c2['close']) < float(c1['high']))
             
             if buy_crt or sell_crt:
                 direction = 'bullish' if buy_crt else 'bearish'
@@ -1125,7 +1126,6 @@ class RobustCRTDetector:
             return None
         
         return None
-
     def _check_smt_confluence_for_crt(self, crt_signal, timeframe):
         """Check for SMT confluence with CRT"""
         if not self.feature_box:
