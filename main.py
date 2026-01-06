@@ -6553,7 +6553,7 @@ class HammerPatternScanner:
             # Read existing headers
             existing_headers = []
             try:
-                with open(self.csv_file_path, 'r', newline='') as f:
+                with open(self.csv_file_path, 'r', newline='', encoding='utf-8') as f:
                     reader = csv.reader(f)
                     existing_headers = next(reader, [])
                     self.logger.info(f"📁 Found {len(existing_headers)} existing headers")
@@ -6561,7 +6561,7 @@ class HammerPatternScanner:
                 existing_headers = []
                 self.logger.warning(f"📁 Could not read headers, reinitializing CSV...")
                 self.init_csv_storage()
-                with open(self.csv_file_path, 'r', newline='') as f:
+                with open(self.csv_file_path, 'a', newline='', encoding='utf-8') as f:
                     reader = csv.reader(f)
                     existing_headers = next(reader, [])
             
