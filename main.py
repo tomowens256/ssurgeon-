@@ -7611,14 +7611,22 @@ class UltimateTradingSystem:
                 # smt_signal = self.smt_detector.detect_smt_all_cycles(asset1_data, asset2_data, cycle)
                     
                 if smt_signal:
-                        # Check for PSP immediately
+                    # ✅ FIRST CHECK if SMT is fresh enough
+                    if not self.feature_box.is_smt_fresh_enough(smt_signal):
+                        logger.info(f"🕒 SMT {smt_signal.get('signal_key', 'unknown')} is TOO OLD, skipping addition")
+                        continue  # Skip to next cycle
+                    
+                    # Check for PSP immediately
                     psp_signal = self.smt_detector.check_psp_for_smt(smt_signal, asset1_data, asset2_data)
-                        
-                    self.feature_box.add_smt(smt_signal, psp_signal)
-                    smt_detected_count += 1
-                    logger.info(f"✅ SMT DETECTED: {cycle} {smt_signal['direction']} - PSP: {'Yes' if psp_signal else 'No'}")
-                else:
-                    logger.info(f"🔍 No SMT found for {cycle} cycle")
+                    
+                    # ✅ Now add it (it's fresh enough)
+                    added = self.feature_box.add_smt(smt_signal, psp_signal)
+                    
+                    if added:
+                        smt_detected_count += 1
+                        logger.info(f"✅ FRESH SMT ADDED: {cycle} {smt_signal['direction']} - PSP: {'Yes' if psp_signal else 'No'}")
+                    else:
+                        logger.info(f"❌ Failed to add SMT {smt_signal.get('signal_key', 'unknown')}")
             else:
                 logger.warning(f"⚠️ No data for {cycle} SMT scan")
         
