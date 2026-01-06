@@ -3887,7 +3887,7 @@ class NewsCalendar:
         self.cache_dir = f"{self.news_data_path}/cache"  # This fixes the error
         
         # === SET CACHE DURATION TO 12 HOURS ===
-        self.cache_duration = cache_duration  # 43200 seconds = 12 hours
+        self.cache_duration =43200 # cache_duration  # 43200 seconds = 12 hours
         
         # Timezone setup
         self.utc_tz = pytz.UTC
