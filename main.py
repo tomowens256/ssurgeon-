@@ -2331,41 +2331,112 @@ class RealTimeFeatureBox:
         self.logger.info(f"📦 Feature Box initialized for {pair_group}")
     
     def add_smt(self, smt_data, psp_data):
-        """Add SMT feature with cycle-based expiration"""
+        """Add SMT feature with cycle-based expiration FROM FORMATION TIME (second swing)"""
         signal_key = smt_data.get('signal_key')
+        
+        # Check if already exists
         if signal_key in self.active_features['smt']:
+            self.logger.debug(f"SMT {signal_key} already exists in feature box")
             return False
         
         # Get the expiration time based on SMT cycle
         cycle = smt_data.get('cycle', 'daily')
         expiration_minutes = self.smt_cycle_expiration.get(cycle, self.expiration_times['smt'])
         
-        # Get the formation time from SMT data
-        formation_time = smt_data.get('formation_time', datetime.now(NY_TZ))
+        # Get the formation time from SMT data - THIS IS THE SECOND SWING TIME
+        formation_time = smt_data.get('formation_time')
+        if not formation_time:
+            self.logger.error(f"❌ SMT {signal_key} has no formation_time")
+            return False
         
+        # Debug: Check what's in the swings to confirm second swing time
+        swings = smt_data.get('swings', {})
+        self.logger.info(f"🔍 SMT Swings structure: {list(swings.keys())}")
+        
+        # Get second swing times from swings data
+        swing_times = smt_data.get('swing_times', {})
+        asset1_curr_time = swing_times.get('asset1_curr', {})
+        asset2_curr_time = swing_times.get('asset2_curr', {})
+        
+        # Log the actual swing times
+        if isinstance(asset1_curr_time, dict):
+            asset1_curr_actual = asset1_curr_time.get('time', 'unknown')
+        else:
+            asset1_curr_actual = asset1_curr_time
+            
+        if isinstance(asset2_curr_time, dict):
+            asset2_curr_actual = asset2_curr_time.get('time', 'unknown')
+        else:
+            asset2_curr_actual = asset2_curr_time
+        
+        self.logger.info(f"🔍 Swing times - Asset1 current: {asset1_curr_actual}, Asset2 current: {asset2_curr_actual}")
+        
+        # Calculate age from formation time
+        current_time = datetime.now(NY_TZ)
+        age_minutes = (current_time - formation_time).total_seconds() / 60
+        
+        # Check if SMT is already expired
+        if age_minutes > expiration_minutes:
+            self.logger.warning(f"⏰ SMT {signal_key} is already EXPIRED")
+            self.logger.warning(f"   Formation: {formation_time.strftime('%Y-%m-%d %H:%M')}")
+            self.logger.warning(f"   Current age: {age_minutes:.0f} minutes ({age_minutes/60:.1f} hours)")
+            self.logger.warning(f"   Max age for {cycle}: {expiration_minutes} minutes ({expiration_minutes/60:.1f} hours)")
+            return False  # Don't add expired SMTs
+        
+        # Calculate remaining time
+        remaining_minutes = expiration_minutes - age_minutes
+        
+        # Also get the timeframe
+        timeframe = smt_data.get('timeframe', 'unknown')
+        
+        # Create feature
         feature = {
             'type': 'smt',
             'smt_data': smt_data,
             'psp_data': psp_data,
-            'timestamp': datetime.now(NY_TZ),
-            'formation_time': formation_time,
+            'timestamp': current_time,
+            'formation_time': formation_time,  # Second swing time
+            'age_at_addition': age_minutes,
             'expiration': formation_time + timedelta(minutes=expiration_minutes),
             'cycle': cycle,
-            'expiration_minutes': expiration_minutes
+            'timeframe': timeframe,
+            'expiration_minutes': expiration_minutes,
+            'remaining_minutes': remaining_minutes,
+            'direction': smt_data.get('direction', 'unknown'),
+            'quarters': smt_data.get('quarters', '')
         }
         
+        # Add to active features
         self.active_features['smt'][signal_key] = feature
         
-        # SAFE LOGGING: Check if logger exists
-        if hasattr(self, 'logger'):
-            self.logger.info(f"📊 Added SMT feature {signal_key} with {cycle} cycle")
-            self.logger.info(f"   Formation: {formation_time.strftime('%Y-%m-%d %H:%M')}")
-            self.logger.info(f"   Expires in: {expiration_minutes} minutes ({expiration_minutes/60:.1f} hours)")
-        else:
-            # Fallback: print to console
-            print(f"[FeatureBox] Added SMT feature {signal_key} with {cycle} cycle")
-            print(f"[FeatureBox] Formation: {formation_time.strftime('%Y-%m-%d %H:%M')}")
-            print(f"[FeatureBox] Expires in: {expiration_minutes} minutes")
+        # Log details
+        self.logger.info(f"✅ ADDED SMT: {signal_key}")
+        self.logger.info(f"   Cycle: {cycle}, Timeframe: {timeframe}, Direction: {smt_data.get('direction')}")
+        self.logger.info(f"   Formation (2nd swing): {formation_time.strftime('%Y-%m-%d %H:%M')}")
+        self.logger.info(f"   Age at addition: {age_minutes:.0f} minutes ({age_minutes/60:.1f} hours)")
+        self.logger.info(f"   Remaining validity: {remaining_minutes:.0f} minutes ({remaining_minutes/60:.1f} hours)")
+        self.logger.info(f"   Quarters: {smt_data.get('quarters')}")
+        
+        return True
+
+    def validate_smt_freshness(self, smt_data):
+        """Validate if SMT is fresh enough to be added"""
+        signal_key = smt_data.get('signal_key')
+        cycle = smt_data.get('cycle', 'daily')
+        formation_time = smt_data.get('formation_time')
+        
+        if not formation_time:
+            self.logger.error(f"❌ SMT {signal_key} missing formation_time")
+            return False
+        
+        expiration_minutes = self.smt_cycle_expiration.get(cycle, self.expiration_times['smt'])
+        current_time = datetime.now(NY_TZ)
+        age_minutes = (current_time - formation_time).total_seconds() / 60
+        
+        if age_minutes > expiration_minutes:
+            self.logger.info(f"⏰ SMT {signal_key} REJECTED - Too old")
+            self.logger.info(f"   Cycle: {cycle}, Age: {age_minutes:.0f}min, Max: {expiration_minutes}min")
+            return False
         
         return True
     
