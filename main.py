@@ -8669,6 +8669,10 @@ class UltimateTradingSystem:
     def _scan_fvg_with_smt_tap(self):
         """Find FVGs where SMT's SECOND SWING traded in FVG zone - USING CLOSED CANDLES ONLY"""
         
+        # First, cleanup expired features
+        if hasattr(self, 'feature_box') and self.feature_box:
+            self.feature_box.cleanup_expired_features()
+        
         # CORRECT CROSS-TIMEFRAME MAPPING
         fvg_to_smt_cycles = {
             'H4': ['weekly', 'daily'],    # H4 FVG → Weekly (H1) or Daily (M15) SMT
@@ -8676,7 +8680,6 @@ class UltimateTradingSystem:
             'M15': ['daily', '90min']     # M15 FVG → Daily (M15) or 90min (M5) SMT
         }
         
-        # We need to get FVGs from FVGDetector, not from _find_zone_fvgs (which uses Fibonacci)
         # Let's scan for FVGs using FVGDetector with ONLY CLOSED CANDLES
         all_fvgs = []
         
