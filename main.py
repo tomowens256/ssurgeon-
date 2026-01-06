@@ -6509,7 +6509,7 @@ class HammerPatternScanner:
             # RISK MANAGEMENT - LOT SIZES
             message += f"*💰 RISK MANAGEMENT (MICRO LOTS):*\n"
             message += f"  • Risk $10: {trade_data['risk_10_lots']:.2f} lots\n"
-            message += f"  • Risk $100: {trade_data['risk_100_lots']:.2f} lots\n\n"
+            # message += f"  • Risk $100: {trade_data['risk_100_lots']:.2f} lots\n\n"
             
             message += f"*⏰ TIME:* {trade_data['entry_time']}\n"
             message += f"*⚡ LATENCY:* {trade_data.get('signal_latency_seconds', 0):.1f}s (candle close → signal)\n\n"
