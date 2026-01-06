@@ -6004,6 +6004,13 @@ class HammerPatternScanner:
             
             # Calculate pips
             sl_distance_pips = abs(current_price - sl_price) * pip_multiplier
+
+            # Calculate position sizes for risk management
+            risk_10_lots, risk_100_lots = self.calculate_position_sizes(
+                instrument, 
+                sl_distance_pips, 
+                current_price
+            )
             
             # TP distances
             tp_distances = {}
@@ -6087,6 +6094,8 @@ class HammerPatternScanner:
                 'tp_1_4_price': round(tp_1_4_price, 5),
                 'open_tp_price': round(open_tp_price, 5) if open_tp_price else '',
                 'sl_distance_pips': round(sl_distance_pips, 1),
+                'risk_10_lots': risk_10_lots,
+                'risk_100_lots': risk_100_lots,
                 **tp_distances,
                 # Initialize TP results and times
                 'tp_1_1_result': '', 'tp_1_1_time_seconds': 0,
