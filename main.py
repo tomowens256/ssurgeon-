@@ -2331,63 +2331,23 @@ class RealTimeFeatureBox:
         self.logger.info(f"📦 Feature Box initialized for {pair_group}")
     
     def add_smt(self, smt_data, psp_data):
-        """Add SMT feature with cycle-based expiration FROM FORMATION TIME (second swing)"""
+        """Add SMT feature - assumes it's already validated as fresh"""
         signal_key = smt_data.get('signal_key')
         
         # Check if already exists
         if signal_key in self.active_features['smt']:
-            self.logger.debug(f"SMT {signal_key} already exists in feature box")
+            self.logger.debug(f"SMT {signal_key} already exists")
             return False
         
-        # Get the expiration time based on SMT cycle
+        # Get cycle and expiration
         cycle = smt_data.get('cycle', 'daily')
         expiration_minutes = self.smt_cycle_expiration.get(cycle, self.expiration_times['smt'])
-        
-        # Get the formation time from SMT data - THIS IS THE SECOND SWING TIME
         formation_time = smt_data.get('formation_time')
-        if not formation_time:
-            self.logger.error(f"❌ SMT {signal_key} has no formation_time")
-            return False
         
-        # Debug: Check what's in the swings to confirm second swing time
-        swings = smt_data.get('swings', {})
-        self.logger.info(f"🔍 SMT Swings structure: {list(swings.keys())}")
-        
-        # Get second swing times from swings data
-        swing_times = smt_data.get('swing_times', {})
-        asset1_curr_time = swing_times.get('asset1_curr', {})
-        asset2_curr_time = swing_times.get('asset2_curr', {})
-        
-        # Log the actual swing times
-        if isinstance(asset1_curr_time, dict):
-            asset1_curr_actual = asset1_curr_time.get('time', 'unknown')
-        else:
-            asset1_curr_actual = asset1_curr_time
-            
-        if isinstance(asset2_curr_time, dict):
-            asset2_curr_actual = asset2_curr_time.get('time', 'unknown')
-        else:
-            asset2_curr_actual = asset2_curr_time
-        
-        self.logger.info(f"🔍 Swing times - Asset1 current: {asset1_curr_actual}, Asset2 current: {asset2_curr_actual}")
-        
-        # Calculate age from formation time
+        # Calculate age (should be fresh since we validated)
         current_time = datetime.now(NY_TZ)
         age_minutes = (current_time - formation_time).total_seconds() / 60
-        
-        # Check if SMT is already expired
-        if age_minutes > expiration_minutes:
-            self.logger.warning(f"⏰ SMT {signal_key} is already EXPIRED")
-            self.logger.warning(f"   Formation: {formation_time.strftime('%Y-%m-%d %H:%M')}")
-            self.logger.warning(f"   Current age: {age_minutes:.0f} minutes ({age_minutes/60:.1f} hours)")
-            self.logger.warning(f"   Max age for {cycle}: {expiration_minutes} minutes ({expiration_minutes/60:.1f} hours)")
-            return False  # Don't add expired SMTs
-        
-        # Calculate remaining time
         remaining_minutes = expiration_minutes - age_minutes
-        
-        # Also get the timeframe
-        timeframe = smt_data.get('timeframe', 'unknown')
         
         # Create feature
         feature = {
@@ -2395,27 +2355,43 @@ class RealTimeFeatureBox:
             'smt_data': smt_data,
             'psp_data': psp_data,
             'timestamp': current_time,
-            'formation_time': formation_time,  # Second swing time
+            'formation_time': formation_time,
             'age_at_addition': age_minutes,
             'expiration': formation_time + timedelta(minutes=expiration_minutes),
             'cycle': cycle,
-            'timeframe': timeframe,
+            'timeframe': smt_data.get('timeframe', 'unknown'),
             'expiration_minutes': expiration_minutes,
-            'remaining_minutes': remaining_minutes,
-            'direction': smt_data.get('direction', 'unknown'),
-            'quarters': smt_data.get('quarters', '')
+            'remaining_minutes': remaining_minutes
         }
         
         # Add to active features
         self.active_features['smt'][signal_key] = feature
         
-        # Log details
-        self.logger.info(f"✅ ADDED SMT: {signal_key}")
-        self.logger.info(f"   Cycle: {cycle}, Timeframe: {timeframe}, Direction: {smt_data.get('direction')}")
-        self.logger.info(f"   Formation (2nd swing): {formation_time.strftime('%Y-%m-%d %H:%M')}")
-        self.logger.info(f"   Age at addition: {age_minutes:.0f} minutes ({age_minutes/60:.1f} hours)")
-        self.logger.info(f"   Remaining validity: {remaining_minutes:.0f} minutes ({remaining_minutes/60:.1f} hours)")
-        self.logger.info(f"   Quarters: {smt_data.get('quarters')}")
+        # Log addition
+        self.logger.info(f"✅ ADDED FRESH SMT: {signal_key}")
+        self.logger.info(f"   Cycle: {cycle}, Age: {age_minutes:.0f}min, Remaining: {remaining_minutes:.0f}min")
+        self.logger.info(f"   Formation: {formation_time.strftime('%Y-%m-%d %H:%M')}")
+        
+        return True
+
+    def is_smt_fresh_enough(self, smt_data):
+        """Check if SMT is fresh enough to be added (not too old)"""
+        formation_time = smt_data.get('formation_time')
+        if not formation_time:
+            self.logger.warning(f"❌ SMT {smt_data.get('signal_key', 'unknown')} has no formation_time")
+            return False
+        
+        cycle = smt_data.get('cycle', 'daily')
+        expiration_minutes = self.smt_cycle_expiration.get(cycle, self.expiration_times['smt'])
+        
+        current_time = datetime.now(NY_TZ)
+        age_minutes = (current_time - formation_time).total_seconds() / 60
+        
+        if age_minutes > expiration_minutes:
+            self.logger.warning(f"⏰ SMT {smt_data.get('signal_key', 'unknown')} is TOO OLD to add")
+            self.logger.warning(f"   Cycle: {cycle}, Age: {age_minutes:.0f}min, Max: {expiration_minutes}min")
+            self.logger.warning(f"   Formation: {formation_time.strftime('%Y-%m-%d %H:%M')}")
+            return False
         
         return True
 
