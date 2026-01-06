@@ -1061,12 +1061,12 @@ class RobustCRTDetector:
             c2_mid = float(c2['low']) + 0.5 * c2_range
             
             buy_crt = (float(c2['low']) < float(c1['low']) and 
-                      float(c2['close']) > float(c1['low']) and 
-                      float(c3['open']) > c2_mid)
+                      float(c2['close']) > float(c1['low'])  # and 
+                      # float(c3['open']) > c2_mid)
             
             sell_crt = (float(c2['high']) > float(c1['high']) and 
-                       float(c2['close']) < float(c1['high']) and 
-                       float(c3['open']) < c2_mid)
+                       float(c2['close']) < float(c1['high']) # and 
+                       # float(c3['open']) < c2_mid)
             
             if buy_crt or sell_crt:
                 direction = 'bullish' if buy_crt else 'bearish'
