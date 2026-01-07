@@ -7516,60 +7516,70 @@ class UltimateTradingSystem:
         return new_candles
     
     async def _fetch_all_data_parallel(self, api_key):
-        """Fetch data in parallel with detailed logging"""
+        """Fetch data with correct counts for each purpose"""
         tasks = []
         
-        # Store purpose with each task
-        task_info = []
+        # Clear market data for this cycle
+        for instrument in self.instruments:
+            self.market_data[instrument] = {}
+        
+        # Define counts for different purposes
+        counts_by_purpose = {
+            'SMT': {
+                'H4': 40,   # Monthly
+                'H1': 40,   # Weekly
+                'M15': 40,  # Daily
+                'M5': 40,   # 90min
+            },
+            'SD': {
+                'M15': 101,
+                'H1': 101,
+                'H4': 101,
+                'D': 101,
+                'W': 101,
+                'M5': 101 if 'XAU_USD' in self.instruments else 0,
+            }
+        }
         
         # Create fetch tasks
         for instrument in self.instruments:
             # SMT data (40 candles)
-            for timeframe in ['H4', 'H1', 'M15', 'M5']:
-                task = asyncio.create_task(
-                    self._fetch_single_instrument_data(instrument, timeframe, 40, api_key)
-                )
-                tasks.append(task)
-                task_info.append(f"{instrument}_{timeframe}_SMT")
-                logger.debug(f"📤 Created SMT task: {instrument} {timeframe}")
-            
-            # CRT data (10 candles)
-            for timeframe in ['H1', 'H4']:
-                task = asyncio.create_task(
-                    self._fetch_single_instrument_data(instrument, timeframe, 10, api_key)
-                )
-                tasks.append(task)
-                task_info.append(f"{instrument}_{timeframe}_CRT")
-                logger.debug(f"📤 Created CRT task: {instrument} {timeframe}")
-            
-            # SD data (101 candles)
-            for timeframe in ['M15', 'H1', 'H4', 'D', 'W']:
-                if not ('XAU_USD' in instrument and timeframe == 'M5'):
+            for tf, count in counts_by_purpose['SMT'].items():
+                if count > 0:
                     task = asyncio.create_task(
-                        self._fetch_single_instrument_data(instrument, timeframe, 101, api_key)
+                        self._fetch_single_instrument_data(instrument, tf, count, api_key)
                     )
                     tasks.append(task)
-                    task_info.append(f"{instrument}_{timeframe}_SD")
-                    logger.debug(f"📤 Created SD task: {instrument} {timeframe}")
+                    logger.debug(f"📤 SMT task: {instrument} {tf} ({count} candles)")
+            
+            # SD data (101 candles)
+            for tf, count in counts_by_purpose['SD'].items():
+                if count > 0:
+                    task = asyncio.create_task(
+                        self._fetch_single_instrument_data(instrument, tf, count, api_key)
+                    )
+                    tasks.append(task)
+                    logger.debug(f"📤 SD task: {instrument} {tf} ({count} candles)")
         
         # Wait for ALL data
         try:
             results = await asyncio.wait_for(asyncio.gather(*tasks), timeout=45.0)
             
-            # Log detailed results
-            logger.info(f"✅ Parallel fetch complete for {self.pair_group}")
+            # Count successful
+            successful = sum(1 for r in results if r)
+            logger.info(f"✅ Parallel fetch: {successful}/{len(tasks)} successful for {self.pair_group}")
             
-            successful = 0
-            for i, (result, info) in enumerate(zip(results, task_info)):
-                if result:
-                    successful += 1
-                else:
-                    logger.warning(f"❌ Failed fetch: {info}")
-            
-            logger.info(f"   Results: {successful}/{len(tasks)} successful")
+            # Debug what we have
+            for instrument in self.instruments:
+                logger.info(f"📦 Data for {instrument}:")
+                for tf in counts_by_purpose['SMT'].keys():
+                    if tf in self.market_data[instrument]:
+                        df = self.market_data[instrument][tf]
+                        complete = len(df[df['complete'] == True]) if 'complete' in df.columns else len(df)
+                        logger.info(f"   {tf}: {len(df)} total, {complete} complete")
             
         except asyncio.TimeoutError:
-            logger.warning(f"⚠️ Parallel data fetch timeout for {self.pair_group}")
+            logger.warning(f"⚠️ Fetch timeout for {self.pair_group}")
     
     async def _fetch_single_instrument_data(self, instrument, timeframe, count, api_key):
         """Fetch data for single instrument"""
@@ -7643,18 +7653,28 @@ class UltimateTradingSystem:
             #if self._has_new_candle_data(timeframe):
             logger.info(f"🔍 Immediate scan: {cycle} cycle ({timeframe})")
                 
-            # In your SMT scanning code, use only the first 40 candles:
+            # Remove the .head(40) logic entirely! You're fetching exactly 40 candles now
+
             asset1_data = self.market_data[self.instruments[0]].get(timeframe)
             asset2_data = self.market_data[self.instruments[1]].get(timeframe)
             
-            # To:
-            if asset1_data is not None and len(asset1_data) > 40:
-                logger.warning(f"⚠️ {self.instruments[0]} {timeframe} has {len(asset1_data)} candles, using last 40 for SMT")
-                asset1_data = asset1_data.tail(40)  # ✅ CORRECT: Gets NEWEST 40
+            # Just check if we have data
+            if asset1_data is None or asset2_data is None:
+                logger.warning(f"⚠️ Missing data for SMT: {self.instruments[0]}={asset1_data is not None}, {self.instruments[1]}={asset2_data is not None}")
+                return
+            
+            # Log what we have
+            logger.info(f"🔍 SMT Data Check - {self.instruments[0]} {timeframe}: Has data, {len(asset1_data)} candles")
+            logger.info(f"🔍 SMT Data Check - {self.instruments[1]} {timeframe}: Has data, {len(asset2_data)} candles")
+            
+            # Check if we have enough complete candles
+            if 'complete' in asset1_data.columns:
+                complete1 = len(asset1_data[asset1_data['complete'] == True])
+                logger.info(f"   Complete candles: {complete1}")
                 
-            if asset2_data is not None and len(asset2_data) > 40:
-                logger.warning(f"⚠️ {self.instruments[1]} {timeframe} has {len(asset2_data)} candles, using last 40 for SMT")
-                asset2_data = asset2_data.tail(40)  # ✅ CORRECT: Gets NEWEST 40
+            if 'complete' in asset2_data.columns:
+                complete2 = len(asset2_data[asset2_data['complete'] == True])
+                logger.info(f"   Complete candles: {complete2}")
 
             logger.info(f"🔍 SMT Data Check - {self.instruments[0]} {timeframe}: "
                     f"{'Has data' if asset1_data is not None else 'NO DATA'}, "
