@@ -6061,8 +6061,37 @@ class HammerPatternScanner:
             def scan_timeframe(tf):
                 """Scan a single timeframe (runs in separate thread)"""
                 try:
-                    self.logger.info(f"🔍 Starting {tf} scanner thread")
+                    self.logger.info(f"🔍 Starting {instrument} {tf} scanner thread")
+                    
+                    # DEBUG: Check what data we have
+                    self.logger.info(f"📊 {instrument} {tf} Initial State:")
+                    self.logger.info(f"   Criteria: {shared_state['criteria']}")
+                    self.logger.info(f"   Direction: {shared_state['direction']}")
+                    self.logger.info(f"   Fibonacci zones: {len(shared_state['fib_zones'])}")
+                    self.logger.info(f"   SL: {shared_state['sl_price']:.5f}")
+                    self.logger.info(f"   TP: {shared_state['tp_price']:.5f}")
+                    
                     tf_scanned_candles = shared_state['scanned_candles'][tf]
+                    
+                    # Calculate 50% line ONCE (outside the loop)
+                    sl_price = shared_state['sl_price']
+                    tp_price = shared_state['tp_price']
+                    direction = shared_state['direction']
+                    
+                    if not sl_price or not tp_price:
+                        self.logger.error(f"❌ {instrument} {tf}: Missing SL or TP!")
+                        return
+                    
+                    if direction == 'bearish':
+                        fifty_percent_line = sl_price - ((sl_price - tp_price) * 0.5)
+                    else:  # bullish
+                        fifty_percent_line = sl_price + ((tp_price - sl_price) * 0.5)
+                    
+                    self.logger.info(f"📊 {instrument} {tf}: 50% line at {fifty_percent_line:.5f}")
+                    
+                    # Log all zones for debugging
+                    for i, zone in enumerate(shared_state['fib_zones']):
+                        self.logger.info(f"📊 {instrument} {tf} Zone {i+1}: {zone['zone_name']} - {zone['low']:.5f} to {zone['high']:.5f}")
                     
                     while datetime.now(NY_TZ) < shared_state['scan_end']:
                         # 1. Check for CRT invalidation (if applicable)
@@ -6147,49 +6176,54 @@ class HammerPatternScanner:
                             self.log_detailed_candle_analysis(closed_candle, tf, shared_state['direction'])
                         
                         # 8. Check if candle is in VALID Fibonacci zone
+                        # 8. Check if candle is in VALID Fibonacci zone
                         candle_price = closed_candle['close']
                         in_valid_zone = False
                         target_zone = None
                         
+                        # Check each zone
                         for zone in shared_state['fib_zones']:
-                            if shared_state['direction'] == 'bearish':
-                                # For bearish: check if candle is in zone AND above 50% line
-                                if zone['low'] <= candle_price <= zone['high']:
-                                    # Additional check: candle should be above 50% line
-                                    # Calculate 50% line between SL and TP for this zone
-                                    sl_price = shared_state['signal_data'].get('smt_data', {}).get('swings', {}).get('highest_swing', zone['high'])
-                                    tp_price = shared_state['signal_data'].get('smt_data', {}).get('swings', {}).get('lowest_swing', zone['low'])
-                                    
-                                    if sl_price and tp_price:
-                                        fifty_percent_line = sl_price - ((sl_price - tp_price) * 0.5)
-                                        if candle_price > fifty_percent_line:
-                                            in_valid_zone = True
-                                            target_zone = zone
-                                            break
-                            else:  # bullish
-                                if zone['low'] <= candle_price <= zone['high']:
-                                    # For bullish: candle should be below 50% line
-                                    sl_price = shared_state['signal_data'].get('smt_data', {}).get('swings', {}).get('lowest_swing', zone['low'])
-                                    tp_price = shared_state['signal_data'].get('smt_data', {}).get('swings', {}).get('highest_swing', zone['high'])
-                                    
-                                    if sl_price and tp_price:
-                                        fifty_percent_line = sl_price + ((tp_price - sl_price) * 0.5)
-                                        if candle_price < fifty_percent_line:
-                                            in_valid_zone = True
-                                            target_zone = zone
-                                            break
+                            # First check if price is in this zone
+                            if zone['low'] <= candle_price <= zone['high']:
+                                self.logger.info(f"✅ {instrument} {tf}: Candle in zone {zone['zone_name']} ({zone['low']:.5f}-{zone['high']:.5f})")
+                                
+                                # Now check the 50% line condition
+                                if direction == 'bearish':
+                                    # For bearish: candle must be ABOVE 50% line
+                                    if candle_price > fifty_percent_line:
+                                        in_valid_zone = True
+                                        target_zone = zone
+                                        self.logger.info(f"✅ {instrument} {tf}: VALID - Above 50% line (candle: {candle_price:.5f} > 50%: {fifty_percent_line:.5f})")
+                                        break
+                                    else:
+                                        self.logger.info(f"❌ {instrument} {tf}: INVALID - Below 50% line (candle: {candle_price:.5f} <= 50%: {fifty_percent_line:.5f})")
+                                else:  # bullish
+                                    # For bullish: candle must be BELOW 50% line
+                                    if candle_price < fifty_percent_line:
+                                        in_valid_zone = True
+                                        target_zone = zone
+                                        self.logger.info(f"✅ {instrument} {tf}: VALID - Below 50% line (candle: {candle_price:.5f} < 50%: {fifty_percent_line:.5f})")
+                                        break
+                                    else:
+                                        self.logger.info(f"❌ {instrument} {tf}: INVALID - Above 50% line (candle: {candle_price:.5f} >= 50%: {fifty_percent_line:.5f})")
+                            else:
+                                # Log why this zone doesn't match
+                                if candle_price < zone['low']:
+                                    self.logger.debug(f"❌ {instrument} {tf}: Candle below zone {zone['zone_name']} ({candle_price:.5f} < {zone['low']:.5f})")
+                                elif candle_price > zone['high']:
+                                    self.logger.debug(f"❌ {instrument} {tf}: Candle above zone {zone['zone_name']} ({candle_price:.5f} > {zone['high']:.5f})")
                         
                         if not in_valid_zone:
-                            self.logger.debug(f"❌ {instrument} {tf}: Candle not in VALID Fibonacci zone (or below/above 50% line): {candle_price:.5f}")
+                            self.logger.info(f"❌ {instrument} {tf}: Candle not in any valid Fibonacci zone")
+                            self.logger.info(f"   Price: {candle_price:.5f}, 50% line: {fifty_percent_line:.5f}")
                             time.sleep(1)
                             continue
                         
                         # 9. If hammer AND in zone, process it
                         if is_hammer:
-                            self.logger.info(f"✅ {tf}: HAMMER FOUND in Fibonacci zone!")
-                            self.logger.info(f"   Timeframe: {tf}, Time: {closed_candle['time']}")
-                            self.logger.info(f"   Price: {candle_price:.5f}, "
-                                           f"Zone: {target_zone['ratio'] if target_zone else 'N/A'}")
+                            self.logger.info(f"✅ {instrument} {tf}: HAMMER FOUND in Fibonacci zone!")
+                            self.logger.info(f"   Time: {closed_candle['time']}")
+                            self.logger.info(f"   Price: {candle_price:.5f}, Zone: {target_zone['zone_name'] if target_zone else 'N/A'}")
                             self.logger.info(f"   Wick ratios: upper={upper_ratio:.2f}, lower={lower_ratio:.2f}")
                             
                             # 10. Process and record hammer with thread safety
@@ -6217,10 +6251,10 @@ class HammerPatternScanner:
                         # Small pause to avoid API rate limits and excessive CPU
                         time.sleep(1)
                         
-                    self.logger.info(f"⏰ {tf} scanner thread completed")
+                    self.logger.info(f"⏰ {instrument} {tf} scanner thread completed")
                     
                 except Exception as e:
-                    self.logger.error(f"❌ Error in {tf} scanner thread: {str(e)}", exc_info=True)
+                    self.logger.error(f"❌ Error in {instrument} {tf} scanner thread: {str(e)}", exc_info=True)
             
             # Start a thread for each timeframe
             threads = []
