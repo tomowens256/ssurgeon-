@@ -7516,105 +7516,94 @@ class UltimateTradingSystem:
         return new_candles
     
     async def _fetch_all_data_parallel(self, api_key):
-        """Fetch data in parallel with different counts for different purposes"""
+        """Fetch data in parallel with detailed logging"""
         tasks = []
         
-        # Define counts for different purposes
-        smt_counts = {
-            'H4': 40,   # Monthly
-            'H1': 40,   # Weekly  
-            'M15': 40,   # Daily
-            'M5': 40,    # 90min
-        }
-        
-        crt_counts = {
-            'H1': 10,
-            'H4': 10,
-        }
-        
-        sd_counts = {
-            'M15': 101,
-            'H1': 101,
-            'H4': 101,
-            'D': 101,
-            'W': 101,
-            'M5': 101 if 'XAU_USD' in self.instruments else 0,
-        }
-        
-        # Get required timeframes from config
-        smt_timeframes = list(self.pair_config['timeframe_mapping'].values())
+        # Store purpose with each task
+        task_info = []
         
         # Create fetch tasks
         for instrument in self.instruments:
-            # 1. Fetch SMT data (40 candles)
-            for tf in smt_timeframes:
-                if tf in smt_counts:
-                    count = smt_counts[tf]
-                    task = asyncio.create_task(
-                        self._fetch_single_instrument_data(instrument, tf, count, api_key, purpose="SMT")
-                    )
-                    tasks.append(task)
-            
-            # 2. Fetch CRT data (10 candles)
-            for tf in crt_counts.keys():
-                count = crt_counts[tf]
+            # SMT data (40 candles)
+            for timeframe in ['H4', 'H1', 'M15', 'M5']:
                 task = asyncio.create_task(
-                    self._fetch_single_instrument_data(instrument, tf, count, api_key, purpose="CRT")
+                    self._fetch_single_instrument_data(instrument, timeframe, 40, api_key)
                 )
                 tasks.append(task)
+                task_info.append(f"{instrument}_{timeframe}_SMT")
+                logger.debug(f"📤 Created SMT task: {instrument} {timeframe}")
             
-            # 3. Fetch SD data (101 candles)
-            for tf, count in sd_counts.items():
-                if count > 0:  # Skip if count is 0
+            # CRT data (10 candles)
+            for timeframe in ['H1', 'H4']:
+                task = asyncio.create_task(
+                    self._fetch_single_instrument_data(instrument, timeframe, 10, api_key)
+                )
+                tasks.append(task)
+                task_info.append(f"{instrument}_{timeframe}_CRT")
+                logger.debug(f"📤 Created CRT task: {instrument} {timeframe}")
+            
+            # SD data (101 candles)
+            for timeframe in ['M15', 'H1', 'H4', 'D', 'W']:
+                if not ('XAU_USD' in instrument and timeframe == 'M5'):
                     task = asyncio.create_task(
-                        self._fetch_single_instrument_data(instrument, tf, count, api_key, purpose="SD")
+                        self._fetch_single_instrument_data(instrument, timeframe, 101, api_key)
                     )
                     tasks.append(task)
+                    task_info.append(f"{instrument}_{timeframe}_SD")
+                    logger.debug(f"📤 Created SD task: {instrument} {timeframe}")
         
         # Wait for ALL data
         try:
             results = await asyncio.wait_for(asyncio.gather(*tasks), timeout=45.0)
+            
+            # Log detailed results
             logger.info(f"✅ Parallel fetch complete for {self.pair_group}")
             
-            # Debug: Count what we got
-            smt_count = sum(1 for r in results if r and "SMT" in str(r))
-            crt_count = sum(1 for r in results if r and "CRT" in str(r))
-            sd_count = sum(1 for r in results if r and "SD" in str(r))
+            successful = 0
+            for i, (result, info) in enumerate(zip(results, task_info)):
+                if result:
+                    successful += 1
+                else:
+                    logger.warning(f"❌ Failed fetch: {info}")
             
-            logger.info(f"   SMT fetches: {smt_count}, CRT fetches: {crt_count}, SD fetches: {sd_count}")
+            logger.info(f"   Results: {successful}/{len(tasks)} successful")
             
         except asyncio.TimeoutError:
             logger.warning(f"⚠️ Parallel data fetch timeout for {self.pair_group}")
     
-    async def _fetch_single_instrument_data(self, instrument, timeframe, count, api_key, purpose=""):
-        """Fetch data for single instrument with purpose tag"""
+    async def _fetch_single_instrument_data(self, instrument, timeframe, count, api_key):
+        """Fetch data for single instrument"""
         try:
-            from pytz import timezone
-            NY_TZ = timezone('America/New_York')
+            logger.info(f"🔄 Fetching {instrument} {timeframe} with {count} candles...")
             
             df = await asyncio.get_event_loop().run_in_executor(
                 None, fetch_candles, instrument, timeframe, count, api_key
             )
             
-            if df is not None and isinstance(df, pd.DataFrame) and not df.empty:
-                # Convert timestamps to NY_TZ
-                if df['time'].dt.tz is None:
-                    df['time'] = df['time'].dt.tz_localize('UTC').dt.tz_convert(NY_TZ)
+            if df is None:
+                logger.error(f"❌ fetch_candles returned None for {instrument} {timeframe}")
+                return False
                 
-                # Store with purpose tag
-                key = f"{timeframe}_{purpose}" if purpose else timeframe
-                self.market_data[instrument][key] = df
+            if not isinstance(df, pd.DataFrame):
+                logger.error(f"❌ fetch_candles returned {type(df)}, not DataFrame for {instrument} {timeframe}")
+                return False
                 
-                # Log the actual candle count
-                complete_candles = df[df['complete'] == True] if 'complete' in df.columns else df
-                logger.debug(f"📊 {instrument} {timeframe} {purpose}: {len(df)} candles, {len(complete_candles)} complete")
-                
-                return True
-            return False
+            if df.empty:
+                logger.error(f"❌ fetch_candles returned empty DataFrame for {instrument} {timeframe}")
+                return False
+            
+            # Convert timestamps to NY_TZ
+            if df['time'].dt.tz is None:
+                df['time'] = df['time'].dt.tz_localize('UTC').dt.tz_convert(NY_TZ)
+            
+            self.market_data[instrument][timeframe] = df
+            
+            logger.info(f"✅ Fetched {instrument} {timeframe}: {len(df)} candles")
+            return True
+            
         except Exception as e:
-            logger.error(f"❌ Error fetching {instrument} {timeframe} for {purpose}: {str(e)}")
+            logger.error(f"❌ Error fetching {instrument} {timeframe}: {str(e)}")
             return False
-
     async def _fetch_single(self, inst: str, tf: str, count: int, since: datetime) -> None:
         try:
             df_new = fetch_candles(inst, tf, count, self.api_key, since)
