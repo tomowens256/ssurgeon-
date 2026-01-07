@@ -7958,7 +7958,7 @@ class UltimateTradingSystem:
             
             # Debug what we have
             for instrument in self.instruments:
-                logger.info(f"📦 Data for {instrument}:")
+                # logger.info(f"📦 Data for {instrument}:")
                 for tf in ['H4', 'H1', 'M15', 'M5', 'D', 'W']:
                     if tf in self.market_data[instrument]:
                         df = self.market_data[instrument][tf]
@@ -7970,7 +7970,7 @@ class UltimateTradingSystem:
     async def _fetch_single_instrument_data(self, instrument, timeframe, count, api_key):
         """Fetch data for single instrument"""
         try:
-            logger.info(f"🔄 Fetching {instrument} {timeframe} with {count} candles...")
+            # logger.info(f"🔄 Fetching {instrument} {timeframe} with {count} candles...")
             
             df = await asyncio.get_event_loop().run_in_executor(
                 None, fetch_candles, instrument, timeframe, count, api_key
@@ -8135,7 +8135,7 @@ class UltimateTradingSystem:
             logger.info("❌ No data for test")
             return
         
-        logger.info(f"🧪 Testing with {len(asset1_data)} candles")
+        # logger.info(f"🧪 Testing with {len(asset1_data)} candles")
         
         # 3. Detect SMT
         smt_signal = self.smt_detector.detect_smt_all_cycles(asset1_data, asset2_data, 'weekly')
@@ -8173,7 +8173,7 @@ class UltimateTradingSystem:
                 # For CRT we only need recent candles - limit to 10
                 if len(data) > 10:
                     data = data.tail(10)
-                    logger.info(f"📏 CRT: Using last 10 candles for {instrument} {crt_tf}")
+                    # logger.info(f"📏 CRT: Using last 10 candles for {instrument} {crt_tf}")
                 
                 # Get the other instrument's data
                 other_instrument = [inst for inst in self.instruments if inst != instrument][0]
