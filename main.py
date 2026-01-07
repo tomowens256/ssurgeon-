@@ -6774,63 +6774,48 @@ class HammerPatternScanner:
             return None, None, None
     
     def save_trade_to_csv(self, trade_data):
-        """Save trade data to CSV with proper field handling"""
+        """Save trade data to CSV with latest trades at the TOP"""
         try:
-            self.logger.info(f"💾 Attempting to save trade {trade_data['trade_id']} to CSV...")
+            self.logger.info(f"💾 Attempting to save trade {trade_data['trade_id']} to CSV (latest on top)...")
             
             # Ensure the file exists and has headers
             if not os.path.exists(self.csv_file_path):
                 self.logger.warning(f"📁 CSV file doesn't exist, initializing...")
                 self.init_csv_storage()
             
-            # Read existing headers
-            existing_headers = []
+            # Read existing data (if any)
+            existing_rows = []
             try:
                 with open(self.csv_file_path, 'r', newline='', encoding='utf-8') as f:
-                    reader = csv.reader(f)
-                    existing_headers = next(reader, [])
-                    self.logger.info(f"📁 Found {len(existing_headers)} existing headers")
-            except (StopIteration, FileNotFoundError):
-                existing_headers = []
-                self.logger.warning(f"📁 Could not read headers, reinitializing CSV...")
-                self.init_csv_storage()
-                with open(self.csv_file_path, 'a', newline='', encoding='utf-8') as f:
-                    reader = csv.reader(f)
-                    existing_headers = next(reader, [])
-            
-            # Ensure all trade_data keys are in headers (add missing ones)
-            missing_headers = [key for key in trade_data.keys() if key not in existing_headers]
-            if missing_headers:
-                self.logger.info(f"📁 Adding missing headers: {missing_headers}")
-                existing_headers.extend(missing_headers)
-                
-                # Read all existing data
-                all_data = []
-                with open(self.csv_file_path, 'r', newline='') as f:
                     reader = csv.DictReader(f)
-                    all_data = list(reader)
-                
-                # Write new file with updated headers
-                with open(self.csv_file_path, 'w', newline='') as f:
-                    writer = csv.DictWriter(f, fieldnames=existing_headers)
-                    writer.writeheader()
-                    writer.writerows(all_data)
+                    existing_rows = list(reader)
+                self.logger.info(f"📁 Read {len(existing_rows)} existing rows")
+            except (StopIteration, FileNotFoundError):
+                existing_rows = []
+                self.logger.warning(f"📁 Could not read existing data, starting fresh")
             
-            # Append the new trade
-            with open(self.csv_file_path, 'a', newline='') as f:
-                writer = csv.DictWriter(f, fieldnames=existing_headers)
-                
-                # Create a row with all headers, filling missing ones with empty string
-                row = {header: trade_data.get(header, '') for header in existing_headers}
-                writer.writerow(row)
+            # Create new row with all headers
+            new_row = {}
+            for header in self.headers:
+                new_row[header] = trade_data.get(header, '')
             
-            self.logger.info(f"✅ Trade {trade_data['trade_id']} saved to CSV")
+            # Insert new row at the BEGINNING (top of file)
+            all_rows = [new_row] + existing_rows
+            
+            # Write all rows back (this puts latest trades at top)
+            with open(self.csv_file_path, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=self.headers)
+                writer.writeheader()
+                writer.writerows(all_rows)
+            
+            self.logger.info(f"✅ Trade {trade_data['trade_id']} saved to CSV (TOP)")
             self.logger.info(f"   File: {self.csv_file_path}")
-            self.logger.info(f"   Entry: {trade_data['entry_price']}, SL: {trade_data['sl_price']}, TP 1:4: {trade_data['tp_1_4_price']}")
+            self.logger.info(f"   Total rows: {len(all_rows)}")
+            self.logger.info(f"   Entry: {trade_data['entry_price']}, SL: {trade_data['sl_price']}")
             return True
             
         except Exception as e:
-            self.logger.error(f"❌ Error saving to CSV: {str(e)}")
+            self.logger.error(f"❌ Error saving to CSV: {str(e)}", exc_info=True)
             return False
     
     def send_hammer_signal(self, trade_data, trigger_data):
