@@ -5216,102 +5216,26 @@ class HammerPatternScanner:
     
 
     def _get_fib_zones(self, trigger_data):
-        """Calculate Fibonacci zones based on SMT swings and zone formation"""
+        """Calculate Fibonacci zones with proper validation for FVG+SMT and SD+SMT"""
         try:
             instrument = trigger_data.get('instrument')
             direction = trigger_data.get('direction')
             criteria = trigger_data.get('type')
             signal_data = trigger_data.get('signal_data', {})
             
-            # DEBUG LOG
+            if criteria == 'CRT+SMT':
+                return self._get_crt_zones(trigger_data)
+            
+            # DEBUG: Log what we actually received
             self.logger.info(f"📊 Getting zones for {criteria}, direction: {direction}")
             
-            if criteria == 'CRT+SMT':
-                # For CRT, we need a more sensible price range to scan
-                crt_signal = signal_data.get('crt_signal', {})
-                
-                # Fetch current price
-                df_current = fetch_candles(instrument, 'M1', count=2, 
-                                         api_key=self.credentials['oanda_api_key'])
-                
-                if df_current.empty:
-                    self.logger.error("❌ No current price data")
-                    return []
-                
-                current_price = df_current.iloc[-1]['close']
-                
-                # Get the previous candle's high/low for invalidation
-                trigger_tf = trigger_data.get('trigger_timeframe', 'H1')
-                df_tf = fetch_candles(instrument, trigger_tf, count=3, 
-                                    api_key=self.credentials['oanda_api_key'])
-                
-                if df_tf.empty or len(df_tf) < 2:
-                    self.logger.error(f"❌ No {trigger_tf} data for CRT")
-                    return []
-                
-                previous_candle = df_tf.iloc[-2]
-                
-                if direction == 'bearish':
-                    # Bearish CRT: invalidate above previous candle's high
-                    invalidation_level = previous_candle['high']
-                    # Calculate a reasonable scanning range - current price down to ~10 pips below
-                    pip_multiplier = 100  # Gold uses 2 decimals
-                    scan_extension_pips = 15  # 15 pips extension for scanning
-                    scan_low = current_price - (scan_extension_pips / pip_multiplier)
-                    scan_high = invalidation_level
-                    
-                    scan_range = [
-                        {
-                            'high': scan_high,
-                            'low': scan_low,
-                            'is_crt': True,
-                            'invalidation': invalidation_level,
-                            'current_price': current_price
-                        }
-                    ]
-                else:  # bullish
-                    # Bullish CRT: invalidate below previous candle's low
-                    invalidation_level = previous_candle['low']
-                    # Calculate a reasonable scanning range - current price up to ~10 pips above
-                    pip_multiplier = 100  # Gold uses 2 decimals
-                    scan_extension_pips = 15  # 15 pips extension for scanning
-                    scan_high = current_price + (scan_extension_pips / pip_multiplier)
-                    scan_low = invalidation_level
-                    
-                    scan_range = [
-                        {
-                            'low': scan_low,
-                            'high': scan_high,
-                            'is_crt': True,
-                            'invalidation': invalidation_level,
-                            'current_price': current_price
-                        }
-                    ]
-                
-                self.logger.info(f"📊 CRT {direction} setup:")
-                self.logger.info(f"   Invalidation: {invalidation_level:.5f}")
-                self.logger.info(f"   Current price: {current_price:.5f}")
-                self.logger.info(f"   Scan range: {scan_range[0]['low']:.5f} - {scan_range[0]['high']:.5f}")
-                self.logger.info(f"   Range size: {(scan_range[0]['high'] - scan_range[0]['low']) * 100:.1f} pips")
-                
-                return scan_range
+            if 'smt_data' in signal_data:
+                swings = signal_data['smt_data'].get('swings', {})
+                self.logger.info(f"   SMT swings count: {len(swings)}")
+                for key, swing in swings.items():
+                    self.logger.info(f"   Swing {key}: {swing.get('type', 'unknown')} at {swing.get('price', 0):.5f}")
             
-            
-            
-            # Get SMT cycle and map to timeframe for data slicing
-            smt_data = signal_data.get('smt_data', {})
-            smt_cycle = smt_data.get('cycle', 'daily')
-            
-            # Map SMT cycle to timeframe for data slicing
-            tf_map = {
-                'daily': 'M15',
-                '90min': 'M5', 
-                'weekly': 'H1',
-                'monthly': 'H4'
-            }
-            analysis_tf = tf_map.get(smt_cycle, 'M15')
-            
-            # Get formation time and zone data
+            # Get formation time
             if criteria == 'FVG+SMT':
                 zone_data = signal_data.get('fvg_idea', {})
                 formation_time = zone_data.get('formation_time')
@@ -5323,12 +5247,22 @@ class HammerPatternScanner:
                 self.logger.error(f"❌ No formation time for {criteria}")
                 return []
             
-            # Fetch data from formation time to now
-            self.logger.info(f"📊 Fetching {analysis_tf} data from {formation_time} to now...")
+            # Get SMT data
+            smt_data = signal_data.get('smt_data', {})
+            smt_cycle = smt_data.get('cycle', 'daily')
             
-            # We need to fetch enough candles to cover from formation time
-            # Estimate: 1000 candles should cover several days
-            df = fetch_candles(instrument, analysis_tf, count=1000, api_key=self.credentials['oanda_api_key'])
+            # Map SMT cycle to timeframe for data analysis
+            tf_map = {
+                'daily': 'M15',
+                '90min': 'M5', 
+                'weekly': 'H1',
+                'monthly': 'H4'
+            }
+            analysis_tf = tf_map.get(smt_cycle, 'M15')
+            
+            # Fetch enough data from formation time
+            self.logger.info(f"📊 Fetching {analysis_tf} data from {formation_time} to now...")
+            df = fetch_candles(instrument, analysis_tf, count=200, api_key=self.credentials['oanda_api_key'])
             
             if df.empty:
                 self.logger.error(f"❌ No data fetched for {instrument} {analysis_tf}")
@@ -5341,23 +5275,17 @@ class HammerPatternScanner:
                 self.logger.error(f"❌ No data after formation time {formation_time}")
                 return []
             
-            # Get SMT swings data - now it's a dictionary, not a list
-            smt_swings = smt_data.get('swings', {})
-            
-            if not smt_swings:
-                self.logger.error(f"❌ No SMT swings found")
-                return []
-            
-            # Convert swings dictionary to list for easier processing
+            # Get SMT swings and convert to list
+            smt_swings_dict = smt_data.get('swings', {})
             swings_list = []
-            for key, swing_info in smt_swings.items():
-                # Only process if it has the expected structure
+            
+            for key, swing_info in smt_swings_dict.items():
                 if isinstance(swing_info, dict) and 'price' in swing_info and 'time' in swing_info:
                     swings_list.append({
                         'time': swing_info['time'],
-                        'price': swing_info['price'],
+                        'price': swing_info.get('price', 0),
                         'type': swing_info.get('type', 'unknown'),
-                        'asset': key  # Keep track of which asset/swing this is
+                        'asset': key
                     })
             
             if len(swings_list) < 2:
@@ -5367,59 +5295,104 @@ class HammerPatternScanner:
             # Sort swings by time for chronological order
             swings_list.sort(key=lambda x: x['time'])
             
+            # ===========================================
+            # CRITICAL STEP: Check if TP swing is still valid
+            # ===========================================
+            second_swing_time = swings_list[1]['time'] if len(swings_list) > 1 else None
+            
             if direction == 'bearish':
-                # Bearish setup
-                # 1. Default SL: Highest price among all SMT swings (should be highest high)
+                # Bearish: TP is the LOWEST point between formation and second swing
+                mask = (df_from_formation['time'] >= formation_time) & \
+                       (df_from_formation['time'] <= second_swing_time) if second_swing_time else (df_from_formation['time'] >= formation_time)
+                df_for_tp = df_from_formation[mask]
+                
+                if df_for_tp.empty:
+                    default_tp = df_from_formation['low'].min()
+                else:
+                    default_tp = df_for_tp['low'].min()
+                
+                # Check if TP swing low has been broken (invalidate setup if broken)
+                # Look for any candle CLOSE below the TP after formation
+                candles_below_tp = df_from_formation[df_from_formation['close'] < default_tp]
+                
+                if not candles_below_tp.empty:
+                    self.logger.error(f"❌ BEARISH SETUP INVALID: TP swing low at {default_tp:.5f} was broken!")
+                    self.logger.error(f"   First break at: {candles_below_tp.iloc[0]['time']}")
+                    return []
+                
+                # SL is the HIGHEST SMT swing price
                 default_sl = max([swing['price'] for swing in swings_list])
                 
-                # 2. Default TP: Lowest point between zone formation and second SMT swing
-                # Get second SMT swing time (chronologically)
-                second_swing_time = swings_list[1]['time'] if len(swings_list) > 1 else None
+                self.logger.info(f"📊 BEARISH Setup Validated:")
+                self.logger.info(f"   SL (highest swing): {default_sl:.5f}")
+                self.logger.info(f"   TP (lowest swing): {default_tp:.5f}")
+                self.logger.info(f"   TP NOT broken ✓")
                 
-                if second_swing_time:
-                    # Filter data between formation time and second swing
-                    mask = (df_from_formation['time'] >= formation_time) & (df_from_formation['time'] <= second_swing_time)
-                    df_for_tp = df_from_formation[mask]
-                    default_tp = df_for_tp['low'].min() if not df_for_tp.empty else df_from_formation['low'].min()
+                # Calculate Fibonacci zones from SL (1) to TP (0)
+                fib_zones = self._calculate_fibonacci_levels(default_sl, default_tp, direction)
+                
+                # Filter zones: For bearish, we want zones ABOVE 50% (closer to SL)
+                # Zone is valid if its LOW boundary is above the 50% line
+                valid_zones = []
+                for zone in fib_zones:
+                    # The 50% line is at midpoint between SL and TP
+                    fifty_percent_line = default_sl - ((default_sl - default_tp) * 0.5)
+                    
+                    # For bearish: zone is valid if its LOW is ABOVE 50% line
+                    if zone['low'] > fifty_percent_line:
+                        valid_zones.append(zone)
+                        self.logger.info(f"✅ Valid zone: {zone['zone_name']} - {zone['low']:.5f} to {zone['high']:.5f}")
+                    else:
+                        self.logger.info(f"❌ Invalid zone (below 50%): {zone['zone_name']} - {zone['low']:.5f} to {zone['high']:.5f}")
+                
+                return valid_zones
+                
+            else:  # BULLISH
+                # Bullish: TP is the HIGHEST point between formation and second swing
+                mask = (df_from_formation['time'] >= formation_time) & \
+                       (df_from_formation['time'] <= second_swing_time) if second_swing_time else (df_from_formation['time'] >= formation_time)
+                df_for_tp = df_from_formation[mask]
+                
+                if df_for_tp.empty:
+                    default_tp = df_from_formation['high'].max()
                 else:
-                    default_tp = df_from_formation['low'].min()
+                    default_tp = df_for_tp['high'].max()
                 
-                self.logger.info(f"📊 Bearish setup:")
-                self.logger.info(f"   Default SL (highest swing price): {default_sl:.5f}")
-                self.logger.info(f"   Default TP (lowest after formation): {default_tp:.5f}")
+                # Check if TP swing high has been broken (invalidate setup if broken)
+                candles_above_tp = df_from_formation[df_from_formation['close'] > default_tp]
                 
-                # Calculate Fibonacci retracement from SL to TP
-                fib_levels = self._calculate_fibonacci_levels(default_sl, default_tp, direction)
+                if not candles_above_tp.empty:
+                    self.logger.error(f"❌ BULLISH SETUP INVALID: TP swing high at {default_tp:.5f} was broken!")
+                    self.logger.error(f"   First break at: {candles_above_tp.iloc[0]['time']}")
+                    return []
                 
-            else:  # bullish
-                # Bullish setup (flipped logic)
-                # 1. Default SL: Lowest price among all SMT swings (should be lowest low)
+                # SL is the LOWEST SMT swing price
                 default_sl = min([swing['price'] for swing in swings_list])
                 
-                # 2. Default TP: Highest point between zone formation and second SMT swing
-                second_swing_time = swings_list[1]['time'] if len(swings_list) > 1 else None
+                self.logger.info(f"📊 BULLISH Setup Validated:")
+                self.logger.info(f"   SL (lowest swing): {default_sl:.5f}")
+                self.logger.info(f"   TP (highest swing): {default_tp:.5f}")
+                self.logger.info(f"   TP NOT broken ✓")
                 
-                if second_swing_time:
-                    mask = (df_from_formation['time'] >= formation_time) & (df_from_formation['time'] <= second_swing_time)
-                    df_for_tp = df_from_formation[mask]
-                    default_tp = df_for_tp['high'].max() if not df_for_tp.empty else df_from_formation['high'].max()
-                else:
-                    default_tp = df_from_formation['high'].max()
+                # Calculate Fibonacci zones from SL (1) to TP (0)
+                fib_zones = self._calculate_fibonacci_levels(default_sl, default_tp, direction)
                 
-                self.logger.info(f"📊 Bullish setup:")
-                self.logger.info(f"   Default SL (lowest swing price): {default_sl:.5f}")
-                self.logger.info(f"   Default TP (highest after formation): {default_tp:.5f}")
+                # Filter zones: For bullish, we want zones BELOW 50% (closer to SL)
+                # Zone is valid if its HIGH boundary is below the 50% line
+                valid_zones = []
+                for zone in fib_zones:
+                    # The 50% line is at midpoint between SL and TP
+                    fifty_percent_line = default_sl + ((default_tp - default_sl) * 0.5)
+                    
+                    # For bullish: zone is valid if its HIGH is BELOW 50% line
+                    if zone['high'] < fifty_percent_line:
+                        valid_zones.append(zone)
+                        self.logger.info(f"✅ Valid zone: {zone['zone_name']} - {zone['low']:.5f} to {zone['high']:.5f}")
+                    else:
+                        self.logger.info(f"❌ Invalid zone (above 50%): {zone['zone_name']} - {zone['low']:.5f} to {zone['high']:.5f}")
                 
-                # Calculate Fibonacci retracement from SL to TP
-                fib_levels = self._calculate_fibonacci_levels(default_sl, default_tp, direction)
-            
-            # Log the swing details for debugging
-            self.logger.info(f"📊 SMT Swing details:")
-            for i, swing in enumerate(swings_list):
-                self.logger.info(f"   Swing {i+1}: {swing['asset']} - Time: {swing['time']}, Price: {swing['price']:.5f}, Type: {swing['type']}")
-            
-            return fib_levels
-            
+                return valid_zones
+                
         except Exception as e:
             self.logger.error(f"❌ Error calculating Fibonacci zones: {str(e)}", exc_info=True)
             return []
