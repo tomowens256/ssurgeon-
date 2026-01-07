@@ -4911,7 +4911,7 @@ class HammerPatternScanner:
         return True
     
     def init_csv_storage(self):
-        """Initialize CSV file with NEW columns - FORCE UPDATE"""
+        """Initialize CSV file with NEW columns - FIXED VERSION (no header duplication)"""
         try:
             # Ensure directory exists
             directory = os.path.dirname(self.csv_base_path)
@@ -4987,6 +4987,9 @@ class HammerPatternScanner:
                 
             ]
             
+            # Store headers as instance variable for later use
+            self.headers = headers
+            
             # Check if file exists
             if not os.path.exists(self.csv_file_path):
                 # Create new file with headers
@@ -4996,7 +4999,7 @@ class HammerPatternScanner:
                 self.logger.info(f"📁 Created NEW CSV with {len(headers)} columns")
                 return
             
-            # File exists - check and update headers
+            # File exists - check and update headers WITHOUT rewriting entire file
             with open(self.csv_file_path, 'r', newline='', encoding='utf-8') as f:
                 try:
                     reader = csv.reader(f)
@@ -5010,61 +5013,27 @@ class HammerPatternScanner:
                         self.logger.info(f"📁 File was empty, wrote {len(headers)} headers")
                         return
                     
-                    # Check if headers match EXACTLY
-                    if existing_headers == headers:
-                        self.logger.info(f"📁 CSV file exists with correct headers ({len(headers)} columns)")
+                    # Check if headers match (ignoring order)
+                    existing_set = set(existing_headers)
+                    headers_set = set(headers)
+                    
+                    if existing_set == headers_set:
+                        # Same headers, just check order
+                        if existing_headers == headers:
+                            self.logger.info(f"📁 CSV file exists with correct headers ({len(headers)} columns)")
+                        else:
+                            # Same headers but different order - we should reorder
+                            self.logger.info(f"📁 Headers have different order, reordering...")
+                            self._reorder_csv_headers(existing_headers, headers)
                         return
                     
-                    # Headers don't match - we need to update the file
-                    self.logger.info(f"📁 Existing headers ({len(existing_headers)} cols) don't match new headers ({len(headers)} cols)")
-                    self.logger.info(f"📁 Updating CSV structure...")
-                    
-                    # Read all existing data
-                    f.seek(0)
-                    all_rows = list(reader)
-                    
-                    # Create backup of old file
-                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                    backup_path = f"{self.csv_base_path}_backup_{timestamp}.csv"
-                    with open(backup_path, 'w', newline='', encoding='utf-8') as backup:
-                        writer = csv.writer(backup)
-                        writer.writerow(existing_headers)
-                        for row in all_rows:
-                            writer.writerow(row)
-                    self.logger.info(f"📁 Backed up old file to: {backup_path}")
-                    
-                    # Create a mapping from old headers to new headers
-                    # For existing data, we'll try to preserve what we can
-                    old_to_new = {}
-                    for i, old_header in enumerate(existing_headers):
-                        if old_header in headers:
-                            old_to_new[old_header] = old_header
-                    
-                    # Write new file with updated headers
-                    with open(self.csv_file_path, 'w', newline='', encoding='utf-8') as f2:
-                        writer = csv.DictWriter(f2, fieldnames=headers)
-                        writer.writeheader()
-                        
-                        # Write existing rows, preserving data where possible
-                        for row_data in all_rows:
-                            row_dict = {}
-                            # Build dictionary from old row data
-                            for i, value in enumerate(row_data):
-                                if i < len(existing_headers):
-                                    old_header = existing_headers[i]
-                                    if old_header in old_to_new:
-                                        row_dict[old_header] = value
-                            
-                            # Fill missing columns with empty values
-                            for header in headers:
-                                if header not in row_dict:
-                                    row_dict[header] = ''
-                            
-                            # Write the row
-                            writer.writerow(row_dict)
-                    
-                    self.logger.info(f"📁 Successfully updated CSV to {len(headers)} columns")
-                    self.logger.info(f"📁 New columns added: {[h for h in headers if h not in existing_headers]}")
+                    # Headers don't match - add missing columns
+                    missing_headers = [h for h in headers if h not in existing_set]
+                    if missing_headers:
+                        self.logger.info(f"📁 Adding {len(missing_headers)} missing headers: {missing_headers}")
+                        self._add_missing_headers(existing_headers, missing_headers, headers)
+                    else:
+                        self.logger.info(f"📁 CSV file exists with correct headers ({len(headers)} columns)")
                         
                 except (csv.Error, StopIteration, UnicodeDecodeError) as e:
                     # Corrupted CSV, recreate it
@@ -5076,15 +5045,6 @@ class HammerPatternScanner:
                     
         except Exception as e:
             self.logger.error(f"❌ Failed to initialize CSV: {str(e)}")
-            # Try to create a simple file as last resort
-            try:
-                simple_headers = ['timestamp', 'error', 'message']
-                with open(f"{self.csv_base_path}_emergency.csv", 'w', newline='') as f:
-                    writer = csv.writer(f)
-                    writer.writerow(simple_headers)
-                self.logger.info(f"📁 Created emergency CSV file")
-            except Exception as e2:
-                self.logger.error(f"❌ Could not create emergency CSV: {str(e2)}")
     
     def _generate_signal_id(self, trigger_data):
         """Create a unique signal ID for grouping multiple hammers"""
@@ -5685,6 +5645,59 @@ class HammerPatternScanner:
         config = self.timeframe_alignment.get(instrument, self.timeframe_alignment['default'])
         trigger_map = config.get(criteria, {})
         return trigger_map.get(trigger_tf, ['M5', 'M15'])
+
+    def _reorder_csv_headers(self, existing_headers, target_headers):
+        """Re-order CSV headers to match target order"""
+        try:
+            # Read all data
+            with open(self.csv_file_path, 'r', newline='', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                all_rows = list(reader)
+            
+            # Write with new header order
+            with open(self.csv_file_path, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=target_headers)
+                writer.writeheader()
+                
+                for row in all_rows:
+                    # Reorder row to match target headers
+                    ordered_row = {header: row.get(header, '') for header in target_headers}
+                    writer.writerow(ordered_row)
+            
+            self.logger.info(f"📁 Successfully reordered CSV headers")
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error reordering CSV headers: {str(e)}")
+    
+    def _add_missing_headers(self, existing_headers, missing_headers, target_headers):
+        """Add missing headers to CSV file"""
+        try:
+            # Read all data
+            with open(self.csv_file_path, 'r', newline='', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                all_rows = list(reader)
+            
+            # Create new headers (existing + missing in target order)
+            new_headers = []
+            for header in target_headers:
+                if header in existing_headers or header in missing_headers:
+                    new_headers.append(header)
+            
+            # Write with new headers
+            with open(self.csv_file_path, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=new_headers)
+                writer.writeheader()
+                
+                for row in all_rows:
+                    # Add missing columns with empty values
+                    for header in missing_headers:
+                        row[header] = ''
+                    writer.writerow(row)
+            
+            self.logger.info(f"📁 Successfully added {len(missing_headers)} missing headers")
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error adding missing headers: {str(e)}")
     
     def scan_fibonacci_hammer(self, trigger_data):
         """Main hammer scanning function with CONCURRENT timeframe scanning - COMPLETE VERSION"""
