@@ -5980,7 +5980,7 @@ class HammerPatternScanner:
             self.logger.error(f"❌ Error adding missing headers: {str(e)}")
     
     def scan_fibonacci_hammer(self, trigger_data):
-        """Main hammer scanning function with CONCURRENT timeframe scanning - COMPLETE VERSION"""
+        """Main hammer scanning function with CONCURRENT timeframe scanning"""
         try:
             instrument = trigger_data.get('instrument')
             direction = trigger_data.get('direction')
@@ -5992,16 +5992,17 @@ class HammerPatternScanner:
                 self.logger.error("❌ No signal_data in trigger_data")
                 return False
             
-            # DEBUG: Log what we actually received
-            self.logger.info(f"📦 Signal data keys: {list(signal_data.keys())}")
-            if 'smt_data' in signal_data:
-                swings = signal_data['smt_data'].get('swings', {})
-                self.logger.info(f"   SMT swings count: {len(swings)}")
-                for key, swing in swings.items():
-                    self.logger.info(f"   Swing {key}: {swing.get('type', 'unknown')} at {swing.get('price', 0):.5f}")
+            # Get Fibonacci zones WITH SL and TP
+            fib_data = self._get_fib_zones(trigger_data)
             
-            # Get Fibonacci zones
-            fib_zones = self._get_fib_zones(trigger_data)
+            if not fib_data or not fib_data.get('is_valid', False):
+                error_msg = fib_data.get('error', 'Unknown error') if fib_data else 'No data returned'
+                self.logger.error(f"❌ Invalid Fibonacci setup: {error_msg}")
+                return False
+            
+            fib_zones = fib_data['zones']
+            sl_price = fib_data['sl_price']
+            tp_price = fib_data['tp_price']
             
             if not fib_zones:
                 self.logger.error(f"❌ No Fibonacci zones calculated")
@@ -6017,6 +6018,7 @@ class HammerPatternScanner:
             self.logger.info(f"   Signal ID: {signal_id}")
             self.logger.info(f"   Direction: {direction}")
             self.logger.info(f"   Trigger TF: {trigger_timeframe}")
+            self.logger.info(f"   SL: {sl_price:.5f}, TP: {tp_price:.5f}")
             
             # Set scan duration based on criteria
             if criteria == 'CRT+SMT':
@@ -6039,6 +6041,8 @@ class HammerPatternScanner:
                 'hammer_count': 0,
                 'scan_end': scan_end,
                 'fib_zones': fib_zones,
+                'sl_price': sl_price,        # ADDED
+                'tp_price': tp_price,        # ADDED
                 'instrument': instrument,
                 'direction': direction,
                 'criteria': criteria,
@@ -6052,6 +6056,7 @@ class HammerPatternScanner:
             # Initialize scanned_candles for each timeframe
             for tf in timeframes:
                 shared_state['scanned_candles'][tf] = set()
+            
             
             def scan_timeframe(tf):
                 """Scan a single timeframe (runs in separate thread)"""
