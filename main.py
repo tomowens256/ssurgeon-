@@ -6169,11 +6169,13 @@ class HammerPatternScanner:
 
             # Get news context from the shared cache file
             
+            # Get news context from the shared cache file
             news_context = {}
             if hasattr(self, 'news_calendar') and self.news_calendar:
                 try:
-                    # Use the news calendar's method to get filtered news
-                    news_context = self.news_calendar.get_filtered_news_for_instrument(instrument)
+                    # Use the CORRECT method: get_news_for_instrument()
+                    signal_time = datetime.now(NY_TZ)
+                    news_context = self.news_calendar.get_news_for_instrument(instrument, signal_time)
                 except Exception as e:
                     self.logger.error(f"❌ Error getting news from calendar: {e}")
                     news_context = {
