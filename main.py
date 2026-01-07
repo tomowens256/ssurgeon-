@@ -5348,7 +5348,7 @@ class HammerPatternScanner:
                     'error': f'Not enough SMT swings: {len(swings_list)}'
                 }
             
-            # Sort swings by time for chronological order
+            # Sort swings by time for chronological orders
             swings_list.sort(key=lambda x: x['time'])
             
             # ============================================
