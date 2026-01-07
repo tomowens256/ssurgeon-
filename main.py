@@ -7915,7 +7915,7 @@ class UltimateTradingSystem:
         # 3. Detect SMT
         smt_signal = self.smt_detector.detect_smt_all_cycles(asset1_data, asset2_data, 'weekly')
         
-        # if smt_signal:
+        if smt_signal:
         #     logger.info(f"🧪 SMT Detected: {smt_signal['signal_key']}")
             
             # 4. Check PSP
