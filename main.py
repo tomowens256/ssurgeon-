@@ -5804,7 +5804,7 @@ class HammerPatternScanner:
             instrument = trigger_data.get('instrument')
             direction = trigger_data.get('direction')
             trigger_timeframe = trigger_data.get('trigger_timeframe')
-            signal_data = trigger_data.get('signal_data', {})
+            criteria = trigger_data.get('type')
             
             self.logger.info(f"🔷 CRT Setup: {instrument} {direction} on {trigger_timeframe}")
             
@@ -5814,7 +5814,15 @@ class HammerPatternScanner:
             
             if df.empty or len(df) < 2:
                 self.logger.error(f"❌ No data for CRT {trigger_timeframe}")
-                return []
+                return {
+                    'zones': [],
+                    'sl_price': None,
+                    'tp_price': None,
+                    'direction': direction,
+                    'criteria': criteria,
+                    'is_valid': False,
+                    'error': f'No data for {trigger_timeframe}'
+                }
             
             # Get the CRT candle (previous completed candle)
             crt_candle = df.iloc[-2]
@@ -5825,7 +5833,15 @@ class HammerPatternScanner:
             
             if current_df.empty:
                 self.logger.error(f"❌ Cannot get current price for {instrument}")
-                return []
+                return {
+                    'zones': [],
+                    'sl_price': None,
+                    'tp_price': None,
+                    'direction': direction,
+                    'criteria': criteria,
+                    'is_valid': False,
+                    'error': 'Cannot get current price'
+                }
             
             current_price = current_df.iloc[-1]['close']
             
@@ -5855,8 +5871,6 @@ class HammerPatternScanner:
                 self.logger.info(f"   Current Price: {current_price:.5f}")
                 self.logger.info(f"   SL (candle high): {default_sl:.5f}")
                 self.logger.info(f"   TP (1x range proj): {default_tp:.5f}")
-                self.logger.info(f"   SL→Current: {abs(default_sl - current_price)*10000:.1f} pips")
-                self.logger.info(f"   Current→TP: {abs(current_price - default_tp)*10000:.1f} pips")
                 
             else:  # bullish
                 # Bullish CRT: SL is below CRT candle low
@@ -5877,8 +5891,6 @@ class HammerPatternScanner:
                 self.logger.info(f"   Current Price: {current_price:.5f}")
                 self.logger.info(f"   SL (candle low): {default_sl:.5f}")
                 self.logger.info(f"   TP (1x range proj): {default_tp:.5f}")
-                self.logger.info(f"   SL→Current: {abs(current_price - default_sl)*10000:.1f} pips")
-                self.logger.info(f"   Current→TP: {abs(default_tp - current_price)*10000:.1f} pips")
             
             # Calculate Fibonacci zones from SL to TP
             fib_zones = self._calculate_fibonacci_levels(default_sl, default_tp, direction)
@@ -5886,16 +5898,27 @@ class HammerPatternScanner:
             # For CRT, we accept ALL zones (no 50% filter)
             self.logger.info(f"📊 CRT: Using ALL {len(fib_zones)} Fibonacci zones")
             
-            # Add extra debug info
-            if fib_zones:
-                for zone in fib_zones:
-                    self.logger.debug(f"   {zone['zone_name']}: {zone['low']:.5f} - {zone['high']:.5f}")
-            
-            return fib_zones
+            return {
+                'zones': fib_zones,
+                'sl_price': default_sl,
+                'tp_price': default_tp,
+                'direction': direction,
+                'criteria': criteria,
+                'is_valid': True,
+                'error': None
+            }
             
         except Exception as e:
             self.logger.error(f"❌ Error in CRT zone calculation: {str(e)}", exc_info=True)
-            return []
+            return {
+                'zones': [],
+                'sl_price': None,
+                'tp_price': None,
+                'direction': trigger_data.get('direction'),
+                'criteria': trigger_data.get('type'),
+                'is_valid': False,
+                'error': str(e)
+            }
     
     def get_aligned_timeframes(self, instrument, criteria, trigger_tf):
         """Get aligned timeframes for scanning"""
