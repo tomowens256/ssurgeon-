@@ -5847,25 +5847,41 @@ class HammerPatternScanner:
                             self.logger.info(f"✅ {tf}: HAMMER DETECTED! Checking if in zone...")
                             self.log_detailed_candle_analysis(closed_candle, tf, shared_state['direction'])
                         
-                        # 8. Check if candle is in Fibonacci zone
+                        # 8. Check if candle is in VALID Fibonacci zone
                         candle_price = closed_candle['close']
-                        in_zone = False
+                        in_valid_zone = False
                         target_zone = None
                         
                         for zone in shared_state['fib_zones']:
                             if shared_state['direction'] == 'bearish':
+                                # For bearish: check if candle is in zone AND above 50% line
                                 if zone['low'] <= candle_price <= zone['high']:
-                                    in_zone = True
-                                    target_zone = zone
-                                    break
+                                    # Additional check: candle should be above 50% line
+                                    # Calculate 50% line between SL and TP for this zone
+                                    sl_price = shared_state['signal_data'].get('smt_data', {}).get('swings', {}).get('highest_swing', zone['high'])
+                                    tp_price = shared_state['signal_data'].get('smt_data', {}).get('swings', {}).get('lowest_swing', zone['low'])
+                                    
+                                    if sl_price and tp_price:
+                                        fifty_percent_line = sl_price - ((sl_price - tp_price) * 0.5)
+                                        if candle_price > fifty_percent_line:
+                                            in_valid_zone = True
+                                            target_zone = zone
+                                            break
                             else:  # bullish
                                 if zone['low'] <= candle_price <= zone['high']:
-                                    in_zone = True
-                                    target_zone = zone
-                                    break
+                                    # For bullish: candle should be below 50% line
+                                    sl_price = shared_state['signal_data'].get('smt_data', {}).get('swings', {}).get('lowest_swing', zone['low'])
+                                    tp_price = shared_state['signal_data'].get('smt_data', {}).get('swings', {}).get('highest_swing', zone['high'])
+                                    
+                                    if sl_price and tp_price:
+                                        fifty_percent_line = sl_price + ((tp_price - sl_price) * 0.5)
+                                        if candle_price < fifty_percent_line:
+                                            in_valid_zone = True
+                                            target_zone = zone
+                                            break
                         
-                        if not in_zone:
-                            self.logger.debug(f"❌ {tf}: Candle not in Fibonacci zone: {candle_price:.5f}")
+                        if not in_valid_zone:
+                            self.logger.debug(f"❌ {tf}: Candle not in VALID Fibonacci zone (or below/above 50% line): {candle_price:.5f}")
                             time.sleep(1)
                             continue
                         
