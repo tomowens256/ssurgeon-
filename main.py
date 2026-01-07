@@ -7538,28 +7538,36 @@ class UltimateTradingSystem:
                 'D': 101,
                 'W': 101,
                 'M5': 101 if 'XAU_USD' in self.instruments else 0,
+            },
+            'CRT': {  # ADD THIS SECTION FOR CRT
+                'H1': 10,   # CRT needs recent candles
+                'H4': 10,
             }
         }
         
         # Create fetch tasks
         for instrument in self.instruments:
-            # SMT data (40 candles)
-            for tf, count in counts_by_purpose['SMT'].items():
-                if count > 0:
-                    task = asyncio.create_task(
-                        self._fetch_single_instrument_data(instrument, tf, count, api_key)
-                    )
-                    tasks.append(task)
-                    logger.debug(f"📤 SMT task: {instrument} {tf} ({count} candles)")
+            # Get ALL unique timeframes needed across purposes
+            all_timeframes = set()
             
-            # SD data (101 candles)
-            for tf, count in counts_by_purpose['SD'].items():
-                if count > 0:
+            for purpose in counts_by_purpose:
+                for tf in counts_by_purpose[purpose]:
+                    all_timeframes.add(tf)
+            
+            # For each timeframe, fetch the MAXIMUM count needed
+            for tf in all_timeframes:
+                max_count = 0
+                # Find maximum count needed for this timeframe
+                for purpose in counts_by_purpose:
+                    if tf in counts_by_purpose[purpose]:
+                        max_count = max(max_count, counts_by_purpose[purpose][tf])
+                
+                if max_count > 0:
                     task = asyncio.create_task(
-                        self._fetch_single_instrument_data(instrument, tf, count, api_key)
+                        self._fetch_single_instrument_data(instrument, tf, max_count, api_key)
                     )
                     tasks.append(task)
-                    logger.debug(f"📤 SD task: {instrument} {tf} ({count} candles)")
+                    logger.info(f"📤 FETCH: {instrument} {tf} - {max_count} candles (max of all purposes)")
         
         # Wait for ALL data
         try:
@@ -7572,11 +7580,10 @@ class UltimateTradingSystem:
             # Debug what we have
             for instrument in self.instruments:
                 logger.info(f"📦 Data for {instrument}:")
-                for tf in counts_by_purpose['SMT'].keys():
+                for tf in ['H4', 'H1', 'M15', 'M5', 'D', 'W']:
                     if tf in self.market_data[instrument]:
                         df = self.market_data[instrument][tf]
-                        complete = len(df[df['complete'] == True]) if 'complete' in df.columns else len(df)
-                        logger.info(f"   {tf}: {len(df)} total, {complete} complete")
+                        logger.info(f"   {tf}: {len(df)} total candles fetched")
             
         except asyncio.TimeoutError:
             logger.warning(f"⚠️ Fetch timeout for {self.pair_group}")
@@ -7649,64 +7656,44 @@ class UltimateTradingSystem:
         for cycle in cycles:
             timeframe = self.pair_config['timeframe_mapping'][cycle]
             
-            # Check if we have new data for this cycle's timeframe
-            #if self._has_new_candle_data(timeframe):
-            logger.info(f"🔍 Immediate scan: {cycle} cycle ({timeframe})")
-                
-            # Remove the .head(40) logic entirely! You're fetching exactly 40 candles now
-
+            # Get data for this timeframe
             asset1_data = self.market_data[self.instruments[0]].get(timeframe)
             asset2_data = self.market_data[self.instruments[1]].get(timeframe)
             
-            # Just check if we have data
+            # Check if we have data
             if asset1_data is None or asset2_data is None:
                 logger.warning(f"⚠️ Missing data for SMT: {self.instruments[0]}={asset1_data is not None}, {self.instruments[1]}={asset2_data is not None}")
-                return
+                continue
+            
+            # For SMT we need exactly 40 candles
+            # If we have more than 40, take the most recent 40
+            if len(asset1_data) > 40:
+                asset1_data = asset1_data.tail(40)
+                logger.info(f"📏 Using last 40 candles for {self.instruments[0]} {timeframe}")
+            
+            if len(asset2_data) > 40:
+                asset2_data = asset2_data.tail(40)
+                logger.info(f"📏 Using last 40 candles for {self.instruments[1]} {timeframe}")
             
             # Log what we have
-            logger.info(f"🔍 SMT Data Check - {self.instruments[0]} {timeframe}: Has data, {len(asset1_data)} candles")
-            logger.info(f"🔍 SMT Data Check - {self.instruments[1]} {timeframe}: Has data, {len(asset2_data)} candles")
+            logger.info(f"🔍 SMT Data Check - {self.instruments[0]} {timeframe}: Has {len(asset1_data)} candles")
+            logger.info(f"🔍 SMT Data Check - {self.instruments[1]} {timeframe}: Has {len(asset2_data)} candles")
             
-            # Check if we have enough complete candles
-            if 'complete' in asset1_data.columns:
-                complete1 = len(asset1_data[asset1_data['complete'] == True])
-                logger.info(f"   Complete candles: {complete1}")
-                
-            if 'complete' in asset2_data.columns:
-                complete2 = len(asset2_data[asset2_data['complete'] == True])
-                logger.info(f"   Complete candles: {complete2}")
-
-            logger.info(f"🔍 SMT Data Check - {self.instruments[0]} {timeframe}: "
-                    f"{'Has data' if asset1_data is not None else 'NO DATA'}, "
-                    f"{len(asset1_data) if asset1_data is not None else 0} candles")
-            logger.info(f"🔍 SMT Data Check - {self.instruments[1]} {timeframe}: "
-                        f"{'Has data' if asset2_data is not None else 'NO DATA'}, "
-                        f"{len(asset2_data) if asset2_data is not None else 0} candles")
-            
-                
-            if (asset1_data is not None and isinstance(asset1_data, pd.DataFrame) and not asset1_data.empty and
-                asset2_data is not None and isinstance(asset2_data, pd.DataFrame) and not asset2_data.empty):
-                    
+            # Check if we have enough data
+            if len(asset1_data) >= 40 and len(asset2_data) >= 40:
                 logger.info(f"🔍 Scanning {cycle} cycle ({timeframe}) for SMT...")
                 smt_signal = self.smt_detector.detect_smt_all_cycles(asset1_data, asset2_data, cycle)
+                
                 if smt_signal:
-                    logger.info(f"🔍 SMT RETURNED: {smt_signal.get('signal_key', 'No key')}")
-                else:
-                    logger.info(f"🔍 SMT detector returned None for {cycle}")
-
-                # logger.info(f"🔍 Scanning {cycle} cycle ({timeframe}) for SMT...")
-                # smt_signal = self.smt_detector.detect_smt_all_cycles(asset1_data, asset2_data, cycle)
-                    
-                if smt_signal:
-                    # ✅ FIRST CHECK if SMT is fresh enough
+                    # Check if SMT is fresh enough
                     if not self.feature_box.is_smt_fresh_enough(smt_signal):
                         logger.info(f"🕒 SMT {smt_signal.get('signal_key', 'unknown')} is TOO OLD, skipping addition")
-                        continue  # Skip to next cycle
+                        continue
                     
                     # Check for PSP immediately
                     psp_signal = self.smt_detector.check_psp_for_smt(smt_signal, asset1_data, asset2_data)
                     
-                    # ✅ Now add it (it's fresh enough)
+                    # Add it (it's fresh enough)
                     added = self.feature_box.add_smt(smt_signal, psp_signal)
                     
                     if added:
@@ -7714,8 +7701,10 @@ class UltimateTradingSystem:
                         logger.info(f"✅ FRESH SMT ADDED: {cycle} {smt_signal['direction']} - PSP: {'Yes' if psp_signal else 'No'}")
                     else:
                         logger.info(f"❌ Failed to add SMT {smt_signal.get('signal_key', 'unknown')}")
+                else:
+                    logger.info(f"🔍 SMT detector returned None for {cycle}")
             else:
-                logger.warning(f"⚠️ No data for {cycle} SMT scan")
+                logger.warning(f"⚠️ Not enough candles for {cycle} SMT scan: {len(asset1_data)}/{len(asset2_data)}")
         
         logger.info(f"📊 SMT Scan Complete: Detected {smt_detected_count} SMTs")
 
@@ -7791,20 +7780,9 @@ class UltimateTradingSystem:
     def _scan_crt_smt_confluence(self):
         """Check CRT with SMT confluence (CRT on higher TF, SMT on lower TF)"""
         logger.info(f"🔷 SCANNING: CRT + SMT Confluence")
-
-        # First, cleanup expired features
-        if hasattr(self, 'feature_box') and self.feature_box:
-            self.feature_box.cleanup_expired_features()
         
         # CRT timeframes to check
         crt_timeframes = ['H4', 'H1']
-        
-        # Mapping: CRT timeframe -> allowed SMT cycles
-        CRT_SMT_MAPPING = {
-            'H4': ['weekly', 'daily'],  # 4hr CRT → Weekly OR Daily SMT
-            'H1': ['daily']         # 1hr CRT → Daily SMT
-            
-        }
         
         # Check each instrument for CRT
         for instrument in self.instruments:
@@ -7813,17 +7791,28 @@ class UltimateTradingSystem:
                 if data is None or data.empty:
                     continue
                 
-                # Get the other instrument's data for CRT detection
+                # For CRT we only need recent candles - limit to 10
+                if len(data) > 10:
+                    data = data.tail(10)
+                    logger.info(f"📏 CRT: Using last 10 candles for {instrument} {crt_tf}")
+                
+                # Get the other instrument's data
                 other_instrument = [inst for inst in self.instruments if inst != instrument][0]
                 other_data = self.market_data[other_instrument].get(crt_tf)
                 
                 if other_data is None or other_data.empty:
                     continue
                 
+                # Limit other data to 10 candles too
+                if len(other_data) > 10:
+                    other_data = other_data.tail(10)
+                
                 # Detect CRT
                 crt_signal = self.crt_detector.calculate_crt_current_candle(
                     data, data, other_data, crt_tf
                 )
+                
+              
                 
                 if crt_signal:
                     logger.info(f"🔷 CRT DETECTED: {crt_tf} {crt_signal['direction']} on {instrument}")
