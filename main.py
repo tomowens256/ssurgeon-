@@ -5251,8 +5251,8 @@ class HammerPatternScanner:
             signal_data = trigger_data.get('signal_data', {})
             
             if criteria == 'CRT+SMT':
-            # legit 
-            return self._get_crt_zones_with_proper_tp(trigger_data)
+                # legit 
+                return self._get_crt_zones_with_proper_tp(trigger_data)
             
             # DEBUG: Log what we actually received
             self.logger.info(f"📊 Getting zones for {criteria}, direction: {direction}")
