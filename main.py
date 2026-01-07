@@ -5335,21 +5335,38 @@ class HammerPatternScanner:
                     'error': 'No data after formation'
                 }
             
-            # Get SMT swings and convert to list
+            
+            # Get SMT swings and convert to list WITH ASSET FILTERING
             smt_swings_dict = smt_data.get('swings', {})
             swings_list = []
             
+            self.logger.info(f"🔍 Filtering swings for {instrument}...")
+            
             for key, swing_info in smt_swings_dict.items():
                 if isinstance(swing_info, dict) and 'price' in swing_info and 'time' in swing_info:
-                    swings_list.append({
-                        'time': swing_info['time'],
-                        'price': swing_info.get('price', 0),
-                        'type': swing_info.get('type', 'unknown'),
-                        'asset': key
-                    })
+                    swing_asset = swing_info.get('asset', '')
+                    
+                    # Check if this swing belongs to our instrument
+                    if swing_asset == instrument:
+                        swings_list.append({
+                            'time': swing_info['time'],
+                            'price': swing_info.get('price', 0),
+                            'type': swing_info.get('type', 'unknown'),
+                            'asset': swing_asset
+                        })
+                        self.logger.info(f"✅ INCLUDING swing for {instrument}: {key} at {swing_info.get('price', 0)}")
+                    else:
+                        self.logger.info(f"❌ EXCLUDING swing (wrong asset): {key} at {swing_info.get('price', 0)} (asset: {swing_asset})")
             
             if len(swings_list) < 2:
-                self.logger.error(f"❌ Not enough valid SMT swings: {len(swings_list)}")
+                self.logger.error(f"❌ Not enough valid SMT swings for {instrument}: {len(swings_list)}")
+                # Log what assets we actually found
+                found_assets = set()
+                for key, swing_info in smt_swings_dict.items():
+                    if isinstance(swing_info, dict):
+                        found_assets.add(swing_info.get('asset', 'unknown'))
+                self.logger.error(f"❌ Found swings for assets: {found_assets}")
+                
                 return {
                     'zones': [],
                     'sl_price': None,
@@ -5357,7 +5374,7 @@ class HammerPatternScanner:
                     'direction': direction,
                     'criteria': criteria,
                     'is_valid': False,
-                    'error': f'Not enough SMT swings: {len(swings_list)}'
+                    'error': f'Not enough swings for {instrument}: {len(swings_list)}'
                 }
             
             # Sort swings by time for chronological orders
