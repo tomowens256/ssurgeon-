@@ -5185,6 +5185,60 @@ class HammerPatternScanner:
         except Exception as e:
             self.logger.error(f"Error in hammer detection: {str(e)}")
             return False, 0, 0
+
+    def _find_swing_lows(self, df, lookback=3, lookforward=3):
+        """Find significant swing lows in price data"""
+        swing_lows = []
+        
+        for i in range(lookback, len(df) - lookforward):
+            # Current low
+            current_low = df.iloc[i]['low']
+            
+            # Check if current low is lower than previous 'lookback' candles
+            is_lowest_backward = True
+            for j in range(1, lookback + 1):
+                if df.iloc[i - j]['low'] < current_low:
+                    is_lowest_backward = False
+                    break
+            
+            # Check if current low is lower than next 'lookforward' candles
+            is_lowest_forward = True
+            for j in range(1, lookforward + 1):
+                if df.iloc[i + j]['low'] < current_low:
+                    is_lowest_forward = False
+                    break
+            
+            if is_lowest_backward and is_lowest_forward:
+                swing_lows.append(current_low)
+        
+        return swing_lows
+    
+    def _find_swing_highs(self, df, lookback=3, lookforward=3):
+        """Find significant swing highs in price data"""
+        swing_highs = []
+        
+        for i in range(lookback, len(df) - lookforward):
+            # Current high
+            current_high = df.iloc[i]['high']
+            
+            # Check if current high is higher than previous 'lookback' candles
+            is_highest_backward = True
+            for j in range(1, lookback + 1):
+                if df.iloc[i - j]['high'] > current_high:
+                    is_highest_backward = False
+                    break
+            
+            # Check if current high is higher than next 'lookforward' candles
+            is_highest_forward = True
+            for j in range(1, lookforward + 1):
+                if df.iloc[i + j]['high'] > current_high:
+                    is_highest_forward = False
+                    break
+            
+            if is_highest_backward and is_highest_forward:
+                swing_highs.append(current_high)
+        
+        return swing_highs
     
     
 
@@ -5275,23 +5329,59 @@ class HammerPatternScanner:
             
             if direction == 'bearish':
                 # Bearish: TP is the LOWEST point between formation and second swing
-                mask = (df_from_formation['time'] >= formation_time) & \
-                       (df_from_formation['time'] <= second_swing_time) if second_swing_time else (df_from_formation['time'] >= formation_time)
-                df_for_tp = df_from_formation[mask]
+                # For bearish: Find a SIGNIFICANT swing low (not just the absolute lowest)
+                # We'll look for swing lows using proper swing detection
+                if second_swing_time:
+                    mask = (df_from_formation['time'] >= formation_time) & \
+                           (df_from_formation['time'] <= second_swing_time)
+                    df_for_tp = df_from_formation[mask]
+                else:
+                    df_for_tp = df_from_formation[df_from_formation['time'] >= formation_time]
                 
                 if df_for_tp.empty:
                     default_tp = df_from_formation['low'].min()
                 else:
-                    default_tp = df_for_tp['low'].min()
+                    # Use proper swing detection instead of simple min()
+                    swing_lows = self._find_swing_lows(df_for_tp, lookback=3, lookforward=3)
+                    
+                    if not swing_lows:
+                        # Fallback to simple min
+                        default_tp = df_for_tp['low'].min()
+                        self.logger.info(f"📊 Using simple low as TP: {default_tp:.5f}")
+                    else:
+                        # Get the most significant swing low (lowest of the swing lows)
+                        default_tp = min(swing_lows)
+                        self.logger.info(f"📊 Found {len(swing_lows)} swing lows, using: {default_tp:.5f}")
+                    
+                        # Visualize the swings for debugging
+                        for i, low in enumerate(swing_lows):
+                            self.logger.debug(f"   Swing low {i+1}: {low:.5f}")
                 
-                # Check if TP swing low has been broken (invalidate setup if broken)
-                # Look for any candle CLOSE below the TP after formation
-                candles_below_tp = df_from_formation[df_from_formation['close'] < default_tp]
-                
-                if not candles_below_tp.empty:
-                    self.logger.error(f"❌ BEARISH SETUP INVALID: TP swing low at {default_tp:.5f} was broken!")
-                    self.logger.error(f"   First break at: {candles_below_tp.iloc[0]['time']}")
-                    return []
+                # Now check if this swing low has been broken AFTER it was formed
+                # We need to find when this swing low occurred
+                swing_time_mask = df_from_formation['low'] == default_tp
+                if swing_time_mask.any():
+                    swing_time = df_from_formation[swing_time_mask].iloc[0]['time']
+                    
+                    # Only check for breaks AFTER the swing low was formed
+                    df_after_swing = df_from_formation[df_from_formation['time'] > swing_time]
+                    candles_below_tp = df_after_swing[df_after_swing['close'] < default_tp]
+                    
+                    if not candles_below_tp.empty:
+                        self.logger.error(f"❌ BEARISH SETUP INVALID: TP swing low at {default_tp:.5f} was broken!")
+                        self.logger.error(f"   Swing formed at: {swing_time}")
+                        self.logger.error(f"   First break at: {candles_below_tp.iloc[0]['time']}")
+                        self.logger.error(f"   Break price: {candles_below_tp.iloc[0]['close']:.5f}")
+                        return []
+                else:
+                    # Couldn't find exact time, check from formation
+                    df_after_formation = df_from_formation[df_from_formation['time'] > formation_time]
+                    candles_below_tp = df_after_formation[df_after_formation['close'] < default_tp]
+                    
+                    if not candles_below_tp.empty:
+                        self.logger.error(f"❌ BEARISH SETUP INVALID: TP swing low at {default_tp:.5f} was broken!")
+                        self.logger.error(f"   First break at: {candles_below_tp.iloc[0]['time']}")
+                        return []
                 
                 # SL is the HIGHEST SMT swing price
                 default_sl = max([swing['price'] for swing in swings_list])
@@ -5322,22 +5412,57 @@ class HammerPatternScanner:
                 
             else:  # BULLISH
                 # Bullish: TP is the HIGHEST point between formation and second swing
-                mask = (df_from_formation['time'] >= formation_time) & \
-                       (df_from_formation['time'] <= second_swing_time) if second_swing_time else (df_from_formation['time'] >= formation_time)
-                df_for_tp = df_from_formation[mask]
+                # For bullish: Find a SIGNIFICANT swing high (not just the absolute highest)
+                if second_swing_time:
+                    mask = (df_from_formation['time'] >= formation_time) & \
+                           (df_from_formation['time'] <= second_swing_time)
+                    df_for_tp = df_from_formation[mask]
+                else:
+                    df_for_tp = df_from_formation[df_from_formation['time'] >= formation_time]
                 
                 if df_for_tp.empty:
                     default_tp = df_from_formation['high'].max()
                 else:
-                    default_tp = df_for_tp['high'].max()
+                    # Use proper swing detection instead of simple max()
+                    swing_highs = self._find_swing_highs(df_for_tp, lookback=3, lookforward=3)
+                    
+                    if not swing_highs:
+                        # Fallback to simple max
+                        default_tp = df_for_tp['high'].max()
+                        self.logger.info(f"📊 Using simple high as TP: {default_tp:.5f}")
+                    else:
+                        # Get the most significant swing high (highest of the swing highs)
+                        default_tp = max(swing_highs)
+                        self.logger.info(f"📊 Found {len(swing_highs)} swing highs, using: {default_tp:.5f}")
+                    
+                        # Visualize the swings for debugging
+                        for i, high in enumerate(swing_highs):
+                            self.logger.debug(f"   Swing high {i+1}: {high:.5f}")
                 
-                # Check if TP swing high has been broken (invalidate setup if broken)
-                candles_above_tp = df_from_formation[df_from_formation['close'] > default_tp]
-                
-                if not candles_above_tp.empty:
-                    self.logger.error(f"❌ BULLISH SETUP INVALID: TP swing high at {default_tp:.5f} was broken!")
-                    self.logger.error(f"   First break at: {candles_above_tp.iloc[0]['time']}")
-                    return []
+                # Now check if this swing high has been broken AFTER it was formed
+                swing_time_mask = df_from_formation['high'] == default_tp
+                if swing_time_mask.any():
+                    swing_time = df_from_formation[swing_time_mask].iloc[0]['time']
+                    
+                    # Only check for breaks AFTER the swing high was formed
+                    df_after_swing = df_from_formation[df_from_formation['time'] > swing_time]
+                    candles_above_tp = df_after_swing[df_after_swing['close'] > default_tp]
+                    
+                    if not candles_above_tp.empty:
+                        self.logger.error(f"❌ BULLISH SETUP INVALID: TP swing high at {default_tp:.5f} was broken!")
+                        self.logger.error(f"   Swing formed at: {swing_time}")
+                        self.logger.error(f"   First break at: {candles_above_tp.iloc[0]['time']}")
+                        self.logger.error(f"   Break price: {candles_above_tp.iloc[0]['close']:.5f}")
+                        return []
+                else:
+                    # Couldn't find exact time, check from formation
+                    df_after_formation = df_from_formation[df_from_formation['time'] > formation_time]
+                    candles_above_tp = df_after_formation[df_after_formation['close'] > default_tp]
+                    
+                    if not candles_above_tp.empty:
+                        self.logger.error(f"❌ BULLISH SETUP INVALID: TP swing high at {default_tp:.5f} was broken!")
+                        self.logger.error(f"   First break at: {candles_above_tp.iloc[0]['time']}")
+                        return []
                 
                 # SL is the LOWEST SMT swing price
                 default_sl = min([swing['price'] for swing in swings_list])
