@@ -4954,6 +4954,19 @@ class HammerPatternScanner:
                 
                 # Market Context
                 'rsi', 'vwap',
+
+                # Higher Timeframe Fibonacci Zones (Pd-tf)
+                'H4_fib_zone', 'H6_fib_zone', 'D_fib_zone', 'W_fib_zone',
+                'H4_fib_percent', 'H6_fib_percent', 'D_fib_percent', 'W_fib_percent',  # For more granular analysis
+                
+                # Price Relative to Candle Open
+                'H4_open_rel', 'H6_open_rel', 'D_open_rel', 'W_open_rel',
+                
+                # Candle Quarter Position
+                'H4_quarter', 'H6_quarter', 'D_quarter', 'W_quarter',
+                
+                # Additional: Price position percentage within candle
+                'H4_candle_percent', 'H6_candle_percent', 'D_candle_percent', 'W_candle_percent',
                 
                 # New Features
                 'signal_latency_seconds',  # Time from candle close to Telegram send
