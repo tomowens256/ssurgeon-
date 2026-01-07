@@ -6242,6 +6242,16 @@ class HammerPatternScanner:
             hammer_high = candle['high']
             hammer_low = candle['low']
             hammer_range = hammer_high - hammer_low
+
+            # Calculate higher timeframe features
+            higher_tf_features = self.calculate_higher_tf_features(
+                instrument, 
+                current_price, 
+                candle['time']  # This is the hammer candle time
+            )
+            
+            # Add to trade_data
+            trade_data.update(higher_tf_features)
             
             # Pip multiplier
             pip_multiplier = 100 if 'JPY' in instrument else 10000
