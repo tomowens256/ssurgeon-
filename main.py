@@ -6080,7 +6080,8 @@ class HammerPatternScanner:
                         tf_scanned_candles.add(candle_key)
                         
                         # 6. DEBUG: Log candle details
-                        self.logger.info(f"📊 {tf}: Scanning at {datetime.now(NY_TZ).strftime('%H:%M:%S')}")
+                        # 6. DEBUG: Log candle details
+                        self.logger.info(f"📊 {instrument} {tf}: Scanning at {datetime.now(NY_TZ).strftime('%H:%M:%S')}")
                         self.logger.info(f"   Candle time: {closed_candle['time']}")
                         self.logger.info(f"   Prices: O:{closed_candle['open']:.5f} H:{closed_candle['high']:.5f} "
                                        f"L:{closed_candle['low']:.5f} C:{closed_candle['close']:.5f}")
@@ -6091,11 +6092,11 @@ class HammerPatternScanner:
                             closed_candle, 
                             shared_state['direction']
                         )
-                        self.logger.info(f"   Hammer check: {is_hammer}")
+                        self.logger.info(f"   {instrument} {tf}: Hammer check: {is_hammer}")
                         self.logger.info(f"   Wick ratios: upper={upper_ratio:.2f}, lower={lower_ratio:.2f}")
                         
                         if is_hammer:
-                            self.logger.info(f"✅ {tf}: HAMMER DETECTED! Checking if in zone...")
+                            self.logger.info(f"✅ {instrument} {tf}: HAMMER DETECTED! Checking if in zone...")
                             self.log_detailed_candle_analysis(closed_candle, tf, shared_state['direction'])
                         
                         # 8. Check if candle is in VALID Fibonacci zone
@@ -6132,7 +6133,7 @@ class HammerPatternScanner:
                                             break
                         
                         if not in_valid_zone:
-                            self.logger.debug(f"❌ {tf}: Candle not in VALID Fibonacci zone (or below/above 50% line): {candle_price:.5f}")
+                            self.logger.debug(f"❌ {instrument} {tf}: Candle not in VALID Fibonacci zone (or below/above 50% line): {candle_price:.5f}")
                             time.sleep(1)
                             continue
                         
@@ -6161,7 +6162,7 @@ class HammerPatternScanner:
                             )
                             
                             if success:
-                                self.logger.info(f"✅ {tf}: Trade #{current_hammer_count} processed successfully")
+                                self.logger.info(f"✅ {instrument} {tf}: Trade #{current_hammer_count} processed successfully")
                             
                             # Continue scanning for more hammers in this timeframe
                             # (Don't break, keep looking for more)
