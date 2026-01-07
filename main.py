@@ -7661,11 +7661,11 @@ class UltimateTradingSystem:
                 if key not in self.last_candle_scan:
                     self.last_candle_scan[key] = latest_candle_time
                     new_candles = True
-                    logger.info(f"🕯️ First scan for {instrument} {timeframe}")
+                    # logger.info(f"🕯️ First scan for {instrument} {timeframe}")
                 elif latest_candle_time > self.last_candle_scan[key]:
                     self.last_candle_scan[key] = latest_candle_time
                     new_candles = True
-                    logger.info(f"🕯️ NEW CANDLE: {instrument} {timeframe} at {latest_candle_time.strftime('%H:%M')}")
+                    # logger.info(f"🕯️ NEW CANDLE: {instrument} {timeframe} at {latest_candle_time.strftime('%H:%M')}")
         
         return new_candles
     
@@ -7721,7 +7721,7 @@ class UltimateTradingSystem:
                         self._fetch_single_instrument_data(instrument, tf, max_count, api_key)
                     )
                     tasks.append(task)
-                    logger.info(f"📤 FETCH: {instrument} {tf} - {max_count} candles (max of all purposes)")
+                    # logger.info(f"📤 FETCH: {instrument} {tf} - {max_count} candles (max of all purposes)")
         
         # Wait for ALL data
         try:
@@ -7729,7 +7729,7 @@ class UltimateTradingSystem:
             
             # Count successful
             successful = sum(1 for r in results if r)
-            logger.info(f"✅ Parallel fetch: {successful}/{len(tasks)} successful for {self.pair_group}")
+            # logger.info(f"✅ Parallel fetch: {successful}/{len(tasks)} successful for {self.pair_group}")
             
             # Debug what we have
             for instrument in self.instruments:
@@ -7737,7 +7737,7 @@ class UltimateTradingSystem:
                 for tf in ['H4', 'H1', 'M15', 'M5', 'D', 'W']:
                     if tf in self.market_data[instrument]:
                         df = self.market_data[instrument][tf]
-                        logger.info(f"   {tf}: {len(df)} total candles fetched")
+                        # logger.info(f"   {tf}: {len(df)} total candles fetched")
             
         except asyncio.TimeoutError:
             logger.warning(f"⚠️ Fetch timeout for {self.pair_group}")
@@ -7769,7 +7769,7 @@ class UltimateTradingSystem:
             
             self.market_data[instrument][timeframe] = df
             
-            logger.info(f"✅ Fetched {instrument} {timeframe}: {len(df)} candles")
+            # logger.info(f"✅ Fetched {instrument} {timeframe}: {len(df)} candles")
             return True
             
         except Exception as e:
@@ -7823,25 +7823,25 @@ class UltimateTradingSystem:
             # If we have more than 40, take the most recent 40
             if len(asset1_data) > 40:
                 asset1_data = asset1_data.tail(40)
-                logger.info(f"📏 Using last 40 candles for {self.instruments[0]} {timeframe}")
+                # logger.info(f"📏 Using last 40 candles for {self.instruments[0]} {timeframe}")
             
             if len(asset2_data) > 40:
                 asset2_data = asset2_data.tail(40)
-                logger.info(f"📏 Using last 40 candles for {self.instruments[1]} {timeframe}")
+                # logger.info(f"📏 Using last 40 candles for {self.instruments[1]} {timeframe}")
             
             # Log what we have
-            logger.info(f"🔍 SMT Data Check - {self.instruments[0]} {timeframe}: Has {len(asset1_data)} candles")
-            logger.info(f"🔍 SMT Data Check - {self.instruments[1]} {timeframe}: Has {len(asset2_data)} candles")
+            # logger.info(f"🔍 SMT Data Check - {self.instruments[0]} {timeframe}: Has {len(asset1_data)} candles")
+            # logger.info(f"🔍 SMT Data Check - {self.instruments[1]} {timeframe}: Has {len(asset2_data)} candles")
             
             # Check if we have enough data
             if len(asset1_data) >= 40 and len(asset2_data) >= 40:
-                logger.info(f"🔍 Scanning {cycle} cycle ({timeframe}) for SMT...")
+                # logger.info(f"🔍 Scanning {cycle} cycle ({timeframe}) for SMT...")
                 smt_signal = self.smt_detector.detect_smt_all_cycles(asset1_data, asset2_data, cycle)
                 
                 if smt_signal:
                     # Check if SMT is fresh enough
                     if not self.feature_box.is_smt_fresh_enough(smt_signal):
-                        logger.info(f"🕒 SMT {smt_signal.get('signal_key', 'unknown')} is TOO OLD, skipping addition")
+                        # logger.info(f"🕒 SMT {smt_signal.get('signal_key', 'unknown')} is TOO OLD, skipping addition")
                         continue
                     
                     # Check for PSP immediately
@@ -7860,7 +7860,7 @@ class UltimateTradingSystem:
             else:
                 logger.warning(f"⚠️ Not enough candles for {cycle} SMT scan: {len(asset1_data)}/{len(asset2_data)}")
         
-        logger.info(f"📊 SMT Scan Complete: Detected {smt_detected_count} SMTs")
+        # logger.info(f"📊 SMT Scan Complete: Detected {smt_detected_count} SMTs")
 
     def reset_smt_detector_state(self):
         """Reset SMT detector state to avoid duplicate issues"""
@@ -7915,19 +7915,19 @@ class UltimateTradingSystem:
         # 3. Detect SMT
         smt_signal = self.smt_detector.detect_smt_all_cycles(asset1_data, asset2_data, 'weekly')
         
-        if smt_signal:
-            logger.info(f"🧪 SMT Detected: {smt_signal['signal_key']}")
+        # if smt_signal:
+        #     logger.info(f"🧪 SMT Detected: {smt_signal['signal_key']}")
             
             # 4. Check PSP
             psp_signal = self.smt_detector.check_psp_for_smt(smt_signal, asset1_data, asset2_data)
-            logger.info(f"🧪 PSP: {'Found' if psp_signal else 'Not found'}")
+            # logger.info(f"🧪 PSP: {'Found' if psp_signal else 'Not found'}")
             
             # 5. Add to FeatureBox
             success = self.feature_box.add_smt(smt_signal, psp_signal)
-            logger.info(f"🧪 Added to FeatureBox: {success}")
+            # logger.info(f"🧪 Added to FeatureBox: {success}")
             
             # 6. Check FeatureBox
-            logger.info(f"🧪 FeatureBox now has {len(self.feature_box.active_features['smt'])} SMTs")
+            # logger.info(f"🧪 FeatureBox now has {len(self.feature_box.active_features['smt'])} SMTs")
         else:
             logger.info("🧪 No SMT detected")
 
