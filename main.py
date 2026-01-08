@@ -30,7 +30,7 @@ NY_TZ = ZoneInfo("America/New_York")
 # ================================
 
 TRADING_PAIRS = {
-    'precious_metals': {
+    'GOLD_TRIAD': {
         'pair1': 'XAU_USD',  # OLD structure (keep for compatibility)
         'pair2': 'XAU_JPY',  # OLD structure (keep for compatibility)
         'instruments': ['XAU_USD', 'XAU_JPY'],  # NEW structure
@@ -41,11 +41,24 @@ TRADING_PAIRS = {
             '90min': 'M5'
         }
     },
-    'us_indices_triad': {
-        'instruments': ['NAS100_USD', 'SPX500_USD'],  
+    'precious_metals': {
+        'pair1': 'XAU_USD',  # OLD structure (keep for compatibility)
+        'pair2': 'XAG_USD',  # OLD structure (keep for compatibility)
+        'instruments': ['XAU_USD', 'XAG_USD'],  # NEW structure
         'timeframe_mapping': {
             'monthly': 'H4',
-            'weekly': 'H1',
+            'weekly': 'H1', 
+            'daily': 'M15',
+            '90min': 'M5'
+        }
+    },
+    'us_indices_triad': {
+        'pair1': 'NAS100_USD',  
+        'pair2': 'SPX500_USD',  
+        'instruments': ['NAS100_USD','SPX500_USD'],  # NEW structure
+        'timeframe_mapping': {
+            'monthly': 'H4',
+            'weekly': 'H1', 
             'daily': 'M15',
             '90min': 'M5'
         }
