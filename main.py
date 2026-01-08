@@ -5626,19 +5626,19 @@ class HammerPatternScanner:
             else:  # bullish
                 fifty_percent_line = sl_price + ((tp_price - sl_price) * 0.5)
             
-            # Create a buffer zone around the 50% line (0.1% of range)
+            # Create a small buffer zone around the 50% line (0.5% of range)
             price_range = abs(sl_price - tp_price)
-            buffer = price_range * 0.001  # 0.1% buffer
+            buffer = price_range * 0.005  # 0.5% buffer (adjust as needed)
             
             if direction == 'bearish':
                 # For bearish: we sell when price is ABOVE 50% line
                 # Create zone that starts at 50% line and goes up a bit
                 zone_low = fifty_percent_line
-                zone_high = fifty_percent_line + (buffer * 2)  # Small zone above 50%
+                zone_high = fifty_percent_line + buffer
             else:  # bullish
                 # For bullish: we buy when price is BELOW 50% line
                 # Create zone that ends at 50% line and goes down a bit
-                zone_low = fifty_percent_line - (buffer * 2)  # Small zone below 50%
+                zone_low = fifty_percent_line - buffer
                 zone_high = fifty_percent_line
             
             # Create single 50% zone
@@ -5647,13 +5647,11 @@ class HammerPatternScanner:
                 'low': zone_low,
                 'high': zone_high,
                 'mid': fifty_percent_line,
-                'zone_name': '50%_Entry_Zone',
-                'is_50_percent_zone': True,
-                'entry_line': fifty_percent_line
+                'zone_name': '50%_Zone',
+                'is_50_percent_zone': True
             }]
             
             self.logger.info(f"📊 Created 50% zone for {direction.upper()}:")
-            self.logger.info(f"   50% Line: {fifty_percent_line:.5f}")
             self.logger.info(f"   Zone: {zone_low:.5f} to {zone_high:.5f}")
             self.logger.info(f"   SL: {sl_price:.5f}, TP: {tp_price:.5f}")
             
