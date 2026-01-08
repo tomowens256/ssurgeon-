@@ -1443,15 +1443,6 @@ class UltimateSMTDetector:
     def _compare_quarters_with_3_candle_tolerance(self, asset1_prev, asset1_curr, asset2_prev, asset2_curr, cycle_type, prev_q, curr_q):
         """Compare quarters with debug info"""
         try:
-            # ======== FIX: Get instrument names ========
-            if not hasattr(self, 'instruments') or len(self.instruments) < 2:
-                self.logger.error("❌ Cannot get instrument names - self.instruments not available")
-                return None
-            
-            asset1_name = self.instruments[0]
-            asset2_name = self.instruments[1]
-            self.logger.info(f"📊 Using instrument names: {asset1_name}, {asset2_name}")
-            # ======== END FIX ======== 
             # Strict chronology check
             if not asset1_prev.empty and not asset1_curr.empty:
                 prev_end = asset1_prev['time'].max()
@@ -1562,31 +1553,26 @@ class UltimateSMTDetector:
                     return None
     
                 # Create swings array for bearish case
-                # Create swings array for bearish case
                 swings = {
                     'asset1_prev': {
                         'time': asset1_prev_high['time'],
                         'price': asset1_prev_high['price'],
-                        'type': 'high',
-                        'asset': asset1_name  # <-- ADD THIS! e.g., 'NAS100_USD'
+                        'type': 'high'
                     },
                     'asset1_curr': {
                         'time': asset1_curr_high['time'],
                         'price': asset1_curr_high['price'],
-                        'type': 'high',
-                        'asset': asset1_name  # <-- ADD THIS!
+                        'type': 'high'
                     },
                     'asset2_prev': {
                         'time': asset2_prev_high['time'],
                         'price': asset2_prev_high['price'],
-                        'type': 'high',
-                        'asset': asset2_name  # <-- ADD THIS! e.g., 'SPX500_USD'
+                        'type': 'high'
                     },
                     'asset2_curr': {
                         'time': asset2_curr_high['time'],
                         'price': asset2_curr_high['price'],
-                        'type': 'high',
-                        'asset': asset2_name  # <-- ADD THIS!
+                        'type': 'high'
                     }
                 }
     
@@ -1616,31 +1602,26 @@ class UltimateSMTDetector:
                     return None
     
                 # Create swings array for bullish case
-                # Create swings array for bullish case
                 swings = {
                     'asset1_prev': {
                         'time': asset1_prev_low['time'],
                         'price': asset1_prev_low['price'],
-                        'type': 'low',
-                        'asset': asset1_name  # <-- ADD THIS!
+                        'type': 'low'
                     },
                     'asset1_curr': {
                         'time': asset1_curr_low['time'],
                         'price': asset1_curr_low['price'],
-                        'type': 'low',
-                        'asset': asset1_name  # <-- ADD THIS!
+                        'type': 'low'
                     },
                     'asset2_prev': {
                         'time': asset2_prev_low['time'],
                         'price': asset2_prev_low['price'],
-                        'type': 'low',
-                        'asset': asset2_name  # <-- ADD THIS!
+                        'type': 'low'
                     },
                     'asset2_curr': {
                         'time': asset2_curr_low['time'],
                         'price': asset2_curr_low['price'],
-                        'type': 'low',
-                        'asset': asset2_name  # <-- ADD THIS!
+                        'type': 'low'
                     }
                 }
     
@@ -1668,8 +1649,6 @@ class UltimateSMTDetector:
                 'curr_q': curr_q,
                 'timestamp': current_time,
                 'formation_time': formation_time,
-                'asset1_name': asset1_name,  # <-- ADD THIS
-                'asset2_name': asset2_name,  # <-- ADD THIS
                 'asset1_action': asset1_action,
                 'asset2_action': asset2_action,
                 'details': f"Asset1 {asset1_action}, Asset2 {asset2_action}",
@@ -1678,7 +1657,7 @@ class UltimateSMTDetector:
                 'timeframe': self.pair_config['timeframe_mapping'][cycle_type],
                 'swing_times': swing_times,
                 'candle_time': formation_time,
-                'swings': swings  # Now with asset names in each swing!
+                'swings': swings  # Added swings array with price data
             }
     
             self.smt_history.append(smt_data)
