@@ -6417,6 +6417,33 @@ class HammerPatternScanner:
                     
                 except Exception as e:
                     self.logger.error(f"❌ Error in {instrument} {tf} scanner thread: {str(e)}", exc_info=True)
+
+            # Start a thread for each timeframe
+            threads = []
+            for tf in timeframes:
+                thread = threading.Thread(
+                    target=scan_timeframe,
+                    args=(tf,),
+                    name=f"HammerScan_{instrument}_{tf}",
+                    daemon=True
+                )
+                thread.start()
+                threads.append(thread)
+                self.logger.info(f"🚀 Started {tf} scanner thread")
+            
+            # Main thread waits for scan duration or until interrupted
+            try:
+                # Calculate total seconds to wait
+                total_seconds = (shared_state['scan_end'] - datetime.now(NY_TZ)).total_seconds()
+                if total_seconds > 0:
+                    self.logger.info(f"⏰ Main thread waiting {total_seconds:.0f}s for scan completion...")
+                    time.sleep(total_seconds)
+                else:
+                    self.logger.warning(f"⚠️ Scan duration has already passed")
+            except KeyboardInterrupt:
+                self.logger.info(f"🛑 Scan interrupted for {instrument}")
+            except Exception as e:
+                self.logger.error(f"❌ Error in main thread wait: {str(e)}")
             
             # Wait for all threads to finish (they should finish when scan_end is reached)
             for thread in threads:
