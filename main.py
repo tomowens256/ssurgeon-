@@ -6279,22 +6279,22 @@ class HammerPatternScanner:
                         
                         if direction == 'bearish':
                             # For bearish: if candle high goes above SL, setup is invalid
-                            if candle_high >= sl_price:
+                            if candle_high > sl_price:
                                 self.logger.info(f"❌ {instrument} {tf}: SL HIT! Candle high {candle_high:.5f} >= SL {sl_price:.5f}")
                                 break
                             
                             # For bearish: if candle low goes below TP, target reached
-                            if candle_low <= tp_price:
+                            if candle_low < tp_price:
                                 self.logger.info(f"✅ {instrument} {tf}: TP HIT! Candle low {candle_low:.5f} <= TP {tp_price:.5f}")
                                 break
                         else:  # bullish
                             # For bullish: if candle low goes below SL, setup is invalid
-                            if candle_low <= sl_price:
+                            if candle_low < sl_price:
                                 self.logger.info(f"❌ {instrument} {tf}: SL HIT! Candle low {candle_low:.5f} <= SL {sl_price:.5f}")
                                 break
                             
                             # For bullish: if candle high goes above TP, target reached
-                            if candle_high >= tp_price:
+                            if candle_high > tp_price:
                                 self.logger.info(f"✅ {instrument} {tf}: TP HIT! Candle high {candle_high:.5f} >= TP {tp_price:.5f}")
                                 break
                         # END OF SL/TP CHECK
