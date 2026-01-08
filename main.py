@@ -5293,329 +5293,330 @@ class HammerPatternScanner:
     
     
 
-        def _get_fib_zones(self, trigger_data):
-            """Calculate Fibonacci zones with proper validation for FVG+SMT and SD+SMT"""
-            try:
-                instrument = trigger_data.get('instrument')
-                direction = trigger_data.get('direction')
-                criteria = trigger_data.get('type')
-                signal_data = trigger_data.get('signal_data', {})
+    def _get_fib_zones(self, trigger_data):
+        
+        """Calculate Fibonacci zones with proper validation for FVG+SMT and SD+SMT"""
+        try:
+            instrument = trigger_data.get('instrument')
+            direction = trigger_data.get('direction')
+            criteria = trigger_data.get('type')
+            signal_data = trigger_data.get('signal_data', {})
                 
-                # ======== CRT+SMT uses different logic ========
-                if criteria == 'CRT+SMT':
-                    # Use the new range projection method for CRT
-                    return self._get_crt_zones_with_proper_tp(trigger_data)
+            # ======== CRT+SMT uses different logic ========
+            if criteria == 'CRT+SMT':
+                # Use the new range projection method for CRT
+                return self._get_crt_zones_with_proper_tp(trigger_data)
                 
                 # ======== FVG+SMT and SD+SMT logic ========
                 # DEBUG: Log what we actually received
-                self.logger.info(f"📊 Getting zones for {criteria}, direction: {direction}")
+            self.logger.info(f"📊 Getting zones for {criteria}, direction: {direction}")
                 
                 # Get formation time
-                if criteria == 'FVG+SMT':
-                    zone_data = signal_data.get('fvg_idea', {})
-                    formation_time = zone_data.get('formation_time')
-                elif criteria == 'SD+SMT':
-                    zone_data = signal_data.get('zone', {})
-                    formation_time = zone_data.get('formation_time')
+            if criteria == 'FVG+SMT':
+                zone_data = signal_data.get('fvg_idea', {})
+                formation_time = zone_data.get('formation_time')
+            elif criteria == 'SD+SMT':
+                zone_data = signal_data.get('zone', {})
+                formation_time = zone_data.get('formation_time')
                 
-                if not formation_time:
-                    self.logger.error(f"❌ No formation time for {criteria}")
-                    return {
-                        'zones': [],
-                        'sl_price': None,
-                        'tp_price': None,
-                        'direction': direction,
-                        'criteria': criteria,
-                        'is_valid': False,
-                        'error': 'No formation time'
+            if not formation_time:
+                self.logger.error(f"❌ No formation time for {criteria}")
+                return {
+                    'zones': [],
+                    'sl_price': None,
+                    'tp_price': None,
+                    'direction': direction,
+                    'criteria': criteria,
+                    'is_valid': False,
+                    'error': 'No formation time'
                     }
                 
-                # Get SMT data
-                smt_data = signal_data.get('smt_data', {})
-                smt_cycle = smt_data.get('cycle', 'daily')
+            # Get SMT data
+            smt_data = signal_data.get('smt_data', {})
+            smt_cycle = smt_data.get('cycle', 'daily')
                 
-                # Map SMT cycle to timeframe for data analysis
-                tf_map = {
-                    'daily': 'M15',
-                    '90min': 'M5', 
-                    'weekly': 'H1',
-                    'monthly': 'H4'
-                }
-                analysis_tf = tf_map.get(smt_cycle, 'M15')
+            # Map SMT cycle to timeframe for data analysis
+            tf_map = {
+                'daily': 'M15',
+                '90min': 'M5', 
+                'weekly': 'H1',
+                'monthly': 'H4'
+            }
+            analysis_tf = tf_map.get(smt_cycle, 'M15')
                 
-                # Fetch enough data from formation time
-                self.logger.info(f"📊 Fetching {analysis_tf} data from {formation_time} to now...")
-                df = fetch_candles(instrument, analysis_tf, count=200, api_key=self.credentials['oanda_api_key'])
+            # Fetch enough data from formation time
+            self.logger.info(f"📊 Fetching {analysis_tf} data from {formation_time} to now...")
+            df = fetch_candles(instrument, analysis_tf, count=200, api_key=self.credentials['oanda_api_key'])
                 
-                if df.empty:
-                    self.logger.error(f"❌ No data fetched for {instrument} {analysis_tf}")
-                    return {
-                        'zones': [],
-                        'sl_price': None,
-                        'tp_price': None,
-                        'direction': direction,
-                        'criteria': criteria,
-                        'is_valid': False,
-                        'error': 'No data fetched'
+            if df.empty:
+                self.logger.error(f"❌ No data fetched for {instrument} {analysis_tf}")
+                return {
+                    'zones': [],
+                    'sl_price': None,
+                    'tp_price': None,
+                    'direction': direction,
+                    'criteria': criteria,
+                    'is_valid': False,
+                    'error': 'No data fetched'
                     }
                 
                 # Filter data from formation time onward
-                df_from_formation = df[df['time'] >= formation_time]
+            df_from_formation = df[df['time'] >= formation_time]
                 
-                if df_from_formation.empty:
-                    self.logger.error(f"❌ No data after formation time {formation_time}")
-                    return {
-                        'zones': [],
-                        'sl_price': None,
-                        'tp_price': None,
-                        'direction': direction,
-                        'criteria': criteria,
-                        'is_valid': False,
-                        'error': 'No data after formation'
-                    }
+            if df_from_formation.empty:
+                self.logger.error(f"❌ No data after formation time {formation_time}")
+                return {
+                    'zones': [],
+                    'sl_price': None,
+                    'tp_price': None,
+                    'direction': direction,
+                    'criteria': criteria,
+                    'is_valid': False,
+                    'error': 'No data after formation'
+                }
                 
                 
                 # Get SMT swings and convert to list WITH ASSET FILTERING
-                smt_swings_dict = smt_data.get('swings', {})
-                swings_list = []
+            smt_swings_dict = smt_data.get('swings', {})
+            swings_list = []
                 
-                self.logger.info(f"🔍 Filtering swings for {instrument}...")
+            self.logger.info(f"🔍 Filtering swings for {instrument}...")
                 
-                for key, swing_info in smt_swings_dict.items():
-                    if isinstance(swing_info, dict) and 'price' in swing_info and 'time' in swing_info:
-                        swing_asset = swing_info.get('asset', '')
+            for key, swing_info in smt_swings_dict.items():
+                if isinstance(swing_info, dict) and 'price' in swing_info and 'time' in swing_info:
+                    swing_asset = swing_info.get('asset', '')
                         
-                        # Check if this swing belongs to our instrument
-                        if swing_asset == instrument:
-                            swings_list.append({
-                                'time': swing_info['time'],
-                                'price': swing_info.get('price', 0),
-                                'type': swing_info.get('type', 'unknown'),
-                                'asset': swing_asset,
-                                'swing_type': swing_info.get('swing_type', 'unknown')  # 'prev' or 'curr'
-                            })
-                            self.logger.info(f"✅ INCLUDING swing for {instrument}: {key} at {swing_info.get('price', 0)} (type: {swing_info.get('type')}, swing_type: {swing_info.get('swing_type')})")
-                        else:
-                            self.logger.info(f"❌ EXCLUDING swing (wrong asset): {key} at {swing_info.get('price', 0)} (asset: {swing_asset})")
+                    # Check if this swing belongs to our instrument
+                    if swing_asset == instrument:
+                        swings_list.append({
+                            'time': swing_info['time'],
+                            'price': swing_info.get('price', 0),
+                            'type': swing_info.get('type', 'unknown'),
+                            'asset': swing_asset,
+                            'swing_type': swing_info.get('swing_type', 'unknown')  # 'prev' or 'curr'
+                        })
+                        self.logger.info(f"✅ INCLUDING swing for {instrument}: {key} at {swing_info.get('price', 0)} (type: {swing_info.get('type')}, swing_type: {swing_info.get('swing_type')})")
+                    else:
+                        self.logger.info(f"❌ EXCLUDING swing (wrong asset): {key} at {swing_info.get('price', 0)} (asset: {swing_asset})")
                 
-                if len(swings_list) < 2:
-                    self.logger.error(f"❌ Not enough valid SMT swings for {instrument}: {len(swings_list)}")
-                    # Log what assets we actually found
-                    found_assets = set()
-                    for key, swing_info in smt_swings_dict.items():
-                        if isinstance(swing_info, dict):
-                            found_assets.add(swing_info.get('asset', 'unknown'))
-                    self.logger.error(f"❌ Found swings for assets: {found_assets}")
+            if len(swings_list) < 2:
+                self.logger.error(f"❌ Not enough valid SMT swings for {instrument}: {len(swings_list)}")
+                # Log what assets we actually found
+                found_assets = set()
+                for key, swing_info in smt_swings_dict.items():
+                    if isinstance(swing_info, dict):
+                        found_assets.add(swing_info.get('asset', 'unknown'))
+                self.logger.error(f"❌ Found swings for assets: {found_assets}")
                     
-                    return {
-                        'zones': [],
-                        'sl_price': None,
-                        'tp_price': None,
-                        'direction': direction,
-                        'criteria': criteria,
-                        'is_valid': False,
-                        'error': f'Not enough swings for {instrument}: {len(swings_list)}'
-                    }
+                return {
+                    'zones': [],
+                    'sl_price': None,
+                    'tp_price': None,
+                    'direction': direction,
+                    'criteria': criteria,
+                    'is_valid': False,
+                    'error': f'Not enough swings for {instrument}: {len(swings_list)}'
+                }
                 
-                # Sort swings by time for chronological order
-                swings_list.sort(key=lambda x: x['time'])
+            # Sort swings by time for chronological order
+            swings_list.sort(key=lambda x: x['time'])
                 
-                # Identify which swing is prev and which is curr based on swing_type
-                prev_swing = None
-                curr_swing = None
+            # Identify which swing is prev and which is curr based on swing_type
+            prev_swing = None
+            curr_swing = None
                 
-                for swing in swings_list:
-                    if swing.get('swing_type') == 'prev':
-                        prev_swing = swing
-                    elif swing.get('swing_type') == 'curr':
-                        curr_swing = swing
+            for swing in swings_list:
+                if swing.get('swing_type') == 'prev':
+                    prev_swing = swing
+                elif swing.get('swing_type') == 'curr':
+                    curr_swing = swing
                 
                 # If we couldn't find by swing_type, use chronological order (last one is curr)
-                if not curr_swing and swings_list:
-                    curr_swing = swings_list[-1]
-                    self.logger.info(f"📊 Using chronological order for curr swing: {curr_swing['time']}")
+            if not curr_swing and swings_list:
+                curr_swing = swings_list[-1]
+                self.logger.info(f"📊 Using chronological order for curr swing: {curr_swing['time']}")
                 
-                if not prev_swing and len(swings_list) >= 2:
-                    prev_swing = swings_list[-2]
-                    self.logger.info(f"📊 Using chronological order for prev swing: {prev_swing['time']}")
+            if not prev_swing and len(swings_list) >= 2:
+                prev_swing = swings_list[-2]
+                self.logger.info(f"📊 Using chronological order for prev swing: {prev_swing['time']}")
                 
-                if not curr_swing:
-                    self.logger.error(f"❌ Could not identify current swing for {instrument}")
-                    return {
-                        'zones': [],
-                        'sl_price': None,
-                        'tp_price': None,
-                        'direction': direction,
-                        'criteria': criteria,
-                        'is_valid': False,
-                        'error': 'Could not identify current swing'
-                    }
+            if not curr_swing:
+                self.logger.error(f"❌ Could not identify current swing for {instrument}")
+                return {
+                    'zones': [],
+                    'sl_price': None,
+                    'tp_price': None,
+                    'direction': direction,
+                    'criteria': criteria,
+                    'is_valid': False,
+                    'error': 'Could not identify current swing'
+                }
                 
                 # ============================================
                 # Calculate SL and TP based on direction
                 # ============================================
                 # SL is the CURRENT (most recent) swing
-                default_sl = curr_swing['price']
-                self.logger.info(f"📊 Using current swing as SL: {default_sl:.5f} (time: {curr_swing['time']}, type: {curr_swing['type']})")
+            default_sl = curr_swing['price']
+            self.logger.info(f"📊 Using current swing as SL: {default_sl:.5f} (time: {curr_swing['time']}, type: {curr_swing['type']})")
                 
-                if direction == 'bearish':
-                    # BEARISH: SL is current swing (should be a high), TP is lowest point between formation and current swing time
+            if direction == 'bearish':
+                # BEARISH: SL is current swing (should be a high), TP is lowest point between formation and current swing time
                     
-                    # Validate that current swing is indeed a high for bearish setup
-                    if curr_swing['type'] != 'high':
-                        self.logger.warning(f"⚠️  Bearish setup but current swing is type '{curr_swing['type']}', expected 'high'")
+                # Validate that current swing is indeed a high for bearish setup
+                if curr_swing['type'] != 'high':
+                    self.logger.warning(f"⚠️  Bearish setup but current swing is type '{curr_swing['type']}', expected 'high'")
                     
                     # Find TP: lowest point between formation and current swing time
-                    if curr_swing['time']:
-                        mask = (df_from_formation['time'] >= formation_time) & \
-                               (df_from_formation['time'] <= curr_swing['time'])
-                        df_for_tp = df_from_formation[mask]
-                    else:
-                        df_for_tp = df_from_formation[df_from_formation['time'] >= formation_time]
+                if curr_swing['time']:
+                    mask = (df_from_formation['time'] >= formation_time) & \
+                            (df_from_formation['time'] <= curr_swing['time'])
+                    df_for_tp = df_from_formation[mask]
+                else:
+                    df_for_tp = df_from_formation[df_from_formation['time'] >= formation_time]
                     
-                    if df_for_tp.empty:
-                        default_tp = df_from_formation['low'].min()
-                    else:
+                if df_for_tp.empty:
+                    default_tp = df_from_formation['low'].min()
+                else:
                         # Use proper swing detection for TP
-                        swing_lows = self._find_swing_lows(df_for_tp, lookback=3, lookforward=3)
+                    swing_lows = self._find_swing_lows(df_for_tp, lookback=3, lookforward=3)
                         
-                        if not swing_lows:
-                            default_tp = df_for_tp['low'].min()
-                            self.logger.info(f"📊 Using simple low as TP: {default_tp:.5f}")
-                        else:
-                            default_tp = min(swing_lows)
-                            self.logger.info(f"📊 Found {len(swing_lows)} swing lows, TP: {default_tp:.5f}")
+                    if not swing_lows:
+                        default_tp = df_for_tp['low'].min()
+                        self.logger.info(f"📊 Using simple low as TP: {default_tp:.5f}")
+                    else:
+                        default_tp = min(swing_lows)
+                        self.logger.info(f"📊 Found {len(swing_lows)} swing lows, TP: {default_tp:.5f}")
                     
                     # 3. Check if TP has been broken (invalidates setup)
-                    swing_time_mask = df_from_formation['low'] == default_tp
-                    if swing_time_mask.any():
-                        swing_time = df_from_formation[swing_time_mask].iloc[0]['time']
-                        df_after_swing = df_from_formation[df_from_formation['time'] > swing_time]
-                        candles_below_tp = df_after_swing[df_after_swing['close'] < default_tp]
+                swing_time_mask = df_from_formation['low'] == default_tp
+                if swing_time_mask.any():
+                    swing_time = df_from_formation[swing_time_mask].iloc[0]['time']
+                    df_after_swing = df_from_formation[df_from_formation['time'] > swing_time]
+                    candles_below_tp = df_after_swing[df_after_swing['close'] < default_tp]
                         
-                        if not candles_below_tp.empty:
-                            self.logger.error(f"❌ BEARISH SETUP INVALID: TP swing low at {default_tp:.5f} was broken!")
-                            return {
-                                'zones': [],
-                                'sl_price': default_sl,
-                                'tp_price': default_tp,
-                                'direction': direction,
-                                'criteria': criteria,
-                                'is_valid': False,
-                                'error': f'TP broken at {candles_below_tp.iloc[0]["time"]}'
-                            }
+                    if not candles_below_tp.empty:
+                        self.logger.error(f"❌ BEARISH SETUP INVALID: TP swing low at {default_tp:.5f} was broken!")
+                        return {
+                            'zones': [],
+                            'sl_price': default_sl,
+                            'tp_price': default_tp,
+                            'direction': direction,
+                            'criteria': criteria,
+                            'is_valid': False,
+                            'error': f'TP broken at {candles_below_tp.iloc[0]["time"]}'
+                        }
                     
-                    self.logger.info(f"✅ Bearish setup VALID: SL={default_sl:.5f} (curr swing), TP={default_tp:.5f}")
+                self.logger.info(f"✅ Bearish setup VALID: SL={default_sl:.5f} (curr swing), TP={default_tp:.5f}")
                     
-                else:  # BULLISH
+            else:  # BULLISH
                     # BULLISH: SL is current swing (should be a low), TP is highest point between formation and current swing time
                     
                     # Validate that current swing is indeed a low for bullish setup
-                    if curr_swing['type'] != 'low':
-                        self.logger.warning(f"⚠️  Bullish setup but current swing is type '{curr_swing['type']}', expected 'low'")
+                if curr_swing['type'] != 'low':
+                    self.logger.warning(f"⚠️  Bullish setup but current swing is type '{curr_swing['type']}', expected 'low'")
                     
                     # Find TP: highest point between formation and current swing time
-                    if curr_swing['time']:
-                        mask = (df_from_formation['time'] >= formation_time) & \
-                               (df_from_formation['time'] <= curr_swing['time'])
-                        df_for_tp = df_from_formation[mask]
-                    else:
-                        df_for_tp = df_from_formation[df_from_formation['time'] >= formation_time]
+                if curr_swing['time']:
+                    mask = (df_from_formation['time'] >= formation_time) & \
+                            (df_from_formation['time'] <= curr_swing['time'])
+                    df_for_tp = df_from_formation[mask]
+                else:
+                    df_for_tp = df_from_formation[df_from_formation['time'] >= formation_time]
                     
-                    if df_for_tp.empty:
-                        default_tp = df_from_formation['high'].max()
-                    else:
+                if df_for_tp.empty:
+                    default_tp = df_from_formation['high'].max()
+                else:
                         # Use proper swing detection for TP
-                        swing_highs = self._find_swing_highs(df_for_tp, lookback=3, lookforward=3)
+                    swing_highs = self._find_swing_highs(df_for_tp, lookback=3, lookforward=3)
                         
-                        if not swing_highs:
-                            default_tp = df_for_tp['high'].max()
-                            self.logger.info(f"📊 Using simple high as TP: {default_tp:.5f}")
-                        else:
-                            default_tp = max(swing_highs)
-                            self.logger.info(f"📊 Found {len(swing_highs)} swing highs, TP: {default_tp:.5f}")
+                    if not swing_highs:
+                        default_tp = df_for_tp['high'].max()
+                        self.logger.info(f"📊 Using simple high as TP: {default_tp:.5f}")
+                    else:
+                        default_tp = max(swing_highs)
+                        self.logger.info(f"📊 Found {len(swing_highs)} swing highs, TP: {default_tp:.5f}")
                     
                     # 3. Check if TP has been broken (invalidates setup)
-                    swing_time_mask = df_from_formation['high'] == default_tp
-                    if swing_time_mask.any():
-                        swing_time = df_from_formation[swing_time_mask].iloc[0]['time']
-                        df_after_swing = df_from_formation[df_from_formation['time'] > swing_time]
-                        candles_above_tp = df_after_swing[df_after_swing['close'] > default_tp]
+                swing_time_mask = df_from_formation['high'] == default_tp
+                if swing_time_mask.any():
+                    swing_time = df_from_formation[swing_time_mask].iloc[0]['time']
+                    df_after_swing = df_from_formation[df_from_formation['time'] > swing_time]
+                    candles_above_tp = df_after_swing[df_after_swing['close'] > default_tp]
                         
-                        if not candles_above_tp.empty:
-                            self.logger.error(f"❌ BULLISH SETUP INVALID: TP swing high at {default_tp:.5f} was broken!")
-                            return {
-                                'zones': [],
-                                'sl_price': default_sl,
-                                'tp_price': default_tp,
-                                'direction': direction,
-                                'criteria': criteria,
-                                'is_valid': False,
-                                'error': f'TP broken at {candles_above_tp.iloc[0]["time"]}'
-                            }
+                    if not candles_above_tp.empty:
+                        self.logger.error(f"❌ BULLISH SETUP INVALID: TP swing high at {default_tp:.5f} was broken!")
+                        return {
+                            'zones': [],
+                            'sl_price': default_sl,
+                            'tp_price': default_tp,
+                            'direction': direction,
+                            'criteria': criteria,
+                            'is_valid': False,
+                            'error': f'TP broken at {candles_above_tp.iloc[0]["time"]}'
+                        }
                     
-                    self.logger.info(f"✅ Bullish setup VALID: SL={default_sl:.5f} (curr swing), TP={default_tp:.5f}")
+                self.logger.info(f"✅ Bullish setup VALID: SL={default_sl:.5f} (curr swing), TP={default_tp:.5f}")
                 
                 # ============================================
                 # Calculate Fibonacci zones
                 # ============================================
-                fib_zones = self._calculate_fibonacci_levels(default_sl, default_tp, direction)
+            fib_zones = self._calculate_fibonacci_levels(default_sl, default_tp, direction)
                 
                 # Filter zones by 50% rule
-                valid_zones = []
-                for zone in fib_zones:
+            valid_zones = []
+            for zone in fib_zones:
                     # Calculate 50% line between SL and TP
-                    if direction == 'bearish':
-                        fifty_percent_line = default_sl - ((default_sl - default_tp) * 0.5)
+                if direction == 'bearish':
+                    fifty_percent_line = default_sl - ((default_sl - default_tp) * 0.5)
                         # For bearish: zone is valid if its LOW is ABOVE 50% line
-                        if zone['low'] > fifty_percent_line:
-                            valid_zones.append(zone)
-                            self.logger.info(f"✅ Valid zone: {zone['zone_name']} - {zone['low']:.5f} to {zone['high']:.5f}")
-                        else:
-                            self.logger.info(f"❌ Invalid zone (below 50%): {zone['zone_name']} - {zone['low']:.5f} to {zone['high']:.5f}")
-                    else:  # bullish
-                        fifty_percent_line = default_sl + ((default_tp - default_sl) * 0.5)
+                    if zone['low'] > fifty_percent_line:
+                        valid_zones.append(zone)
+                        self.logger.info(f"✅ Valid zone: {zone['zone_name']} - {zone['low']:.5f} to {zone['high']:.5f}")
+                    else:
+                        self.logger.info(f"❌ Invalid zone (below 50%): {zone['zone_name']} - {zone['low']:.5f} to {zone['high']:.5f}")
+                else:  # bullish
+                    fifty_percent_line = default_sl + ((default_tp - default_sl) * 0.5)
                         # For bullish: zone is valid if its HIGH is BELOW 50% line
-                        if zone['high'] < fifty_percent_line:
-                            valid_zones.append(zone)
-                            self.logger.info(f"✅ Valid zone: {zone['zone_name']} - {zone['low']:.5f} to {zone['high']:.5f}")
-                        else:
-                            self.logger.info(f"❌ Invalid zone (above 50%): {zone['zone_name']} - {zone['low']:.5f} to {zone['high']:.5f}")
+                    if zone['high'] < fifty_percent_line:
+                        valid_zones.append(zone)
+                        self.logger.info(f"✅ Valid zone: {zone['zone_name']} - {zone['low']:.5f} to {zone['high']:.5f}")
+                    else:
+                        self.logger.info(f"❌ Invalid zone (above 50%): {zone['zone_name']} - {zone['low']:.5f} to {zone['high']:.5f}")
                 
-                if not valid_zones:
-                    self.logger.error(f"❌ No valid Fibonacci zones after 50% filter")
-                    return {
-                        'zones': [],
-                        'sl_price': default_sl,
-                        'tp_price': default_tp,
-                        'direction': direction,
-                        'criteria': criteria,
-                        'is_valid': False,
-                        'error': 'No valid zones after 50% filter'
-                    }
-                
-                # Return complete setup data
+            if not valid_zones:
+                self.logger.error(f"❌ No valid Fibonacci zones after 50% filter")
                 return {
-                    'zones': valid_zones,
+                    'zones': [],
                     'sl_price': default_sl,
                     'tp_price': default_tp,
                     'direction': direction,
                     'criteria': criteria,
-                    'is_valid': True,
-                    'error': None
+                    'is_valid': False,
+                    'error': 'No valid zones after 50% filter'
                 }
                 
-            except Exception as e:
-                self.logger.error(f"❌ Error calculating Fibonacci zones: {str(e)}", exc_info=True)
-                return {
-                    'zones': [],
-                    'sl_price': None,
-                    'tp_price': None,
-                    'direction': trigger_data.get('direction'),
-                    'criteria': trigger_data.get('type'),
-                    'is_valid': False,
-                    'error': str(e)
-                }
+                # Return complete setup data
+            return {
+                'zones': valid_zones,
+                'sl_price': default_sl,
+                'tp_price': default_tp,
+                'direction': direction,
+                'criteria': criteria,
+                'is_valid': True,
+                'error': None
+            }
+                
+        except Exception as e:
+            self.logger.error(f"❌ Error calculating Fibonacci zones: {str(e)}", exc_info=True)
+            return {
+                'zones': [],
+                'sl_price': None,
+                'tp_price': None,
+                'direction': trigger_data.get('direction'),
+                'criteria': trigger_data.get('type'),
+                'is_valid': False,
+                'error': str(e)
+            }
     
     def _calculate_fibonacci_levels(self, sl_price, tp_price, direction):
         """Calculate Fibonacci retracement zones from SL (1) to TP (0)"""
