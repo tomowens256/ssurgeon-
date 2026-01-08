@@ -30,7 +30,7 @@ NY_TZ = ZoneInfo("America/New_York")
 # ================================
 
 TRADING_PAIRS = {
-    'GOLD_TRIAD': {
+    'precious_metals': {
         'pair1': 'XAU_USD',  # OLD structure (keep for compatibility)
         'pair2': 'XAU_JPY',  # OLD structure (keep for compatibility)
         'instruments': ['XAU_USD', 'XAU_JPY'],  # NEW structure
@@ -41,24 +41,11 @@ TRADING_PAIRS = {
             '90min': 'M5'
         }
     },
-    'precious_metals': {
-        'pair1': 'XAU_USD',  # OLD structure (keep for compatibility)
-        'pair2': 'XAG_USD',  # OLD structure (keep for compatibility)
-        'instruments': ['XAU_USD', 'XAG_USD'],  # NEW structure
-        'timeframe_mapping': {
-            'monthly': 'H4',
-            'weekly': 'H1', 
-            'daily': 'M15',
-            '90min': 'M5'
-        }
-    },
     'us_indices_triad': {
-        'pair1': 'NAS100_USD',  
-        'pair2': 'SPX500_USD',  
-        'instruments': ['NAS100_USD','SPX500_USD'],  # NEW structure
+        'instruments': ['NAS100_USD', 'SPX500_USD'],  
         'timeframe_mapping': {
             'monthly': 'H4',
-            'weekly': 'H1', 
+            'weekly': 'H1',
             'daily': 'M15',
             '90min': 'M5'
         }
@@ -1553,31 +1540,26 @@ class UltimateSMTDetector:
                     return None
     
                 # Create swings array for bearish case
-                # Create swings array for bearish case
                 swings = {
                     'asset1_prev': {
                         'time': asset1_prev_high['time'],
                         'price': asset1_prev_high['price'],
-                        'type': 'high',
-                        'asset': asset1_name  # <-- ADD THIS! e.g., 'NAS100_USD'
+                        'type': 'high'
                     },
                     'asset1_curr': {
                         'time': asset1_curr_high['time'],
                         'price': asset1_curr_high['price'],
-                        'type': 'high',
-                        'asset': asset1_name  # <-- ADD THIS!
+                        'type': 'high'
                     },
                     'asset2_prev': {
                         'time': asset2_prev_high['time'],
                         'price': asset2_prev_high['price'],
-                        'type': 'high',
-                        'asset': asset2_name  # <-- ADD THIS! e.g., 'SPX500_USD'
+                        'type': 'high'
                     },
                     'asset2_curr': {
                         'time': asset2_curr_high['time'],
                         'price': asset2_curr_high['price'],
-                        'type': 'high',
-                        'asset': asset2_name  # <-- ADD THIS!
+                        'type': 'high'
                     }
                 }
     
@@ -1607,31 +1589,26 @@ class UltimateSMTDetector:
                     return None
     
                 # Create swings array for bullish case
-                # Create swings array for bullish case
                 swings = {
                     'asset1_prev': {
                         'time': asset1_prev_low['time'],
                         'price': asset1_prev_low['price'],
-                        'type': 'low',
-                        'asset': asset1_name  # <-- ADD THIS!
+                        'type': 'low'
                     },
                     'asset1_curr': {
                         'time': asset1_curr_low['time'],
                         'price': asset1_curr_low['price'],
-                        'type': 'low',
-                        'asset': asset1_name  # <-- ADD THIS!
+                        'type': 'low'
                     },
                     'asset2_prev': {
                         'time': asset2_prev_low['time'],
                         'price': asset2_prev_low['price'],
-                        'type': 'low',
-                        'asset': asset2_name  # <-- ADD THIS!
+                        'type': 'low'
                     },
                     'asset2_curr': {
                         'time': asset2_curr_low['time'],
                         'price': asset2_curr_low['price'],
-                        'type': 'low',
-                        'asset': asset2_name  # <-- ADD THIS!
+                        'type': 'low'
                     }
                 }
     
@@ -1659,8 +1636,6 @@ class UltimateSMTDetector:
                 'curr_q': curr_q,
                 'timestamp': current_time,
                 'formation_time': formation_time,
-                'asset1_name': asset1_name,  # <-- ADD THIS
-                'asset2_name': asset2_name,  # <-- ADD THIS
                 'asset1_action': asset1_action,
                 'asset2_action': asset2_action,
                 'details': f"Asset1 {asset1_action}, Asset2 {asset2_action}",
@@ -1669,7 +1644,7 @@ class UltimateSMTDetector:
                 'timeframe': self.pair_config['timeframe_mapping'][cycle_type],
                 'swing_times': swing_times,
                 'candle_time': formation_time,
-                'swings': swings  # Now with asset names in each swing!
+                'swings': swings  # Added swings array with price data
             }
     
             self.smt_history.append(smt_data)
@@ -4936,7 +4911,7 @@ class HammerPatternScanner:
         return True
     
     def init_csv_storage(self):
-        """Initialize CSV file with NEW columns - FIXED VERSION (no header duplication)"""
+        """Initialize CSV file with NEW columns - FORCE UPDATE"""
         try:
             # Ensure directory exists
             directory = os.path.dirname(self.csv_base_path)
@@ -4979,19 +4954,6 @@ class HammerPatternScanner:
                 
                 # Market Context
                 'rsi', 'vwap',
-
-                # Higher Timeframe Fibonacci Zones (Pd-tf)
-                'H4_fib_zone', 'H6_fib_zone', 'D_fib_zone', 'W_fib_zone',
-                'H4_fib_percent', 'H6_fib_percent', 'D_fib_percent', 'W_fib_percent',  # For more granular analysis
-                
-                # Price Relative to Candle Open
-                'H4_open_rel', 'H6_open_rel', 'D_open_rel', 'W_open_rel',
-                
-                # Candle Quarter Position
-                'H4_quarter', 'H6_quarter', 'D_quarter', 'W_quarter',
-                
-                # Additional: Price position percentage within candle
-                'H4_candle_percent', 'H6_candle_percent', 'D_candle_percent', 'W_candle_percent',
                 
                 # New Features
                 'signal_latency_seconds',  # Time from candle close to Telegram send
@@ -5025,9 +4987,6 @@ class HammerPatternScanner:
                 
             ]
             
-            # Store headers as instance variable for later use
-            self.headers = headers
-            
             # Check if file exists
             if not os.path.exists(self.csv_file_path):
                 # Create new file with headers
@@ -5037,7 +4996,7 @@ class HammerPatternScanner:
                 self.logger.info(f"📁 Created NEW CSV with {len(headers)} columns")
                 return
             
-            # File exists - check and update headers WITHOUT rewriting entire file
+            # File exists - check and update headers
             with open(self.csv_file_path, 'r', newline='', encoding='utf-8') as f:
                 try:
                     reader = csv.reader(f)
@@ -5051,27 +5010,61 @@ class HammerPatternScanner:
                         self.logger.info(f"📁 File was empty, wrote {len(headers)} headers")
                         return
                     
-                    # Check if headers match (ignoring order)
-                    existing_set = set(existing_headers)
-                    headers_set = set(headers)
-                    
-                    if existing_set == headers_set:
-                        # Same headers, just check order
-                        if existing_headers == headers:
-                            self.logger.info(f"📁 CSV file exists with correct headers ({len(headers)} columns)")
-                        else:
-                            # Same headers but different order - we should reorder
-                            self.logger.info(f"📁 Headers have different order, reordering...")
-                            self._reorder_csv_headers(existing_headers, headers)
+                    # Check if headers match EXACTLY
+                    if existing_headers == headers:
+                        self.logger.info(f"📁 CSV file exists with correct headers ({len(headers)} columns)")
                         return
                     
-                    # Headers don't match - add missing columns
-                    missing_headers = [h for h in headers if h not in existing_set]
-                    if missing_headers:
-                        self.logger.info(f"📁 Adding {len(missing_headers)} missing headers: {missing_headers}")
-                        self._add_missing_headers(existing_headers, missing_headers, headers)
-                    else:
-                        self.logger.info(f"📁 CSV file exists with correct headers ({len(headers)} columns)")
+                    # Headers don't match - we need to update the file
+                    self.logger.info(f"📁 Existing headers ({len(existing_headers)} cols) don't match new headers ({len(headers)} cols)")
+                    self.logger.info(f"📁 Updating CSV structure...")
+                    
+                    # Read all existing data
+                    f.seek(0)
+                    all_rows = list(reader)
+                    
+                    # Create backup of old file
+                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                    backup_path = f"{self.csv_base_path}_backup_{timestamp}.csv"
+                    with open(backup_path, 'w', newline='', encoding='utf-8') as backup:
+                        writer = csv.writer(backup)
+                        writer.writerow(existing_headers)
+                        for row in all_rows:
+                            writer.writerow(row)
+                    self.logger.info(f"📁 Backed up old file to: {backup_path}")
+                    
+                    # Create a mapping from old headers to new headers
+                    # For existing data, we'll try to preserve what we can
+                    old_to_new = {}
+                    for i, old_header in enumerate(existing_headers):
+                        if old_header in headers:
+                            old_to_new[old_header] = old_header
+                    
+                    # Write new file with updated headers
+                    with open(self.csv_file_path, 'w', newline='', encoding='utf-8') as f2:
+                        writer = csv.DictWriter(f2, fieldnames=headers)
+                        writer.writeheader()
+                        
+                        # Write existing rows, preserving data where possible
+                        for row_data in all_rows:
+                            row_dict = {}
+                            # Build dictionary from old row data
+                            for i, value in enumerate(row_data):
+                                if i < len(existing_headers):
+                                    old_header = existing_headers[i]
+                                    if old_header in old_to_new:
+                                        row_dict[old_header] = value
+                            
+                            # Fill missing columns with empty values
+                            for header in headers:
+                                if header not in row_dict:
+                                    row_dict[header] = ''
+                            
+                            # Write the row
+                            writer.writerow(row_dict)
+                    
+                    self.logger.info(f"📁 Successfully updated CSV to {len(headers)} columns")
+                    self.logger.info(f"📁 New columns added: {[h for h in headers if h not in existing_headers]}")
                         
                 except (csv.Error, StopIteration, UnicodeDecodeError) as e:
                     # Corrupted CSV, recreate it
@@ -5083,6 +5076,15 @@ class HammerPatternScanner:
                     
         except Exception as e:
             self.logger.error(f"❌ Failed to initialize CSV: {str(e)}")
+            # Try to create a simple file as last resort
+            try:
+                simple_headers = ['timestamp', 'error', 'message']
+                with open(f"{self.csv_base_path}_emergency.csv", 'w', newline='') as f:
+                    writer = csv.writer(f)
+                    writer.writerow(simple_headers)
+                self.logger.info(f"📁 Created emergency CSV file")
+            except Exception as e2:
+                self.logger.error(f"❌ Could not create emergency CSV: {str(e2)}")
     
     def _generate_signal_id(self, trigger_data):
         """Create a unique signal ID for grouping multiple hammers"""
@@ -5210,81 +5212,106 @@ class HammerPatternScanner:
         except Exception as e:
             self.logger.error(f"Error in hammer detection: {str(e)}")
             return False, 0, 0
-
-    def _find_swing_lows(self, df, lookback=3, lookforward=3):
-        """Find significant swing lows in price data"""
-        swing_lows = []
-        
-        for i in range(lookback, len(df) - lookforward):
-            # Current low
-            current_low = df.iloc[i]['low']
-            
-            # Check if current low is lower than previous 'lookback' candles
-            is_lowest_backward = True
-            for j in range(1, lookback + 1):
-                if df.iloc[i - j]['low'] < current_low:
-                    is_lowest_backward = False
-                    break
-            
-            # Check if current low is lower than next 'lookforward' candles
-            is_lowest_forward = True
-            for j in range(1, lookforward + 1):
-                if df.iloc[i + j]['low'] < current_low:
-                    is_lowest_forward = False
-                    break
-            
-            if is_lowest_backward and is_lowest_forward:
-                swing_lows.append(current_low)
-        
-        return swing_lows
-    
-    def _find_swing_highs(self, df, lookback=3, lookforward=3):
-        """Find significant swing highs in price data"""
-        swing_highs = []
-        
-        for i in range(lookback, len(df) - lookforward):
-            # Current high
-            current_high = df.iloc[i]['high']
-            
-            # Check if current high is higher than previous 'lookback' candles
-            is_highest_backward = True
-            for j in range(1, lookback + 1):
-                if df.iloc[i - j]['high'] > current_high:
-                    is_highest_backward = False
-                    break
-            
-            # Check if current high is higher than next 'lookforward' candles
-            is_highest_forward = True
-            for j in range(1, lookforward + 1):
-                if df.iloc[i + j]['high'] > current_high:
-                    is_highest_forward = False
-                    break
-            
-            if is_highest_backward and is_highest_forward:
-                swing_highs.append(current_high)
-        
-        return swing_highs
     
     
 
     def _get_fib_zones(self, trigger_data):
-        """Calculate Fibonacci zones with proper validation for FVG+SMT and SD+SMT"""
+        """Calculate Fibonacci zones based on SMT swings and zone formation"""
         try:
             instrument = trigger_data.get('instrument')
             direction = trigger_data.get('direction')
             criteria = trigger_data.get('type')
             signal_data = trigger_data.get('signal_data', {})
             
-            # ======== CRT+SMT uses different logic ========
-            if criteria == 'CRT+SMT':
-                # Use the new range projection method for CRT
-                return self._get_crt_zones_with_proper_tp(trigger_data)
-            
-            # ======== FVG+SMT and SD+SMT logic ========
-            # DEBUG: Log what we actually received
+            # DEBUG LOG
             self.logger.info(f"📊 Getting zones for {criteria}, direction: {direction}")
             
-            # Get formation time
+            if criteria == 'CRT+SMT':
+                # For CRT, we need a more sensible price range to scan
+                crt_signal = signal_data.get('crt_signal', {})
+                
+                # Fetch current price
+                df_current = fetch_candles(instrument, 'M1', count=2, 
+                                         api_key=self.credentials['oanda_api_key'])
+                
+                if df_current.empty:
+                    self.logger.error("❌ No current price data")
+                    return []
+                
+                current_price = df_current.iloc[-1]['close']
+                
+                # Get the previous candle's high/low for invalidation
+                trigger_tf = trigger_data.get('trigger_timeframe', 'H1')
+                df_tf = fetch_candles(instrument, trigger_tf, count=3, 
+                                    api_key=self.credentials['oanda_api_key'])
+                
+                if df_tf.empty or len(df_tf) < 2:
+                    self.logger.error(f"❌ No {trigger_tf} data for CRT")
+                    return []
+                
+                previous_candle = df_tf.iloc[-2]
+                
+                if direction == 'bearish':
+                    # Bearish CRT: invalidate above previous candle's high
+                    invalidation_level = previous_candle['high']
+                    # Calculate a reasonable scanning range - current price down to ~10 pips below
+                    pip_multiplier = 100  # Gold uses 2 decimals
+                    scan_extension_pips = 15  # 15 pips extension for scanning
+                    scan_low = current_price - (scan_extension_pips / pip_multiplier)
+                    scan_high = invalidation_level
+                    
+                    scan_range = [
+                        {
+                            'high': scan_high,
+                            'low': scan_low,
+                            'is_crt': True,
+                            'invalidation': invalidation_level,
+                            'current_price': current_price
+                        }
+                    ]
+                else:  # bullish
+                    # Bullish CRT: invalidate below previous candle's low
+                    invalidation_level = previous_candle['low']
+                    # Calculate a reasonable scanning range - current price up to ~10 pips above
+                    pip_multiplier = 100  # Gold uses 2 decimals
+                    scan_extension_pips = 15  # 15 pips extension for scanning
+                    scan_high = current_price + (scan_extension_pips / pip_multiplier)
+                    scan_low = invalidation_level
+                    
+                    scan_range = [
+                        {
+                            'low': scan_low,
+                            'high': scan_high,
+                            'is_crt': True,
+                            'invalidation': invalidation_level,
+                            'current_price': current_price
+                        }
+                    ]
+                
+                self.logger.info(f"📊 CRT {direction} setup:")
+                self.logger.info(f"   Invalidation: {invalidation_level:.5f}")
+                self.logger.info(f"   Current price: {current_price:.5f}")
+                self.logger.info(f"   Scan range: {scan_range[0]['low']:.5f} - {scan_range[0]['high']:.5f}")
+                self.logger.info(f"   Range size: {(scan_range[0]['high'] - scan_range[0]['low']) * 100:.1f} pips")
+                
+                return scan_range
+            
+            
+            
+            # Get SMT cycle and map to timeframe for data slicing
+            smt_data = signal_data.get('smt_data', {})
+            smt_cycle = smt_data.get('cycle', 'daily')
+            
+            # Map SMT cycle to timeframe for data slicing
+            tf_map = {
+                'daily': 'M15',
+                '90min': 'M5', 
+                'weekly': 'H1',
+                'monthly': 'H4'
+            }
+            analysis_tf = tf_map.get(smt_cycle, 'M15')
+            
+            # Get formation time and zone data
             if criteria == 'FVG+SMT':
                 zone_data = signal_data.get('fvg_idea', {})
                 formation_time = zone_data.get('formation_time')
@@ -5294,323 +5321,168 @@ class HammerPatternScanner:
             
             if not formation_time:
                 self.logger.error(f"❌ No formation time for {criteria}")
-                return {
-                    'zones': [],
-                    'sl_price': None,
-                    'tp_price': None,
-                    'direction': direction,
-                    'criteria': criteria,
-                    'is_valid': False,
-                    'error': 'No formation time'
-                }
+                return []
             
-            # Get SMT data
-            smt_data = signal_data.get('smt_data', {})
-            smt_cycle = smt_data.get('cycle', 'daily')
-            
-            # Map SMT cycle to timeframe for data analysis
-            tf_map = {
-                'daily': 'M15',
-                '90min': 'M5', 
-                'weekly': 'H1',
-                'monthly': 'H4'
-            }
-            analysis_tf = tf_map.get(smt_cycle, 'M15')
-            
-            # Fetch enough data from formation time
+            # Fetch data from formation time to now
             self.logger.info(f"📊 Fetching {analysis_tf} data from {formation_time} to now...")
-            df = fetch_candles(instrument, analysis_tf, count=200, api_key=self.credentials['oanda_api_key'])
+            
+            # We need to fetch enough candles to cover from formation time
+            # Estimate: 1000 candles should cover several days
+            df = fetch_candles(instrument, analysis_tf, count=1000, api_key=self.credentials['oanda_api_key'])
             
             if df.empty:
                 self.logger.error(f"❌ No data fetched for {instrument} {analysis_tf}")
-                return {
-                    'zones': [],
-                    'sl_price': None,
-                    'tp_price': None,
-                    'direction': direction,
-                    'criteria': criteria,
-                    'is_valid': False,
-                    'error': 'No data fetched'
-                }
+                return []
             
             # Filter data from formation time onward
             df_from_formation = df[df['time'] >= formation_time]
             
             if df_from_formation.empty:
                 self.logger.error(f"❌ No data after formation time {formation_time}")
-                return {
-                    'zones': [],
-                    'sl_price': None,
-                    'tp_price': None,
-                    'direction': direction,
-                    'criteria': criteria,
-                    'is_valid': False,
-                    'error': 'No data after formation'
-                }
+                return []
             
+            # Get SMT swings data - now it's a dictionary, not a list
+            smt_swings = smt_data.get('swings', {})
             
-            # Get SMT swings and convert to list WITH ASSET FILTERING
-            smt_swings_dict = smt_data.get('swings', {})
+            if not smt_swings:
+                self.logger.error(f"❌ No SMT swings found")
+                return []
+            
+            # Convert swings dictionary to list for easier processing
             swings_list = []
-            
-            self.logger.info(f"🔍 Filtering swings for {instrument}...")
-            
-            for key, swing_info in smt_swings_dict.items():
+            for key, swing_info in smt_swings.items():
+                # Only process if it has the expected structure
                 if isinstance(swing_info, dict) and 'price' in swing_info and 'time' in swing_info:
-                    swing_asset = swing_info.get('asset', '')
-                    
-                    # Check if this swing belongs to our instrument
-                    if swing_asset == instrument:
-                        swings_list.append({
-                            'time': swing_info['time'],
-                            'price': swing_info.get('price', 0),
-                            'type': swing_info.get('type', 'unknown'),
-                            'asset': swing_asset
-                        })
-                        self.logger.info(f"✅ INCLUDING swing for {instrument}: {key} at {swing_info.get('price', 0)}")
-                    else:
-                        self.logger.info(f"❌ EXCLUDING swing (wrong asset): {key} at {swing_info.get('price', 0)} (asset: {swing_asset})")
+                    swings_list.append({
+                        'time': swing_info['time'],
+                        'price': swing_info['price'],
+                        'type': swing_info.get('type', 'unknown'),
+                        'asset': key  # Keep track of which asset/swing this is
+                    })
             
             if len(swings_list) < 2:
-                self.logger.error(f"❌ Not enough valid SMT swings for {instrument}: {len(swings_list)}")
-                # Log what assets we actually found
-                found_assets = set()
-                for key, swing_info in smt_swings_dict.items():
-                    if isinstance(swing_info, dict):
-                        found_assets.add(swing_info.get('asset', 'unknown'))
-                self.logger.error(f"❌ Found swings for assets: {found_assets}")
-                
-                return {
-                    'zones': [],
-                    'sl_price': None,
-                    'tp_price': None,
-                    'direction': direction,
-                    'criteria': criteria,
-                    'is_valid': False,
-                    'error': f'Not enough swings for {instrument}: {len(swings_list)}'
-                }
+                self.logger.error(f"❌ Not enough valid SMT swings: {len(swings_list)}")
+                return []
             
-            # Sort swings by time for chronological orders
+            # Sort swings by time for chronological order
             swings_list.sort(key=lambda x: x['time'])
             
-            # ============================================
-            # Calculate SL and TP based on direction
-            # ============================================
-            second_swing_time = swings_list[1]['time'] if len(swings_list) > 1 else None
-            
             if direction == 'bearish':
-                # BEARISH: SL is highest swing, TP is lowest point between formation and second swing
-                
-                # 1. SL: Highest swing price
+                # Bearish setup
+                # 1. Default SL: Highest price among all SMT swings (should be highest high)
                 default_sl = max([swing['price'] for swing in swings_list])
-                self.logger.info(f"📊 Bearish SL (highest swing): {default_sl:.5f}")
                 
-                # 2. TP: Find lowest point between formation and second swing
+                # 2. Default TP: Lowest point between zone formation and second SMT swing
+                # Get second SMT swing time (chronologically)
+                second_swing_time = swings_list[1]['time'] if len(swings_list) > 1 else None
+                
                 if second_swing_time:
-                    mask = (df_from_formation['time'] >= formation_time) & \
-                           (df_from_formation['time'] <= second_swing_time)
+                    # Filter data between formation time and second swing
+                    mask = (df_from_formation['time'] >= formation_time) & (df_from_formation['time'] <= second_swing_time)
                     df_for_tp = df_from_formation[mask]
+                    default_tp = df_for_tp['low'].min() if not df_for_tp.empty else df_from_formation['low'].min()
                 else:
-                    df_for_tp = df_from_formation[df_from_formation['time'] >= formation_time]
-                
-                if df_for_tp.empty:
                     default_tp = df_from_formation['low'].min()
-                else:
-                    # Use proper swing detection for TP
-                    swing_lows = self._find_swing_lows(df_for_tp, lookback=3, lookforward=3)
-                    
-                    if not swing_lows:
-                        default_tp = df_for_tp['low'].min()
-                        self.logger.info(f"📊 Using simple low as TP: {default_tp:.5f}")
-                    else:
-                        default_tp = min(swing_lows)
-                        self.logger.info(f"📊 Found {len(swing_lows)} swing lows, TP: {default_tp:.5f}")
                 
-                # 3. Check if TP has been broken (invalidates setup)
-                swing_time_mask = df_from_formation['low'] == default_tp
-                if swing_time_mask.any():
-                    swing_time = df_from_formation[swing_time_mask].iloc[0]['time']
-                    df_after_swing = df_from_formation[df_from_formation['time'] > swing_time]
-                    candles_below_tp = df_after_swing[df_after_swing['close'] < default_tp]
-                    
-                    if not candles_below_tp.empty:
-                        self.logger.error(f"❌ BEARISH SETUP INVALID: TP swing low at {default_tp:.5f} was broken!")
-                        return {
-                            'zones': [],
-                            'sl_price': default_sl,
-                            'tp_price': default_tp,
-                            'direction': direction,
-                            'criteria': criteria,
-                            'is_valid': False,
-                            'error': f'TP broken at {candles_below_tp.iloc[0]["time"]}'
-                        }
+                self.logger.info(f"📊 Bearish setup:")
+                self.logger.info(f"   Default SL (highest swing price): {default_sl:.5f}")
+                self.logger.info(f"   Default TP (lowest after formation): {default_tp:.5f}")
                 
-                self.logger.info(f"✅ Bearish setup VALID: SL={default_sl:.5f}, TP={default_tp:.5f}")
+                # Calculate Fibonacci retracement from SL to TP
+                fib_levels = self._calculate_fibonacci_levels(default_sl, default_tp, direction)
                 
-            else:  # BULLISH
-                # BULLISH: SL is lowest swing, TP is highest point between formation and second swing
-                
-                # 1. SL: Lowest swing price
+            else:  # bullish
+                # Bullish setup (flipped logic)
+                # 1. Default SL: Lowest price among all SMT swings (should be lowest low)
                 default_sl = min([swing['price'] for swing in swings_list])
-                self.logger.info(f"📊 Bullish SL (lowest swing): {default_sl:.5f}")
                 
-                # 2. TP: Find highest point between formation and second swing
+                # 2. Default TP: Highest point between zone formation and second SMT swing
+                second_swing_time = swings_list[1]['time'] if len(swings_list) > 1 else None
+                
                 if second_swing_time:
-                    mask = (df_from_formation['time'] >= formation_time) & \
-                           (df_from_formation['time'] <= second_swing_time)
+                    mask = (df_from_formation['time'] >= formation_time) & (df_from_formation['time'] <= second_swing_time)
                     df_for_tp = df_from_formation[mask]
+                    default_tp = df_for_tp['high'].max() if not df_for_tp.empty else df_from_formation['high'].max()
                 else:
-                    df_for_tp = df_from_formation[df_from_formation['time'] >= formation_time]
-                
-                if df_for_tp.empty:
                     default_tp = df_from_formation['high'].max()
-                else:
-                    # Use proper swing detection for TP
-                    swing_highs = self._find_swing_highs(df_for_tp, lookback=3, lookforward=3)
-                    
-                    if not swing_highs:
-                        default_tp = df_for_tp['high'].max()
-                        self.logger.info(f"📊 Using simple high as TP: {default_tp:.5f}")
-                    else:
-                        default_tp = max(swing_highs)
-                        self.logger.info(f"📊 Found {len(swing_highs)} swing highs, TP: {default_tp:.5f}")
                 
-                # 3. Check if TP has been broken (invalidates setup)
-                swing_time_mask = df_from_formation['high'] == default_tp
-                if swing_time_mask.any():
-                    swing_time = df_from_formation[swing_time_mask].iloc[0]['time']
-                    df_after_swing = df_from_formation[df_from_formation['time'] > swing_time]
-                    candles_above_tp = df_after_swing[df_after_swing['close'] > default_tp]
-                    
-                    if not candles_above_tp.empty:
-                        self.logger.error(f"❌ BULLISH SETUP INVALID: TP swing high at {default_tp:.5f} was broken!")
-                        return {
-                            'zones': [],
-                            'sl_price': default_sl,
-                            'tp_price': default_tp,
-                            'direction': direction,
-                            'criteria': criteria,
-                            'is_valid': False,
-                            'error': f'TP broken at {candles_above_tp.iloc[0]["time"]}'
-                        }
+                self.logger.info(f"📊 Bullish setup:")
+                self.logger.info(f"   Default SL (lowest swing price): {default_sl:.5f}")
+                self.logger.info(f"   Default TP (highest after formation): {default_tp:.5f}")
                 
-                self.logger.info(f"✅ Bullish setup VALID: SL={default_sl:.5f}, TP={default_tp:.5f}")
+                # Calculate Fibonacci retracement from SL to TP
+                fib_levels = self._calculate_fibonacci_levels(default_sl, default_tp, direction)
             
-            # ============================================
-            # Calculate Fibonacci zones
-            # ============================================
-            fib_zones = self._calculate_fibonacci_levels(default_sl, default_tp, direction)
+            # Log the swing details for debugging
+            self.logger.info(f"📊 SMT Swing details:")
+            for i, swing in enumerate(swings_list):
+                self.logger.info(f"   Swing {i+1}: {swing['asset']} - Time: {swing['time']}, Price: {swing['price']:.5f}, Type: {swing['type']}")
             
-            # Filter zones by 50% rule
-            valid_zones = []
-            for zone in fib_zones:
-                # Calculate 50% line between SL and TP
-                if direction == 'bearish':
-                    fifty_percent_line = default_sl - ((default_sl - default_tp) * 0.5)
-                    # For bearish: zone is valid if its LOW is ABOVE 50% line
-                    if zone['low'] > fifty_percent_line:
-                        valid_zones.append(zone)
-                        self.logger.info(f"✅ Valid zone: {zone['zone_name']} - {zone['low']:.5f} to {zone['high']:.5f}")
-                    else:
-                        self.logger.info(f"❌ Invalid zone (below 50%): {zone['zone_name']} - {zone['low']:.5f} to {zone['high']:.5f}")
-                else:  # bullish
-                    fifty_percent_line = default_sl + ((default_tp - default_sl) * 0.5)
-                    # For bullish: zone is valid if its HIGH is BELOW 50% line
-                    if zone['high'] < fifty_percent_line:
-                        valid_zones.append(zone)
-                        self.logger.info(f"✅ Valid zone: {zone['zone_name']} - {zone['low']:.5f} to {zone['high']:.5f}")
-                    else:
-                        self.logger.info(f"❌ Invalid zone (above 50%): {zone['zone_name']} - {zone['low']:.5f} to {zone['high']:.5f}")
-            
-            if not valid_zones:
-                self.logger.error(f"❌ No valid Fibonacci zones after 50% filter")
-                return {
-                    'zones': [],
-                    'sl_price': default_sl,
-                    'tp_price': default_tp,
-                    'direction': direction,
-                    'criteria': criteria,
-                    'is_valid': False,
-                    'error': 'No valid zones after 50% filter'
-                }
-            
-            # Return complete setup data
-            return {
-                'zones': valid_zones,
-                'sl_price': default_sl,
-                'tp_price': default_tp,
-                'direction': direction,
-                'criteria': criteria,
-                'is_valid': True,
-                'error': None
-            }
+            return fib_levels
             
         except Exception as e:
             self.logger.error(f"❌ Error calculating Fibonacci zones: {str(e)}", exc_info=True)
-            return {
-                'zones': [],
-                'sl_price': None,
-                'tp_price': None,
-                'direction': trigger_data.get('direction'),
-                'criteria': trigger_data.get('type'),
-                'is_valid': False,
-                'error': str(e)
-            }
+            return []
     
-    def _calculate_fibonacci_levels(self, sl_price, tp_price, direction):
-        """Calculate Fibonacci retracement zones from SL (1) to TP (0)"""
+    def _calculate_fibonacci_levels(self, level1, level2, direction):
+        """Calculate Fibonacci retracement zones between consecutive Fibonacci levelsz"""
         try:
-            # Standard Fibonacci retracement levels in order from 1 to 0
-            # We're calculating FROM SL (1) TO TP (0)
-            fib_ratios = [0.786, 0.618, 0.5, 0.382, 0.236, 0.0]
-            
-            zones = []
+            # Standard Fibonacci retracement levels in order
+            fib_ratios = [0.236, 0.382, 0.5, 0.618, 0.786]
             
             if direction == 'bearish':
-                # For bearish: SL is higher, TP is lower
-                price_range = sl_price - tp_price
+                # For bearish: level1 is SL (higher), level2 is TP (lower)
+                price_range = level1 - level2
                 
-                for i in range(len(fib_ratios)-1):
-                    current_ratio = fib_ratios[i]
-                    next_ratio = fib_ratios[i+1]
+                zones = []
+                for i, ratio in enumerate(fib_ratios):
+                    # Calculate the high boundary of this zone (at current ratio)
+                    zone_high = level1 - (price_range * ratio)
                     
-                    # Zone boundaries
-                    zone_high = sl_price - (price_range * current_ratio)
-                    zone_low = sl_price - (price_range * next_ratio)
+                    # Calculate the low boundary of this zone
+                    if i == 0:  # First zone: from 0.236 to 1.0 (TP)
+                        zone_low = level2  # TP is at 1.0
+                    else:  # Subsequent zones: from current ratio to previous ratio
+                        prev_ratio = fib_ratios[i-1]
+                        zone_low = level1 - (price_range * prev_ratio)
                     
                     zones.append({
-                        'ratio': current_ratio,
+                        'ratio': ratio,
                         'high': zone_high,
                         'low': zone_low,
                         'mid': (zone_high + zone_low) / 2,
-                        'zone_name': f'Fib_{current_ratio}_to_{next_ratio}'
+                        'zone_name': f'Fib_{ratio}_to_{prev_ratio if i > 0 else 1.0}'
                     })
                 
-                self.logger.info(f"📊 Fibonacci zones for BEARISH (SL={sl_price:.5f}, TP={tp_price:.5f}):")
+                self.logger.info(f"📊 Fibonacci zones for bearish:")
                 for zone in zones:
                     self.logger.info(f"   {zone['zone_name']}: {zone['low']:.5f} - {zone['high']:.5f}")
                 
             else:  # bullish
-                # For bullish: SL is lower, TP is higher
-                price_range = tp_price - sl_price
+                # For bullish: level1 is SL (lower), level2 is TP (higher)
+                price_range = level2 - level1
                 
-                for i in range(len(fib_ratios)-1):
-                    current_ratio = fib_ratios[i]
-                    next_ratio = fib_ratios[i+1]
+                zones = []
+                for i, ratio in enumerate(fib_ratios):
+                    # Calculate the low boundary of this zone (at current ratio)
+                    zone_low = level1 + (price_range * ratio)
                     
-                    # Zone boundaries
-                    zone_low = sl_price + (price_range * current_ratio)
-                    zone_high = sl_price + (price_range * next_ratio)
+                    # Calculate the high boundary of this zone
+                    if i == 0:  # First zone: from 0.236 to 1.0 (TP)
+                        zone_high = level2  # TP is at 1.0
+                    else:  # Subsequent zones: from current ratio to previous ratio
+                        prev_ratio = fib_ratios[i-1]
+                        zone_high = level1 + (price_range * prev_ratio)
                     
                     zones.append({
-                        'ratio': current_ratio,
+                        'ratio': ratio,
                         'low': zone_low,
                         'high': zone_high,
                         'mid': (zone_low + zone_high) / 2,
-                        'zone_name': f'Fib_{current_ratio}_to_{next_ratio}'
+                        'zone_name': f'Fib_{ratio}_to_{prev_ratio if i > 0 else 1.0}'
                     })
                 
-                self.logger.info(f"📊 Fibonacci zones for BULLISH (SL={sl_price:.5f}, TP={tp_price:.5f}):")
+                self.logger.info(f"📊 Fibonacci zones for bullish:")
                 for zone in zones:
                     self.logger.info(f"   {zone['zone_name']}: {zone['low']:.5f} - {zone['high']:.5f}")
             
@@ -5839,190 +5711,15 @@ class HammerPatternScanner:
         except Exception as e:
             self.logger.error(f"❌ Error calculating CRT zones: {str(e)}")
             return []
-
-    def _get_crt_zones_with_proper_tp(self, trigger_data):
-        """Calculate zones for CRT setups using previous candle range projection"""
-        try:
-            instrument = trigger_data.get('instrument')
-            direction = trigger_data.get('direction')
-            trigger_timeframe = trigger_data.get('trigger_timeframe')
-            criteria = trigger_data.get('type')
-            
-            self.logger.info(f"🔷 CRT Setup: {instrument} {direction} on {trigger_timeframe}")
-            
-            # For CRT, we use the previous candle of the CRT timeframe
-            df = fetch_candles(instrument, trigger_timeframe, count=5, 
-                              api_key=self.credentials['oanda_api_key'])
-            
-            if df.empty or len(df) < 2:
-                self.logger.error(f"❌ No data for CRT {trigger_timeframe}")
-                return {
-                    'zones': [],
-                    'sl_price': None,
-                    'tp_price': None,
-                    'direction': direction,
-                    'criteria': criteria,
-                    'is_valid': False,
-                    'error': f'No data for {trigger_timeframe}'
-                }
-            
-            # Get the CRT candle (previous completed candle)
-            crt_candle = df.iloc[-2]
-            
-            # Get current price for entry reference
-            current_df = fetch_candles(instrument, 'M1', count=2, 
-                                     api_key=self.credentials['oanda_api_key'])
-            
-            if current_df.empty:
-                self.logger.error(f"❌ Cannot get current price for {instrument}")
-                return {
-                    'zones': [],
-                    'sl_price': None,
-                    'tp_price': None,
-                    'direction': direction,
-                    'criteria': criteria,
-                    'is_valid': False,
-                    'error': 'Cannot get current price'
-                }
-            
-            current_price = current_df.iloc[-1]['close']
-            
-            # Calculate previous candle range
-            candle_range = crt_candle['high'] - crt_candle['low']
-            self.logger.info(f"📊 CRT Previous Candle:")
-            self.logger.info(f"   Open: {crt_candle['open']:.5f}, High: {crt_candle['high']:.5f}")
-            self.logger.info(f"   Low: {crt_candle['low']:.5f}, Close: {crt_candle['close']:.5f}")
-            self.logger.info(f"   Range: {candle_range:.5f} ({candle_range*10000:.1f} pips)")
-            
-            if direction == 'bearish':
-                # Bearish CRT: SL is above CRT candle high
-                default_sl = crt_candle['high']
-                
-                # TP: Project one standard deviation (1x range) below current price
-                default_tp = current_price - (candle_range * 1.0)
-                
-                # But ensure TP is not too far (cap at 2x range maximum)
-                max_tp_distance = candle_range * 2.0
-                min_tp_price = current_price - max_tp_distance
-                
-                if default_tp < min_tp_price:
-                    default_tp = min_tp_price
-                    self.logger.info(f"📊 TP capped at 2x range: {default_tp:.5f}")
-                
-                self.logger.info(f"📊 CRT Bearish Setup:")
-                self.logger.info(f"   Current Price: {current_price:.5f}")
-                self.logger.info(f"   SL (candle high): {default_sl:.5f}")
-                self.logger.info(f"   TP (1x range proj): {default_tp:.5f}")
-                
-            else:  # bullish
-                # Bullish CRT: SL is below CRT candle low
-                default_sl = crt_candle['low']
-                
-                # TP: Project one standard deviation (1x range) above current price
-                default_tp = current_price + (candle_range * 1.0)
-                
-                # But ensure TP is not too far (cap at 2x range maximum)
-                max_tp_distance = candle_range * 2.0
-                max_tp_price = current_price + max_tp_distance
-                
-                if default_tp > max_tp_price:
-                    default_tp = max_tp_price
-                    self.logger.info(f"📊 TP capped at 2x range: {default_tp:.5f}")
-                
-                self.logger.info(f"📊 CRT Bullish Setup:")
-                self.logger.info(f"   Current Price: {current_price:.5f}")
-                self.logger.info(f"   SL (candle low): {default_sl:.5f}")
-                self.logger.info(f"   TP (1x range proj): {default_tp:.5f}")
-            
-            # Calculate Fibonacci zones from SL to TP
-            fib_zones = self._calculate_fibonacci_levels(default_sl, default_tp, direction)
-            
-            # For CRT, we accept ALL zones (no 50% filter)
-            self.logger.info(f"📊 CRT: Using ALL {len(fib_zones)} Fibonacci zones")
-            
-            return {
-                'zones': fib_zones,
-                'sl_price': default_sl,
-                'tp_price': default_tp,
-                'direction': direction,
-                'criteria': criteria,
-                'is_valid': True,
-                'error': None
-            }
-            
-        except Exception as e:
-            self.logger.error(f"❌ Error in CRT zone calculation: {str(e)}", exc_info=True)
-            return {
-                'zones': [],
-                'sl_price': None,
-                'tp_price': None,
-                'direction': trigger_data.get('direction'),
-                'criteria': trigger_data.get('type'),
-                'is_valid': False,
-                'error': str(e)
-            }
     
     def get_aligned_timeframes(self, instrument, criteria, trigger_tf):
         """Get aligned timeframes for scanning"""
         config = self.timeframe_alignment.get(instrument, self.timeframe_alignment['default'])
         trigger_map = config.get(criteria, {})
         return trigger_map.get(trigger_tf, ['M5', 'M15'])
-
-    def _reorder_csv_headers(self, existing_headers, target_headers):
-        """Re-order CSV headers to match target order"""
-        try:
-            # Read all data
-            with open(self.csv_file_path, 'r', newline='', encoding='utf-8') as f:
-                reader = csv.DictReader(f)
-                all_rows = list(reader)
-            
-            # Write with new header order
-            with open(self.csv_file_path, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=target_headers)
-                writer.writeheader()
-                
-                for row in all_rows:
-                    # Reorder row to match target headers
-                    ordered_row = {header: row.get(header, '') for header in target_headers}
-                    writer.writerow(ordered_row)
-            
-            self.logger.info(f"📁 Successfully reordered CSV headers")
-            
-        except Exception as e:
-            self.logger.error(f"❌ Error reordering CSV headers: {str(e)}")
-    
-    def _add_missing_headers(self, existing_headers, missing_headers, target_headers):
-        """Add missing headers to CSV file"""
-        try:
-            # Read all data
-            with open(self.csv_file_path, 'r', newline='', encoding='utf-8') as f:
-                reader = csv.DictReader(f)
-                all_rows = list(reader)
-            
-            # Create new headers (existing + missing in target order)
-            new_headers = []
-            for header in target_headers:
-                if header in existing_headers or header in missing_headers:
-                    new_headers.append(header)
-            
-            # Write with new headers
-            with open(self.csv_file_path, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=new_headers)
-                writer.writeheader()
-                
-                for row in all_rows:
-                    # Add missing columns with empty values
-                    for header in missing_headers:
-                        row[header] = ''
-                    writer.writerow(row)
-            
-            self.logger.info(f"📁 Successfully added {len(missing_headers)} missing headers")
-            
-        except Exception as e:
-            self.logger.error(f"❌ Error adding missing headers: {str(e)}")
     
     def scan_fibonacci_hammer(self, trigger_data):
-        """Main hammer scanning function with CONCURRENT timeframe scanning"""
+        """Main hammer scanning function with CONCURRENT timeframe scanning - COMPLETE VERSION"""
         try:
             instrument = trigger_data.get('instrument')
             direction = trigger_data.get('direction')
@@ -6034,17 +5731,16 @@ class HammerPatternScanner:
                 self.logger.error("❌ No signal_data in trigger_data")
                 return False
             
-            # Get Fibonacci zones WITH SL and TP
-            fib_data = self._get_fib_zones(trigger_data)
+            # DEBUG: Log what we actually received
+            self.logger.info(f"📦 Signal data keys: {list(signal_data.keys())}")
+            if 'smt_data' in signal_data:
+                swings = signal_data['smt_data'].get('swings', {})
+                self.logger.info(f"   SMT swings count: {len(swings)}")
+                for key, swing in swings.items():
+                    self.logger.info(f"   Swing {key}: {swing.get('type', 'unknown')} at {swing.get('price', 0):.5f}")
             
-            if not fib_data or not fib_data.get('is_valid', False):
-                error_msg = fib_data.get('error', 'Unknown error') if fib_data else 'No data returned'
-                self.logger.error(f"❌ Invalid Fibonacci setup: {error_msg}")
-                return False
-            
-            fib_zones = fib_data['zones']
-            sl_price = fib_data['sl_price']
-            tp_price = fib_data['tp_price']
+            # Get Fibonacci zones
+            fib_zones = self._get_fib_zones(trigger_data)
             
             if not fib_zones:
                 self.logger.error(f"❌ No Fibonacci zones calculated")
@@ -6060,7 +5756,6 @@ class HammerPatternScanner:
             self.logger.info(f"   Signal ID: {signal_id}")
             self.logger.info(f"   Direction: {direction}")
             self.logger.info(f"   Trigger TF: {trigger_timeframe}")
-            self.logger.info(f"   SL: {sl_price:.5f}, TP: {tp_price:.5f}")
             
             # Set scan duration based on criteria
             if criteria == 'CRT+SMT':
@@ -6083,8 +5778,6 @@ class HammerPatternScanner:
                 'hammer_count': 0,
                 'scan_end': scan_end,
                 'fib_zones': fib_zones,
-                'sl_price': sl_price,        # ADDED
-                'tp_price': tp_price,        # ADDED
                 'instrument': instrument,
                 'direction': direction,
                 'criteria': criteria,
@@ -6099,41 +5792,11 @@ class HammerPatternScanner:
             for tf in timeframes:
                 shared_state['scanned_candles'][tf] = set()
             
-            
             def scan_timeframe(tf):
                 """Scan a single timeframe (runs in separate thread)"""
                 try:
-                    self.logger.info(f"🔍 Starting {instrument} {tf} scanner thread")
-                    
-                    # DEBUG: Check what data we have
-                    self.logger.info(f"📊 {instrument} {tf} Initial State:")
-                    self.logger.info(f"   Criteria: {shared_state['criteria']}")
-                    self.logger.info(f"   Direction: {shared_state['direction']}")
-                    self.logger.info(f"   Fibonacci zones: {len(shared_state['fib_zones'])}")
-                    self.logger.info(f"   SL: {shared_state['sl_price']:.5f}")
-                    self.logger.info(f"   TP: {shared_state['tp_price']:.5f}")
-                    
+                    self.logger.info(f"🔍 Starting {tf} scanner thread")
                     tf_scanned_candles = shared_state['scanned_candles'][tf]
-                    
-                    # Calculate 50% line ONCE (outside the loop)
-                    sl_price = shared_state['sl_price']
-                    tp_price = shared_state['tp_price']
-                    direction = shared_state['direction']
-                    
-                    if not sl_price or not tp_price:
-                        self.logger.error(f"❌ {instrument} {tf}: Missing SL or TP!")
-                        return
-                    
-                    if direction == 'bearish':
-                        fifty_percent_line = sl_price - ((sl_price - tp_price) * 0.5)
-                    else:  # bullish
-                        fifty_percent_line = sl_price + ((tp_price - sl_price) * 0.5)
-                    
-                    self.logger.info(f"📊 {instrument} {tf}: 50% line at {fifty_percent_line:.5f}")
-                    
-                    # Log all zones for debugging
-                    for i, zone in enumerate(shared_state['fib_zones']):
-                        self.logger.info(f"📊 {instrument} {tf} Zone {i+1}: {zone['zone_name']} - {zone['low']:.5f} to {zone['high']:.5f}")
                     
                     while datetime.now(NY_TZ) < shared_state['scan_end']:
                         # 1. Check for CRT invalidation (if applicable)
@@ -6198,8 +5861,7 @@ class HammerPatternScanner:
                         tf_scanned_candles.add(candle_key)
                         
                         # 6. DEBUG: Log candle details
-                        # 6. DEBUG: Log candle details
-                        self.logger.info(f"📊 {instrument} {tf}: Scanning at {datetime.now(NY_TZ).strftime('%H:%M:%S')}")
+                        self.logger.info(f"📊 {tf}: Scanning at {datetime.now(NY_TZ).strftime('%H:%M:%S')}")
                         self.logger.info(f"   Candle time: {closed_candle['time']}")
                         self.logger.info(f"   Prices: O:{closed_candle['open']:.5f} H:{closed_candle['high']:.5f} "
                                        f"L:{closed_candle['low']:.5f} C:{closed_candle['close']:.5f}")
@@ -6210,62 +5872,41 @@ class HammerPatternScanner:
                             closed_candle, 
                             shared_state['direction']
                         )
-                        self.logger.info(f"   {instrument} {tf}: Hammer check: {is_hammer}")
+                        self.logger.info(f"   Hammer check: {is_hammer}")
                         self.logger.info(f"   Wick ratios: upper={upper_ratio:.2f}, lower={lower_ratio:.2f}")
                         
                         if is_hammer:
-                            self.logger.info(f"✅ {instrument} {tf}: HAMMER DETECTED! Checking if in zone...")
+                            self.logger.info(f"✅ {tf}: HAMMER DETECTED! Checking if in zone...")
                             self.log_detailed_candle_analysis(closed_candle, tf, shared_state['direction'])
                         
-                        # 8. Check if candle is in VALID Fibonacci zone
-                        # 8. Check if candle is in VALID Fibonacci zone
+                        # 8. Check if candle is in Fibonacci zone
                         candle_price = closed_candle['close']
-                        in_valid_zone = False
+                        in_zone = False
                         target_zone = None
                         
-                        # Check each zone
                         for zone in shared_state['fib_zones']:
-                            # First check if price is in this zone
-                            if zone['low'] <= candle_price <= zone['high']:
-                                self.logger.info(f"✅ {instrument} {tf}: Candle in zone {zone['zone_name']} ({zone['low']:.5f}-{zone['high']:.5f})")
-                                
-                                # Now check the 50% line condition
-                                if direction == 'bearish':
-                                    # For bearish: candle must be ABOVE 50% line
-                                    if candle_price > fifty_percent_line:
-                                        in_valid_zone = True
-                                        target_zone = zone
-                                        self.logger.info(f"✅ {instrument} {tf}: VALID - Above 50% line (candle: {candle_price:.5f} > 50%: {fifty_percent_line:.5f})")
-                                        break
-                                    else:
-                                        self.logger.info(f"❌ {instrument} {tf}: INVALID - Below 50% line (candle: {candle_price:.5f} <= 50%: {fifty_percent_line:.5f})")
-                                else:  # bullish
-                                    # For bullish: candle must be BELOW 50% line
-                                    if candle_price < fifty_percent_line:
-                                        in_valid_zone = True
-                                        target_zone = zone
-                                        self.logger.info(f"✅ {instrument} {tf}: VALID - Below 50% line (candle: {candle_price:.5f} < 50%: {fifty_percent_line:.5f})")
-                                        break
-                                    else:
-                                        self.logger.info(f"❌ {instrument} {tf}: INVALID - Above 50% line (candle: {candle_price:.5f} >= 50%: {fifty_percent_line:.5f})")
-                            else:
-                                # Log why this zone doesn't match
-                                if candle_price < zone['low']:
-                                    self.logger.debug(f"❌ {instrument} {tf}: Candle below zone {zone['zone_name']} ({candle_price:.5f} < {zone['low']:.5f})")
-                                elif candle_price > zone['high']:
-                                    self.logger.debug(f"❌ {instrument} {tf}: Candle above zone {zone['zone_name']} ({candle_price:.5f} > {zone['high']:.5f})")
+                            if shared_state['direction'] == 'bearish':
+                                if zone['low'] <= candle_price <= zone['high']:
+                                    in_zone = True
+                                    target_zone = zone
+                                    break
+                            else:  # bullish
+                                if zone['low'] <= candle_price <= zone['high']:
+                                    in_zone = True
+                                    target_zone = zone
+                                    break
                         
-                        if not in_valid_zone:
-                            self.logger.info(f"❌ {instrument} {tf}: Candle not in any valid Fibonacci zone")
-                            self.logger.info(f"   Price: {candle_price:.5f}, 50% line: {fifty_percent_line:.5f}")
+                        if not in_zone:
+                            self.logger.debug(f"❌ {tf}: Candle not in Fibonacci zone: {candle_price:.5f}")
                             time.sleep(1)
                             continue
                         
                         # 9. If hammer AND in zone, process it
                         if is_hammer:
-                            self.logger.info(f"✅ {instrument} {tf}: HAMMER FOUND in Fibonacci zone!")
-                            self.logger.info(f"   Time: {closed_candle['time']}")
-                            self.logger.info(f"   Price: {candle_price:.5f}, Zone: {target_zone['zone_name'] if target_zone else 'N/A'}")
+                            self.logger.info(f"✅ {tf}: HAMMER FOUND in Fibonacci zone!")
+                            self.logger.info(f"   Timeframe: {tf}, Time: {closed_candle['time']}")
+                            self.logger.info(f"   Price: {candle_price:.5f}, "
+                                           f"Zone: {target_zone['ratio'] if target_zone else 'N/A'}")
                             self.logger.info(f"   Wick ratios: upper={upper_ratio:.2f}, lower={lower_ratio:.2f}")
                             
                             # 10. Process and record hammer with thread safety
@@ -6285,7 +5926,7 @@ class HammerPatternScanner:
                             )
                             
                             if success:
-                                self.logger.info(f"✅ {instrument} {tf}: Trade #{current_hammer_count} processed successfully")
+                                self.logger.info(f"✅ {tf}: Trade #{current_hammer_count} processed successfully")
                             
                             # Continue scanning for more hammers in this timeframe
                             # (Don't break, keep looking for more)
@@ -6293,10 +5934,10 @@ class HammerPatternScanner:
                         # Small pause to avoid API rate limits and excessive CPU
                         time.sleep(1)
                         
-                    self.logger.info(f"⏰ {instrument} {tf} scanner thread completed")
+                    self.logger.info(f"⏰ {tf} scanner thread completed")
                     
                 except Exception as e:
-                    self.logger.error(f"❌ Error in {instrument} {tf} scanner thread: {str(e)}", exc_info=True)
+                    self.logger.error(f"❌ Error in {tf} scanner thread: {str(e)}", exc_info=True)
             
             # Start a thread for each timeframe
             threads = []
@@ -6544,13 +6185,11 @@ class HammerPatternScanner:
 
             # Get news context from the shared cache file
             
-            # Get news context from the shared cache file
             news_context = {}
             if hasattr(self, 'news_calendar') and self.news_calendar:
                 try:
-                    # Use the CORRECT method: get_news_for_instrument()
-                    signal_time = datetime.now(NY_TZ)
-                    news_context = self.news_calendar.get_news_for_instrument(instrument, signal_time)
+                    # Use the news calendar's method to get filtered news
+                    news_context = self.news_calendar.get_filtered_news_for_instrument(instrument)
                 except Exception as e:
                     self.logger.error(f"❌ Error getting news from calendar: {e}")
                     news_context = {
@@ -6591,16 +6230,6 @@ class HammerPatternScanner:
             hammer_high = candle['high']
             hammer_low = candle['low']
             hammer_range = hammer_high - hammer_low
-
-            # Calculate higher timeframe features
-            higher_tf_features = self.calculate_higher_tf_features(
-                instrument, 
-                current_price, 
-                candle['time']  # This is the hammer candle time
-            )
-            
-            # Add to trade_data
-            trade_data.update(higher_tf_features)
             
             # Pip multiplier
             pip_multiplier = 100 if 'JPY' in instrument else 10000
@@ -6829,153 +6458,6 @@ class HammerPatternScanner:
         except Exception as e:
             self.logger.error(f"Error calculating indicators: {str(e)}")
             return {'rsi': 50, 'macd_line': 0, 'vwap': 0}
-
-    def calculate_higher_tf_features(self, instrument, hammer_close_price, hammer_time):
-        """Calculate higher timeframe features for the hammer candle"""
-        try:
-            features = {}
-            
-            # Define timeframes to analyze
-            higher_tfs = ['H4', 'H6', 'D', 'W']
-            
-            for tf in higher_tfs:
-                # Fetch data for this timeframe
-                df = fetch_candles(instrument, tf, count=100, 
-                                  api_key=self.credentials['oanda_api_key'])
-                
-                if df.empty:
-                    self.logger.warning(f"⚠️ No {tf} data for {instrument}")
-                    continue
-                
-                # Convert hammer_time to match dataframe timezone
-                if df['time'].dt.tz is None:
-                    df['time'] = df['time'].dt.tz_localize('UTC').dt.tz_convert(NY_TZ)
-                
-                # Find the higher TF candle that contains the hammer time
-                # We'll use the last closed candle before or at hammer_time
-                mask = df['time'] <= hammer_time
-                if mask.any():
-                    # Get the most recent candle at or before hammer_time
-                    htf_candle = df[mask].iloc[-1]
-                else:
-                    # If no candle found, use the first one
-                    htf_candle = df.iloc[0]
-                
-                # ============================================
-                # 1. Pd-(tf): Fibonacci Zone (10 zones)
-                # ============================================
-                fib_zone, fib_percent = self._calculate_fib_zone(df, hammer_close_price, tf)
-                features[f'{tf.lower()}_fib_zone'] = fib_zone
-                features[f'{tf.lower()}_fib_percent'] = fib_percent
-                
-                # ============================================
-                # 2. Price Relative to Candle Open
-                # ============================================
-                if hammer_close_price > htf_candle['open']:
-                    features[f'{tf.lower()}_open_rel'] = 'up'
-                elif hammer_close_price < htf_candle['open']:
-                    features[f'{tf.lower()}_open_rel'] = 'down'
-                else:
-                    features[f'{tf.lower()}_open_rel'] = 'equal'
-                
-                # ============================================
-                # 3. Candle Quarter Position
-                # ============================================
-                quarter = self._calculate_candle_quarter(htf_candle, hammer_close_price)
-                features[f'{tf.lower()}_quarter'] = quarter
-                
-                # ============================================
-                # 4. Price Position Percentage within Candle
-                # ============================================
-                candle_percent = self._calculate_candle_position_percent(htf_candle, hammer_close_price)
-                features[f'{tf.lower()}_candle_percent'] = candle_percent
-                
-                # Log for debugging
-                self.logger.info(f"📊 {tf} Features for {instrument}:")
-                self.logger.info(f"   Fib Zone: {fib_zone} ({fib_percent:.1f}%)")
-                self.logger.info(f"   Open Rel: {features[f'{tf.lower()}_open_rel']}")
-                self.logger.info(f"   Quarter: {quarter}")
-                self.logger.info(f"   Candle %: {candle_percent:.1f}%")
-            
-            return features
-            
-        except Exception as e:
-            self.logger.error(f"❌ Error calculating higher TF features: {str(e)}")
-            return {}
-    
-    def _calculate_fib_zone(self, df, current_price, timeframe):
-        """Calculate which Fibonacci zone (1-10) price is in for given data"""
-        try:
-            # Use the entire dataframe for highest/lowest
-            highest = df['high'].max()
-            lowest = df['low'].min()
-            total_range = highest - lowest
-            
-            if total_range <= 0:
-                return 0, 0
-            
-            # Create 10 Fibonacci-like zones (not actual Fibonacci ratios)
-            # Zone 1 is near the top, Zone 10 is near the bottom
-            zone_size = total_range / 10
-            
-            # Calculate which zone price is in
-            distance_from_top = highest - current_price
-            zone = int(distance_from_top // zone_size) + 1
-            
-            # Ensure zone is between 1 and 10
-            zone = max(1, min(10, zone))
-            
-            # Calculate percentage from top (0% at top, 100% at bottom)
-            percent_from_top = (distance_from_top / total_range) * 100
-            
-            return zone, percent_from_top
-            
-        except Exception as e:
-            self.logger.error(f"Error calculating Fib zone for {timeframe}: {str(e)}")
-            return 0, 0
-    
-    def _calculate_candle_quarter(self, candle, current_price):
-        """Calculate which quarter of the candle price is in (1-4)"""
-        try:
-            candle_high = candle['high']
-            candle_low = candle['low']
-            candle_range = candle_high - candle_low
-            
-            if candle_range <= 0:
-                return 0
-            
-            quarter_size = candle_range / 4
-            
-            # Calculate which quarter (1 = bottom quarter, 4 = top quarter)
-            distance_from_bottom = current_price - candle_low
-            quarter = int(distance_from_bottom // quarter_size) + 1
-            
-            # Adjust: if price is exactly at high, it's quarter 4
-            if quarter > 4:
-                quarter = 4
-            
-            return quarter
-            
-        except Exception as e:
-            self.logger.error(f"Error calculating candle quarter: {str(e)}")
-            return 0
-    
-    def _calculate_candle_position_percent(self, candle, current_price):
-        """Calculate percentage position within candle (0% at low, 100% at high)"""
-        try:
-            candle_high = candle['high']
-            candle_low = candle['low']
-            candle_range = candle_high - candle_low
-            
-            if candle_range <= 0:
-                return 50  # Middle if no range
-            
-            position = ((current_price - candle_low) / candle_range) * 100
-            return round(position, 1)
-            
-        except Exception as e:
-            self.logger.error(f"Error calculating candle position %: {str(e)}")
-            return 50
 
     def calculate_advanced_features(self, df, candle_index):
         """Calculate advanced features for the hammer candle"""
@@ -7293,48 +6775,63 @@ class HammerPatternScanner:
             return None, None, None
     
     def save_trade_to_csv(self, trade_data):
-        """Save trade data to CSV with latest trades at the TOP"""
+        """Save trade data to CSV with proper field handling"""
         try:
-            self.logger.info(f"💾 Attempting to save trade {trade_data['trade_id']} to CSV (latest on top)...")
+            self.logger.info(f"💾 Attempting to save trade {trade_data['trade_id']} to CSV...")
             
             # Ensure the file exists and has headers
             if not os.path.exists(self.csv_file_path):
                 self.logger.warning(f"📁 CSV file doesn't exist, initializing...")
                 self.init_csv_storage()
             
-            # Read existing data (if any)
-            existing_rows = []
+            # Read existing headers
+            existing_headers = []
             try:
                 with open(self.csv_file_path, 'r', newline='', encoding='utf-8') as f:
-                    reader = csv.DictReader(f)
-                    existing_rows = list(reader)
-                self.logger.info(f"📁 Read {len(existing_rows)} existing rows")
+                    reader = csv.reader(f)
+                    existing_headers = next(reader, [])
+                    self.logger.info(f"📁 Found {len(existing_headers)} existing headers")
             except (StopIteration, FileNotFoundError):
-                existing_rows = []
-                self.logger.warning(f"📁 Could not read existing data, starting fresh")
+                existing_headers = []
+                self.logger.warning(f"📁 Could not read headers, reinitializing CSV...")
+                self.init_csv_storage()
+                with open(self.csv_file_path, 'a', newline='', encoding='utf-8') as f:
+                    reader = csv.reader(f)
+                    existing_headers = next(reader, [])
             
-            # Create new row with all headers
-            new_row = {}
-            for header in self.headers:
-                new_row[header] = trade_data.get(header, '')
+            # Ensure all trade_data keys are in headers (add missing ones)
+            missing_headers = [key for key in trade_data.keys() if key not in existing_headers]
+            if missing_headers:
+                self.logger.info(f"📁 Adding missing headers: {missing_headers}")
+                existing_headers.extend(missing_headers)
+                
+                # Read all existing data
+                all_data = []
+                with open(self.csv_file_path, 'r', newline='') as f:
+                    reader = csv.DictReader(f)
+                    all_data = list(reader)
+                
+                # Write new file with updated headers
+                with open(self.csv_file_path, 'w', newline='') as f:
+                    writer = csv.DictWriter(f, fieldnames=existing_headers)
+                    writer.writeheader()
+                    writer.writerows(all_data)
             
-            # Insert new row at the BEGINNING (top of file)
-            all_rows = [new_row] + existing_rows
+            # Append the new trade
+            with open(self.csv_file_path, 'a', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=existing_headers)
+                
+                # Create a row with all headers, filling missing ones with empty string
+                row = {header: trade_data.get(header, '') for header in existing_headers}
+                writer.writerow(row)
             
-            # Write all rows back (this puts latest trades at top)
-            with open(self.csv_file_path, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=self.headers)
-                writer.writeheader()
-                writer.writerows(all_rows)
-            
-            self.logger.info(f"✅ Trade {trade_data['trade_id']} saved to CSV (TOP)")
+            self.logger.info(f"✅ Trade {trade_data['trade_id']} saved to CSV")
             self.logger.info(f"   File: {self.csv_file_path}")
-            self.logger.info(f"   Total rows: {len(all_rows)}")
-            self.logger.info(f"   Entry: {trade_data['entry_price']}, SL: {trade_data['sl_price']}")
+            self.logger.info(f"   Entry: {trade_data['entry_price']}, SL: {trade_data['sl_price']}, TP 1:4: {trade_data['tp_1_4_price']}")
             return True
             
         except Exception as e:
-            self.logger.error(f"❌ Error saving to CSV: {str(e)}", exc_info=True)
+            self.logger.error(f"❌ Error saving to CSV: {str(e)}")
             return False
     
     def send_hammer_signal(self, trade_data, trigger_data):
@@ -8010,120 +7507,103 @@ class UltimateTradingSystem:
                 if key not in self.last_candle_scan:
                     self.last_candle_scan[key] = latest_candle_time
                     new_candles = True
-                    # logger.info(f"🕯️ First scan for {instrument} {timeframe}")
+                    logger.info(f"🕯️ First scan for {instrument} {timeframe}")
                 elif latest_candle_time > self.last_candle_scan[key]:
                     self.last_candle_scan[key] = latest_candle_time
                     new_candles = True
-                    # logger.info(f"🕯️ NEW CANDLE: {instrument} {timeframe} at {latest_candle_time.strftime('%H:%M')}")
+                    logger.info(f"🕯️ NEW CANDLE: {instrument} {timeframe} at {latest_candle_time.strftime('%H:%M')}")
         
         return new_candles
     
     async def _fetch_all_data_parallel(self, api_key):
-        """Fetch data with correct counts for each purpose"""
+        """Fetch data in parallel with PROVEN candle counts that WORKED"""
         tasks = []
         
-        # Clear market data for this cycle
-        for instrument in self.instruments:
-            self.market_data[instrument] = {}
-        
-        # Define counts for different purposes
-        counts_by_purpose = {
-            'SMT': {
-                'H4': 40,   # Monthly
-                'H1': 40,   # Weekly
-                'M15': 40,  # Daily
-                'M5': 40,   # 90min
-            },
-            'SD': {
-                'M15': 101,
-                'H1': 101,
-                'H4': 101,
-                'D': 101,
-                'W': 101,
-                'M5': 101 if 'XAU_USD' in self.instruments else 0,
-            },
-            'CRT': {  # ADD THIS SECTION FOR CRT
-                'H1': 10,   # CRT needs recent candles
-                'H4': 10,
-            }
+        # PROVEN CANDLE COUNTS FROM WORKING VERSION
+        proven_counts = {
+            # For SMT/CRT detection (keep these SHORT)
+            'H4': 40,   # Monthly timeframe - 40 candles (was working)
+            'H1': 40,   # Weekly timeframe - 40 candles (was working)  
+            'M15': 40,   # Daily timeframe - 40 candles (was working)
+            'M5': 40,    # 90min timeframe - 40 candles (was working)
+            
+            # For CRT only
+            'H1': 10, 'H4': 10,
+            
+            # For SD Zones ONLY - use MORE candles
+            'SD_H4': 100,  # For SD zones on H4
+            'SD_H1': 100,  # For SD zones on H1  
+            'SD_M15': 100, # For SD zones on M15
+            'SD_M5': 100,  # For SD zones on M5
         }
+        
+        # Combine all required timeframes
+        required_timeframes = []
+        
+        # 1. Add SMT/CRT timeframes (SHORT lookback)
+        for cycle in self.pair_config['timeframe_mapping'].values():
+            if cycle not in required_timeframes:
+                required_timeframes.append(cycle)
+        
+        # 2. Add CRT timeframes
+        for tf in CRT_TIMEFRAMES:
+            if tf not in required_timeframes:
+                required_timeframes.append(tf)
+        
+        # 3. ADD SD Zone timeframes (LONG lookback - separate calls)
+        sd_timeframes = ['M15', 'H1', 'H4','D' , 'W']
+        if 'XAU_USD' in self.instruments:
+            sd_timeframes.append('M5')
         
         # Create fetch tasks
         for instrument in self.instruments:
-            # Get ALL unique timeframes needed across purposes
-            all_timeframes = set()
+            # FIRST: Fetch SHORT data for SMT/CRT
+            for tf in required_timeframes:
+                count = proven_counts.get(tf, 40)  # Default to 40
+                task = asyncio.create_task(
+                    self._fetch_single_instrument_data(instrument, tf, count, api_key)
+                )
+                tasks.append(task)
             
-            for purpose in counts_by_purpose:
-                for tf in counts_by_purpose[purpose]:
-                    all_timeframes.add(tf)
-            
-            # For each timeframe, fetch the MAXIMUM count needed
-            for tf in all_timeframes:
-                max_count = 0
-                # Find maximum count needed for this timeframe
-                for purpose in counts_by_purpose:
-                    if tf in counts_by_purpose[purpose]:
-                        max_count = max(max_count, counts_by_purpose[purpose][tf])
-                
-                if max_count > 0:
-                    task = asyncio.create_task(
-                        self._fetch_single_instrument_data(instrument, tf, max_count, api_key)
-                    )
-                    tasks.append(task)
-                    # logger.info(f"📤 FETCH: {instrument} {tf} - {max_count} candles (max of all purposes)")
+            # THEN: Fetch LONG data for SD Zones (separate calls)
+            for tf in sd_timeframes:
+                count = 101  # 40 candles for SD zones
+                task = asyncio.create_task(
+                    self._fetch_single_instrument_data(instrument, tf, count, api_key)
+                )
+                tasks.append(task)
         
         # Wait for ALL data
         try:
-            results = await asyncio.wait_for(asyncio.gather(*tasks), timeout=45.0)
-            
-            # Count successful
-            successful = sum(1 for r in results if r)
-            # logger.info(f"✅ Parallel fetch: {successful}/{len(tasks)} successful for {self.pair_group}")
-            
-            # Debug what we have
-            for instrument in self.instruments:
-                # logger.info(f"📦 Data for {instrument}:")
-                for tf in ['H4', 'H1', 'M15', 'M5', 'D', 'W']:
-                    if tf in self.market_data[instrument]:
-                        df = self.market_data[instrument][tf]
-                        # logger.info(f"   {tf}: {len(df)} total candles fetched")
-            
+            await asyncio.wait_for(asyncio.gather(*tasks), timeout=45.0)
+            logger.info(f"✅ Parallel fetch: SHORT data for SMT/CRT, LONG data for SD zones")
         except asyncio.TimeoutError:
-            logger.warning(f"⚠️ Fetch timeout for {self.pair_group}")
+            logger.warning(f"⚠️ Parallel data fetch timeout for {self.pair_group}")
     
     async def _fetch_single_instrument_data(self, instrument, timeframe, count, api_key):
-        """Fetch data for single instrument"""
+        """Fetch data for single instrument and convert to NY_TZ"""
         try:
-            # logger.info(f"🔄 Fetching {instrument} {timeframe} with {count} candles...")
+            from pytz import timezone
+            NY_TZ = timezone('America/New_York')
             
             df = await asyncio.get_event_loop().run_in_executor(
                 None, fetch_candles, instrument, timeframe, count, api_key
             )
             
-            if df is None:
-                logger.error(f"❌ fetch_candles returned None for {instrument} {timeframe}")
-                return False
+            if df is not None and isinstance(df, pd.DataFrame) and not df.empty:
+                # Convert timestamps to NY_TZ
+                if df['time'].dt.tz is None:
+                    # Assume UTC and convert to NY_TZ
+                    df['time'] = df['time'].dt.tz_localize('UTC').dt.tz_convert(NY_TZ)
+                    # logger.debug(f"📅 Converted {instrument} {timeframe} to NY_TZ")
                 
-            if not isinstance(df, pd.DataFrame):
-                logger.error(f"❌ fetch_candles returned {type(df)}, not DataFrame for {instrument} {timeframe}")
-                return False
-                
-            if df.empty:
-                logger.error(f"❌ fetch_candles returned empty DataFrame for {instrument} {timeframe}")
-                return False
-            
-            # Convert timestamps to NY_TZ
-            if df['time'].dt.tz is None:
-                df['time'] = df['time'].dt.tz_localize('UTC').dt.tz_convert(NY_TZ)
-            
-            self.market_data[instrument][timeframe] = df
-            
-            # logger.info(f"✅ Fetched {instrument} {timeframe}: {len(df)} candles")
-            return True
-            
+                self.market_data[instrument][timeframe] = df
+                return True
+            return False
         except Exception as e:
             logger.error(f"❌ Error fetching {instrument} {timeframe}: {str(e)}")
             return False
+
     async def _fetch_single(self, inst: str, tf: str, count: int, since: datetime) -> None:
         try:
             df_new = fetch_candles(inst, tf, count, self.api_key, since)
@@ -8159,44 +7639,44 @@ class UltimateTradingSystem:
         for cycle in cycles:
             timeframe = self.pair_config['timeframe_mapping'][cycle]
             
-            # Get data for this timeframe
+            # Check if we have new data for this cycle's timeframe
+            #if self._has_new_candle_data(timeframe):
+            logger.info(f"🔍 Immediate scan: {cycle} cycle ({timeframe})")
+                
             asset1_data = self.market_data[self.instruments[0]].get(timeframe)
             asset2_data = self.market_data[self.instruments[1]].get(timeframe)
+
+            logger.info(f"🔍 SMT Data Check - {self.instruments[0]} {timeframe}: "
+                    f"{'Has data' if asset1_data is not None else 'NO DATA'}, "
+                    f"{len(asset1_data) if asset1_data is not None else 0} candles")
+            logger.info(f"🔍 SMT Data Check - {self.instruments[1]} {timeframe}: "
+                        f"{'Has data' if asset2_data is not None else 'NO DATA'}, "
+                        f"{len(asset2_data) if asset2_data is not None else 0} candles")
             
-            # Check if we have data
-            if asset1_data is None or asset2_data is None:
-                logger.warning(f"⚠️ Missing data for SMT: {self.instruments[0]}={asset1_data is not None}, {self.instruments[1]}={asset2_data is not None}")
-                continue
-            
-            # For SMT we need exactly 40 candles
-            # If we have more than 40, take the most recent 40
-            if len(asset1_data) > 40:
-                asset1_data = asset1_data.tail(40)
-                # logger.info(f"📏 Using last 40 candles for {self.instruments[0]} {timeframe}")
-            
-            if len(asset2_data) > 40:
-                asset2_data = asset2_data.tail(40)
-                # logger.info(f"📏 Using last 40 candles for {self.instruments[1]} {timeframe}")
-            
-            # Log what we have
-            # logger.info(f"🔍 SMT Data Check - {self.instruments[0]} {timeframe}: Has {len(asset1_data)} candles")
-            # logger.info(f"🔍 SMT Data Check - {self.instruments[1]} {timeframe}: Has {len(asset2_data)} candles")
-            
-            # Check if we have enough data
-            if len(asset1_data) >= 40 and len(asset2_data) >= 40:
-                # logger.info(f"🔍 Scanning {cycle} cycle ({timeframe}) for SMT...")
-                smt_signal = self.smt_detector.detect_smt_all_cycles(asset1_data, asset2_data, cycle)
                 
+            if (asset1_data is not None and isinstance(asset1_data, pd.DataFrame) and not asset1_data.empty and
+                asset2_data is not None and isinstance(asset2_data, pd.DataFrame) and not asset2_data.empty):
+                    
+                logger.info(f"🔍 Scanning {cycle} cycle ({timeframe}) for SMT...")
+                smt_signal = self.smt_detector.detect_smt_all_cycles(asset1_data, asset2_data, cycle)
                 if smt_signal:
-                    # Check if SMT is fresh enough
+                    logger.info(f"🔍 SMT RETURNED: {smt_signal.get('signal_key', 'No key')}")
+                else:
+                    logger.info(f"🔍 SMT detector returned None for {cycle}")
+
+                # logger.info(f"🔍 Scanning {cycle} cycle ({timeframe}) for SMT...")
+                # smt_signal = self.smt_detector.detect_smt_all_cycles(asset1_data, asset2_data, cycle)
+                    
+                if smt_signal:
+                    # ✅ FIRST CHECK if SMT is fresh enough
                     if not self.feature_box.is_smt_fresh_enough(smt_signal):
-                        # logger.info(f"🕒 SMT {smt_signal.get('signal_key', 'unknown')} is TOO OLD, skipping addition")
-                        continue
+                        logger.info(f"🕒 SMT {smt_signal.get('signal_key', 'unknown')} is TOO OLD, skipping addition")
+                        continue  # Skip to next cycle
                     
                     # Check for PSP immediately
                     psp_signal = self.smt_detector.check_psp_for_smt(smt_signal, asset1_data, asset2_data)
                     
-                    # Add it (it's fresh enough)
+                    # ✅ Now add it (it's fresh enough)
                     added = self.feature_box.add_smt(smt_signal, psp_signal)
                     
                     if added:
@@ -8204,12 +7684,10 @@ class UltimateTradingSystem:
                         logger.info(f"✅ FRESH SMT ADDED: {cycle} {smt_signal['direction']} - PSP: {'Yes' if psp_signal else 'No'}")
                     else:
                         logger.info(f"❌ Failed to add SMT {smt_signal.get('signal_key', 'unknown')}")
-                else:
-                    logger.info(f"🔍 SMT detector returned None for {cycle}")
             else:
-                logger.warning(f"⚠️ Not enough candles for {cycle} SMT scan: {len(asset1_data)}/{len(asset2_data)}")
+                logger.warning(f"⚠️ No data for {cycle} SMT scan")
         
-        # logger.info(f"📊 SMT Scan Complete: Detected {smt_detected_count} SMTs")
+        logger.info(f"📊 SMT Scan Complete: Detected {smt_detected_count} SMTs")
 
     def reset_smt_detector_state(self):
         """Reset SMT detector state to avoid duplicate issues"""
@@ -8259,33 +7737,44 @@ class UltimateTradingSystem:
             logger.info("❌ No data for test")
             return
         
-        # logger.info(f"🧪 Testing with {len(asset1_data)} candles")
+        logger.info(f"🧪 Testing with {len(asset1_data)} candles")
         
         # 3. Detect SMT
         smt_signal = self.smt_detector.detect_smt_all_cycles(asset1_data, asset2_data, 'weekly')
         
         if smt_signal:
-        #     logger.info(f"🧪 SMT Detected: {smt_signal['signal_key']}")
+            logger.info(f"🧪 SMT Detected: {smt_signal['signal_key']}")
             
             # 4. Check PSP
             psp_signal = self.smt_detector.check_psp_for_smt(smt_signal, asset1_data, asset2_data)
-            # logger.info(f"🧪 PSP: {'Found' if psp_signal else 'Not found'}")
+            logger.info(f"🧪 PSP: {'Found' if psp_signal else 'Not found'}")
             
             # 5. Add to FeatureBox
             success = self.feature_box.add_smt(smt_signal, psp_signal)
-            # logger.info(f"🧪 Added to FeatureBox: {success}")
+            logger.info(f"🧪 Added to FeatureBox: {success}")
             
             # 6. Check FeatureBox
-            # logger.info(f"🧪 FeatureBox now has {len(self.feature_box.active_features['smt'])} SMTs")
+            logger.info(f"🧪 FeatureBox now has {len(self.feature_box.active_features['smt'])} SMTs")
         else:
             logger.info("🧪 No SMT detected")
 
     def _scan_crt_smt_confluence(self):
         """Check CRT with SMT confluence (CRT on higher TF, SMT on lower TF)"""
         logger.info(f"🔷 SCANNING: CRT + SMT Confluence")
+
+        # First, cleanup expired features
+        if hasattr(self, 'feature_box') and self.feature_box:
+            self.feature_box.cleanup_expired_features()
         
         # CRT timeframes to check
         crt_timeframes = ['H4', 'H1']
+        
+        # Mapping: CRT timeframe -> allowed SMT cycles
+        CRT_SMT_MAPPING = {
+            'H4': ['weekly', 'daily'],  # 4hr CRT → Weekly OR Daily SMT
+            'H1': ['daily']         # 1hr CRT → Daily SMT
+            
+        }
         
         # Check each instrument for CRT
         for instrument in self.instruments:
@@ -8294,28 +7783,17 @@ class UltimateTradingSystem:
                 if data is None or data.empty:
                     continue
                 
-                # For CRT we only need recent candles - limit to 10
-                if len(data) > 10:
-                    data = data.tail(10)
-                    # logger.info(f"📏 CRT: Using last 10 candles for {instrument} {crt_tf}")
-                
-                # Get the other instrument's data
+                # Get the other instrument's data for CRT detection
                 other_instrument = [inst for inst in self.instruments if inst != instrument][0]
                 other_data = self.market_data[other_instrument].get(crt_tf)
                 
                 if other_data is None or other_data.empty:
                     continue
                 
-                # Limit other data to 10 candles too
-                if len(other_data) > 10:
-                    other_data = other_data.tail(10)
-                
                 # Detect CRT
                 crt_signal = self.crt_detector.calculate_crt_current_candle(
                     data, data, other_data, crt_tf
                 )
-                
-              
                 
                 if crt_signal:
                     logger.info(f"🔷 CRT DETECTED: {crt_tf} {crt_signal['direction']} on {instrument}")
