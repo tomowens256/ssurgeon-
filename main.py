@@ -5562,26 +5562,25 @@ class HammerPatternScanner:
                 # ============================================
             fib_zones = self._calculate_fibonacci_levels(default_sl, default_tp, direction)
                 
-                # Filter zones by 50% rule
-            valid_zones = []
-            for zone in fib_zones:
-                    # Calculate 50% line between SL and TP
-                if direction == 'bearish':
-                    fifty_percent_line = default_sl - ((default_sl - default_tp) * 0.5)
-                        # For bearish: zone is valid if its LOW is ABOVE 50% line
-                    if zone['low'] > fifty_percent_line:
-                        valid_zones.append(zone)
-                        self.logger.info(f"✅ Valid zone: {zone['zone_name']} - {zone['low']:.5f} to {zone['high']:.5f}")
-                    else:
-                        self.logger.info(f"❌ Invalid zone (below 50%): {zone['zone_name']} - {zone['low']:.5f} to {zone['high']:.5f}")
-                else:  # bullish
-                    fifty_percent_line = default_sl + ((default_tp - default_sl) * 0.5)
-                        # For bullish: zone is valid if its HIGH is BELOW 50% line
-                    if zone['high'] < fifty_percent_line:
-                        valid_zones.append(zone)
-                        self.logger.info(f"✅ Valid zone: {zone['zone_name']} - {zone['low']:.5f} to {zone['high']:.5f}")
-                    else:
-                        self.logger.info(f"❌ Invalid zone (above 50%): {zone['zone_name']} - {zone['low']:.5f} to {zone['high']:.5f}")
+                
+            # In _get_fib_zones, replace the zone calculation and filtering with:
+            fib_zones = self._calculate_fibonacci_levels(default_sl, default_tp, direction)
+            
+            if not fib_zones:
+                self.logger.error(f"❌ Failed to calculate 50% zone")
+                return {
+                    'zones': [],
+                    'sl_price': default_sl,
+                    'tp_price': default_tp,
+                    'direction': direction,
+                    'criteria': criteria,
+                    'is_valid': False,
+                    'error': 'Failed to calculate 50% zone'
+                }
+            
+            # No need to filter - we only have the 50% zone
+            valid_zones = fib_zones  # All zones are valid (just the 50% zone)
+           
                 
             if not valid_zones:
                 self.logger.error(f"❌ No valid Fibonacci zones after 50% filter")
@@ -5619,66 +5618,49 @@ class HammerPatternScanner:
             }
     
     def _calculate_fibonacci_levels(self, sl_price, tp_price, direction):
-        """Calculate Fibonacci retracement zones from SL (1) to TP (0)"""
+        """Calculate ONLY 50% zone - kill all other Fibonacci levels"""
         try:
-            # Standard Fibonacci retracement levels in order from 1 to 0
-            # We're calculating FROM SL (1) TO TP (0)
-            fib_ratios = [0.786, 0.618, 0.5, 0.382, 0.236, 0.0]
+            # Calculate 50% line between SL and TP
+            if direction == 'bearish':
+                fifty_percent_line = sl_price - ((sl_price - tp_price) * 0.5)
+            else:  # bullish
+                fifty_percent_line = sl_price + ((tp_price - sl_price) * 0.5)
             
-            zones = []
+            # Create a buffer zone around the 50% line (0.1% of range)
+            price_range = abs(sl_price - tp_price)
+            buffer = price_range * 0.001  # 0.1% buffer
             
             if direction == 'bearish':
-                # For bearish: SL is higher, TP is lower
-                price_range = sl_price - tp_price
-                
-                for i in range(len(fib_ratios)-1):
-                    current_ratio = fib_ratios[i]
-                    next_ratio = fib_ratios[i+1]
-                    
-                    # Zone boundaries
-                    zone_high = sl_price - (price_range * current_ratio)
-                    zone_low = sl_price - (price_range * next_ratio)
-                    
-                    zones.append({
-                        'ratio': current_ratio,
-                        'high': zone_high,
-                        'low': zone_low,
-                        'mid': (zone_high + zone_low) / 2,
-                        'zone_name': f'Fib_{current_ratio}_to_{next_ratio}'
-                    })
-                
-                self.logger.info(f"📊 Fibonacci zones for BEARISH (SL={sl_price:.5f}, TP={tp_price:.5f}):")
-                for zone in zones:
-                    self.logger.info(f"   {zone['zone_name']}: {zone['low']:.5f} - {zone['high']:.5f}")
-                
+                # For bearish: we sell when price is ABOVE 50% line
+                # Create zone that starts at 50% line and goes up a bit
+                zone_low = fifty_percent_line
+                zone_high = fifty_percent_line + (buffer * 2)  # Small zone above 50%
             else:  # bullish
-                # For bullish: SL is lower, TP is higher
-                price_range = tp_price - sl_price
-                
-                for i in range(len(fib_ratios)-1):
-                    current_ratio = fib_ratios[i]
-                    next_ratio = fib_ratios[i+1]
-                    
-                    # Zone boundaries
-                    zone_low = sl_price + (price_range * current_ratio)
-                    zone_high = sl_price + (price_range * next_ratio)
-                    
-                    zones.append({
-                        'ratio': current_ratio,
-                        'low': zone_low,
-                        'high': zone_high,
-                        'mid': (zone_low + zone_high) / 2,
-                        'zone_name': f'Fib_{current_ratio}_to_{next_ratio}'
-                    })
-                
-                self.logger.info(f"📊 Fibonacci zones for BULLISH (SL={sl_price:.5f}, TP={tp_price:.5f}):")
-                for zone in zones:
-                    self.logger.info(f"   {zone['zone_name']}: {zone['low']:.5f} - {zone['high']:.5f}")
+                # For bullish: we buy when price is BELOW 50% line
+                # Create zone that ends at 50% line and goes down a bit
+                zone_low = fifty_percent_line - (buffer * 2)  # Small zone below 50%
+                zone_high = fifty_percent_line
+            
+            # Create single 50% zone
+            zones = [{
+                'ratio': 0.5,
+                'low': zone_low,
+                'high': zone_high,
+                'mid': fifty_percent_line,
+                'zone_name': '50%_Entry_Zone',
+                'is_50_percent_zone': True,
+                'entry_line': fifty_percent_line
+            }]
+            
+            self.logger.info(f"📊 Created 50% zone for {direction.upper()}:")
+            self.logger.info(f"   50% Line: {fifty_percent_line:.5f}")
+            self.logger.info(f"   Zone: {zone_low:.5f} to {zone_high:.5f}")
+            self.logger.info(f"   SL: {sl_price:.5f}, TP: {tp_price:.5f}")
             
             return zones
             
         except Exception as e:
-            self.logger.error(f"❌ Error calculating Fibonacci levels: {str(e)}")
+            self.logger.error(f"❌ Error calculating 50% zone: {str(e)}")
             return []
 
     def calculate_pips(self, instrument, price1, price2):
