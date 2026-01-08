@@ -5866,127 +5866,162 @@ class HammerPatternScanner:
             self.logger.error(f"❌ Error calculating CRT zones: {str(e)}")
             return []
 
-    def _get_crt_zones_with_proper_tp(self, trigger_data):
-        """Calculate zones for CRT setups using previous candle range projection"""
-        try:
-            instrument = trigger_data.get('instrument')
-            direction = trigger_data.get('direction')
-            trigger_timeframe = trigger_data.get('trigger_timeframe')
-            criteria = trigger_data.get('type')
-            
-            self.logger.info(f"🔷 CRT Setup: {instrument} {direction} on {trigger_timeframe}")
-            
-            # For CRT, we use the previous candle of the CRT timeframe
-            df = fetch_candles(instrument, trigger_timeframe, count=5, 
-                              api_key=self.credentials['oanda_api_key'])
-            
-            if df.empty or len(df) < 2:
-                self.logger.error(f"❌ No data for CRT {trigger_timeframe}")
+        def _get_crt_zones_with_proper_tp(self, trigger_data):
+            """Calculate zones for CRT setups using previous candle range projection"""
+            try:
+                instrument = trigger_data.get('instrument')
+                direction = trigger_data.get('direction')
+                trigger_timeframe = trigger_data.get('trigger_timeframe')
+                criteria = trigger_data.get('type')
+                
+                self.logger.info(f"🔷 CRT Setup: {instrument} {direction} on {trigger_timeframe}")
+                
+                # For CRT, we use the previous candle of the CRT timeframe
+                df = fetch_candles(instrument, trigger_timeframe, count=5, 
+                                  api_key=self.credentials['oanda_api_key'])
+                
+                if df.empty or len(df) < 2:
+                    self.logger.error(f"❌ No data for CRT {trigger_timeframe}")
+                    return {
+                        'zones': [],
+                        'sl_price': None,
+                        'tp_price': None,
+                        'direction': direction,
+                        'criteria': criteria,
+                        'is_valid': False,
+                        'error': f'No data for {trigger_timeframe}'
+                    }
+                
+                # Get the CRT candle (previous completed candle - index -2)
+                crt_candle = df.iloc[-2]
+                
+                # Get current/latest candle for validation (index -1)
+                latest_candle = df.iloc[-1]
+                
+                self.logger.info(f"📊 CRT Candle (index -2):")
+                self.logger.info(f"   Time: {crt_candle['time']}")
+                self.logger.info(f"   Open: {crt_candle['open']:.5f}, High: {crt_candle['high']:.5f}")
+                self.logger.info(f"   Low: {crt_candle['low']:.5f}, Close: {crt_candle['close']:.5f}")
+                
+                # 1. Set SL based on CRT candle
+                if direction == 'bearish':
+                    # Bearish CRT: SL is above CRT candle high
+                    sl_price = crt_candle['high']
+                    
+                    # 2. Check if price has already traded above SL (using latest candle)
+                    if latest_candle['high'] > sl_price:
+                        self.logger.warning(f"⚠️  Bearish CRT Invalidated: Price has already traded above SL")
+                        self.logger.info(f"   Latest candle high: {latest_candle['high']:.5f}, SL: {sl_price:.5f}")
+                        return {
+                            'zones': [],
+                            'sl_price': None,
+                            'tp_price': None,
+                            'direction': direction,
+                            'criteria': criteria,
+                            'is_valid': False,
+                            'error': 'SL already breached (price traded above)'
+                        }
+                    
+                    # 3. Calculate TP: Subtract range from CRT candle low
+                    candle_range = crt_candle['high'] - crt_candle['low']
+                    tp_price = crt_candle['low'] - candle_range
+                    
+                    self.logger.info(f"📊 CRT Bearish Setup:")
+                    self.logger.info(f"   SL (CRT candle high): {sl_price:.5f}")
+                    self.logger.info(f"   CRT Candle Low: {crt_candle['low']:.5f}")
+                    self.logger.info(f"   Candle Range: {candle_range:.5f}")
+                    self.logger.info(f"   TP (CRT Low - Range): {tp_price:.5f}")
+                    
+                else:  # bullish
+                    # Bullish CRT: SL is below CRT candle low
+                    sl_price = crt_candle['low']
+                    
+                    # 2. Check if price has already traded below SL (using latest candle)
+                    if latest_candle['low'] < sl_price:
+                        self.logger.warning(f"⚠️  Bullish CRT Invalidated: Price has already traded below SL")
+                        self.logger.info(f"   Latest candle low: {latest_candle['low']:.5f}, SL: {sl_price:.5f}")
+                        return {
+                            'zones': [],
+                            'sl_price': None,
+                            'tp_price': None,
+                            'direction': direction,
+                            'criteria': criteria,
+                            'is_valid': False,
+                            'error': 'SL already breached (price traded below)'
+                        }
+                    
+                    # 3. Calculate TP: Add range to CRT candle high
+                    candle_range = crt_candle['high'] - crt_candle['low']
+                    tp_price = crt_candle['high'] + candle_range
+                    
+                    self.logger.info(f"📊 CRT Bullish Setup:")
+                    self.logger.info(f"   SL (CRT candle low): {sl_price:.5f}")
+                    self.logger.info(f"   CRT Candle High: {crt_candle['high']:.5f}")
+                    self.logger.info(f"   Candle Range: {candle_range:.5f}")
+                    self.logger.info(f"   TP (CRT High + Range): {tp_price:.5f}")
+                
+                # Additional validation: Check if SL is already breached by any candle in recent history
+                # (Looking at last 5 candles including the CRT candle itself)
+                candles_to_check = df.tail(5)
+                
+                if direction == 'bearish':
+                    # Check if any candle high exceeds the SL
+                    max_high_in_history = candles_to_check['high'].max()
+                    if max_high_in_history > sl_price:
+                        self.logger.warning(f"⚠️  Bearish CRT Invalidated: Price history shows breach above SL")
+                        self.logger.info(f"   Max high in last 5 candles: {max_high_in_history:.5f}, SL: {sl_price:.5f}")
+                        return {
+                            'zones': [],
+                            'sl_price': None,
+                            'tp_price': None,
+                            'direction': direction,
+                            'criteria': criteria,
+                            'is_valid': False,
+                            'error': 'SL breached in recent history'
+                        }
+                else:  # bullish
+                    # Check if any candle low is below the SL
+                    min_low_in_history = candles_to_check['low'].min()
+                    if min_low_in_history < sl_price:
+                        self.logger.warning(f"⚠️  Bullish CRT Invalidated: Price history shows breach below SL")
+                        self.logger.info(f"   Min low in last 5 candles: {min_low_in_history:.5f}, SL: {sl_price:.5f}")
+                        return {
+                            'zones': [],
+                            'sl_price': None,
+                            'tp_price': None,
+                            'direction': direction,
+                            'criteria': criteria,
+                            'is_valid': False,
+                            'error': 'SL breached in recent history'
+                        }
+                
+                # Calculate Fibonacci zones from SL to TP
+                fib_zones = self._calculate_fibonacci_levels(sl_price, tp_price, direction)
+                
+                # For CRT, we accept ALL zones (no 50% filter)
+                self.logger.info(f"📊 CRT: Using ALL {len(fib_zones)} Fibonacci zones")
+                
+                return {
+                    'zones': fib_zones,
+                    'sl_price': sl_price,
+                    'tp_price': tp_price,
+                    'direction': direction,
+                    'criteria': criteria,
+                    'is_valid': True,
+                    'error': None
+                }
+                
+            except Exception as e:
+                self.logger.error(f"❌ Error in CRT zone calculation: {str(e)}", exc_info=True)
                 return {
                     'zones': [],
                     'sl_price': None,
                     'tp_price': None,
-                    'direction': direction,
-                    'criteria': criteria,
+                    'direction': trigger_data.get('direction'),
+                    'criteria': trigger_data.get('type'),
                     'is_valid': False,
-                    'error': f'No data for {trigger_timeframe}'
+                    'error': str(e)
                 }
-            
-            # Get the CRT candle (previous completed candle)
-            crt_candle = df.iloc[-2]
-            
-            # Get current price for entry reference
-            current_df = fetch_candles(instrument, 'M1', count=2, 
-                                     api_key=self.credentials['oanda_api_key'])
-            
-            if current_df.empty:
-                self.logger.error(f"❌ Cannot get current price for {instrument}")
-                return {
-                    'zones': [],
-                    'sl_price': None,
-                    'tp_price': None,
-                    'direction': direction,
-                    'criteria': criteria,
-                    'is_valid': False,
-                    'error': 'Cannot get current price'
-                }
-            
-            current_price = current_df.iloc[-1]['close']
-            
-            # Calculate previous candle range
-            candle_range = crt_candle['high'] - crt_candle['low']
-            self.logger.info(f"📊 CRT Previous Candle:")
-            self.logger.info(f"   Open: {crt_candle['open']:.5f}, High: {crt_candle['high']:.5f}")
-            self.logger.info(f"   Low: {crt_candle['low']:.5f}, Close: {crt_candle['close']:.5f}")
-            self.logger.info(f"   Range: {candle_range:.5f} ({candle_range*10000:.1f} pips)")
-            
-            if direction == 'bearish':
-                # Bearish CRT: SL is above CRT candle high
-                default_sl = crt_candle['high']
-                
-                # TP: Project one standard deviation (1x range) below current price
-                default_tp = current_price - (candle_range * 1.0)
-                
-                # But ensure TP is not too far (cap at 2x range maximum)
-                max_tp_distance = candle_range * 2.0
-                min_tp_price = current_price - max_tp_distance
-                
-                if default_tp < min_tp_price:
-                    default_tp = min_tp_price
-                    self.logger.info(f"📊 TP capped at 2x range: {default_tp:.5f}")
-                
-                self.logger.info(f"📊 CRT Bearish Setup:")
-                self.logger.info(f"   Current Price: {current_price:.5f}")
-                self.logger.info(f"   SL (candle high): {default_sl:.5f}")
-                self.logger.info(f"   TP (1x range proj): {default_tp:.5f}")
-                
-            else:  # bullish
-                # Bullish CRT: SL is below CRT candle low
-                default_sl = crt_candle['low']
-                
-                # TP: Project one standard deviation (1x range) above current price
-                default_tp = current_price + (candle_range * 1.0)
-                
-                # But ensure TP is not too far (cap at 2x range maximum)
-                max_tp_distance = candle_range * 2.0
-                max_tp_price = current_price + max_tp_distance
-                
-                if default_tp > max_tp_price:
-                    default_tp = max_tp_price
-                    self.logger.info(f"📊 TP capped at 2x range: {default_tp:.5f}")
-                
-                self.logger.info(f"📊 CRT Bullish Setup:")
-                self.logger.info(f"   Current Price: {current_price:.5f}")
-                self.logger.info(f"   SL (candle low): {default_sl:.5f}")
-                self.logger.info(f"   TP (1x range proj): {default_tp:.5f}")
-            
-            # Calculate Fibonacci zones from SL to TP
-            fib_zones = self._calculate_fibonacci_levels(default_sl, default_tp, direction)
-            
-            # For CRT, we accept ALL zones (no 50% filter)
-            self.logger.info(f"📊 CRT: Using ALL {len(fib_zones)} Fibonacci zones")
-            
-            return {
-                'zones': fib_zones,
-                'sl_price': default_sl,
-                'tp_price': default_tp,
-                'direction': direction,
-                'criteria': criteria,
-                'is_valid': True,
-                'error': None
-            }
-            
-        except Exception as e:
-            self.logger.error(f"❌ Error in CRT zone calculation: {str(e)}", exc_info=True)
-            return {
-                'zones': [],
-                'sl_price': None,
-                'tp_price': None,
-                'direction': trigger_data.get('direction'),
-                'criteria': trigger_data.get('type'),
-                'is_valid': False,
-                'error': str(e)
-            }
     
     def get_aligned_timeframes(self, instrument, criteria, trigger_tf):
         """Get aligned timeframes for scanning"""
