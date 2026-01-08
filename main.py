@@ -1457,6 +1457,16 @@ class UltimateSMTDetector:
             
             timeframe = self.pair_config['timeframe_mapping'][cycle_type]
             timeframe_minutes = self.timeframe_minutes.get(timeframe, 5)
+            
+            # Get asset names from pair_config - using instruments list
+            # Handle both new (instruments) and old (pair1/pair2) structure
+            if 'instruments' in self.pair_config and len(self.pair_config['instruments']) >= 2:
+                asset1_name = self.pair_config['instruments'][0]
+                asset2_name = self.pair_config['instruments'][1]
+            else:
+                # Fallback to old structure
+                asset1_name = self.pair_config.get('pair1', 'Asset1')
+                asset2_name = self.pair_config.get('pair2', 'Asset2')
         
             asset1_combined = pd.concat([asset1_prev, asset1_curr]).sort_values('time').reset_index(drop=True)
             asset2_combined = pd.concat([asset2_prev, asset2_curr]).sort_values('time').reset_index(drop=True)
@@ -1552,27 +1562,39 @@ class UltimateSMTDetector:
                 if not (asset1_prev_high['time'] < asset1_curr_high['time'] and asset2_prev_high['time'] < asset2_curr_high['time']):
                     return None
     
-                # Create swings array for bearish case
+                # Create swings array for bearish case WITH ASSET NAMES
                 swings = {
                     'asset1_prev': {
                         'time': asset1_prev_high['time'],
                         'price': asset1_prev_high['price'],
-                        'type': 'high'
+                        'type': 'high',
+                        'asset': asset1_name,  # ADDED
+                        'quarter': prev_q,
+                        'swing_type': 'prev'
                     },
                     'asset1_curr': {
                         'time': asset1_curr_high['time'],
                         'price': asset1_curr_high['price'],
-                        'type': 'high'
+                        'type': 'high',
+                        'asset': asset1_name,  # ADDED
+                        'quarter': curr_q,
+                        'swing_type': 'curr'
                     },
                     'asset2_prev': {
                         'time': asset2_prev_high['time'],
                         'price': asset2_prev_high['price'],
-                        'type': 'high'
+                        'type': 'high',
+                        'asset': asset2_name,  # ADDED
+                        'quarter': prev_q,
+                        'swing_type': 'prev'
                     },
                     'asset2_curr': {
                         'time': asset2_curr_high['time'],
                         'price': asset2_curr_high['price'],
-                        'type': 'high'
+                        'type': 'high',
+                        'asset': asset2_name,  # ADDED
+                        'quarter': curr_q,
+                        'swing_type': 'curr'
                     }
                 }
     
@@ -1601,27 +1623,39 @@ class UltimateSMTDetector:
                 if not (asset1_prev_low['time'] < asset1_curr_low['time'] and asset2_prev_low['time'] < asset2_curr_low['time']):
                     return None
     
-                # Create swings array for bullish case
+                # Create swings array for bullish case WITH ASSET NAMES
                 swings = {
                     'asset1_prev': {
                         'time': asset1_prev_low['time'],
                         'price': asset1_prev_low['price'],
-                        'type': 'low'
+                        'type': 'low',
+                        'asset': asset1_name,  # ADDED
+                        'quarter': prev_q,
+                        'swing_type': 'prev'
                     },
                     'asset1_curr': {
                         'time': asset1_curr_low['time'],
                         'price': asset1_curr_low['price'],
-                        'type': 'low'
+                        'type': 'low',
+                        'asset': asset1_name,  # ADDED
+                        'quarter': curr_q,
+                        'swing_type': 'curr'
                     },
                     'asset2_prev': {
                         'time': asset2_prev_low['time'],
                         'price': asset2_prev_low['price'],
-                        'type': 'low'
+                        'type': 'low',
+                        'asset': asset2_name,  # ADDED
+                        'quarter': prev_q,
+                        'swing_type': 'prev'
                     },
                     'asset2_curr': {
                         'time': asset2_curr_low['time'],
                         'price': asset2_curr_low['price'],
-                        'type': 'low'
+                        'type': 'low',
+                        'asset': asset2_name,  # ADDED
+                        'quarter': curr_q,
+                        'swing_type': 'curr'
                     }
                 }
     
@@ -1657,7 +1691,11 @@ class UltimateSMTDetector:
                 'timeframe': self.pair_config['timeframe_mapping'][cycle_type],
                 'swing_times': swing_times,
                 'candle_time': formation_time,
-                'swings': swings  # Added swings array with price data
+                'swings': swings,  # Now with asset names
+                'asset_names': {  # Also add as a separate field for easy access
+                    'asset1': asset1_name,
+                    'asset2': asset2_name
+                }
             }
     
             self.smt_history.append(smt_data)
