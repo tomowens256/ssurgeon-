@@ -6616,8 +6616,8 @@ class HammerPatternScanner:
             }
     
     def _process_and_record_hammer(self, instrument, tf, candle, direction, criteria, 
-                              signal_data, signal_id, trigger_data):
-        """Process a single hammer and record it to CSV - UPDATED"""
+                               signal_data, signal_id, trigger_data):
+        """Process a single hammer and record it to CSV - FIXED VERSION"""
         try:
             # Get current price for entry
             current_df = fetch_candles(instrument, 'M1', count=2, api_key=self.credentials['oanda_api_key'])
@@ -6633,15 +6633,11 @@ class HammerPatternScanner:
             if isinstance(candle_close_time, str):
                 candle_close_time = datetime.strptime(candle_close_time, '%Y-%m-%d %H:%M:%S')
             signal_latency_seconds = (current_time - candle_close_time).total_seconds()
-
-
-            # Get news context from the shared cache file
-            
-            # Get news context from the shared cache file
+    
+            # Get news context
             news_context = {}
             if hasattr(self, 'news_calendar') and self.news_calendar:
                 try:
-                    # Use the CORRECT method: get_news_for_instrument()
                     signal_time = datetime.now(NY_TZ)
                     news_context = self.news_calendar.get_news_for_instrument(instrument, signal_time)
                 except Exception as e:
@@ -6677,23 +6673,20 @@ class HammerPatternScanner:
                     'fetch_status': 'disabled'
                 }
             
-            # ========== USE HELPER FUNCTION ==========
             # Extract news data safely
             safe_news_data = self._get_safe_news_data(news_context, instrument)
+            
             # Calculate price levels
             hammer_high = candle['high']
             hammer_low = candle['low']
             hammer_range = hammer_high - hammer_low
-
-            # Calculate higher timeframe features
+    
+            # Calculate higher timeframe features BEFORE creating trade_data
             higher_tf_features = self.calculate_higher_tf_features(
                 instrument, 
                 current_price, 
                 candle['time']  # This is the hammer candle time
             )
-            
-            # Add to trade_data
-            trade_data.update(higher_tf_features)
             
             # Pip multiplier
             pip_multiplier = 100 if 'JPY' in instrument else 10000
@@ -6707,7 +6700,7 @@ class HammerPatternScanner:
             
             # Calculate pips
             sl_distance_pips = abs(current_price - sl_price) * pip_multiplier
-
+    
             # Calculate position sizes for risk management
             risk_10_lots, risk_100_lots = self.calculate_position_sizes(
                 instrument, 
@@ -6733,7 +6726,7 @@ class HammerPatternScanner:
             # Get basic indicators
             df = fetch_candles(instrument, tf, count=150, api_key=self.credentials['oanda_api_key'])
             
-            # Calculate advanced features
+            # Calculate indicators BEFORE creating trade_data
             if not df.empty:
                 # Find the index of the hammer candle
                 candle_index = -2  # Default to second last candle
@@ -6748,7 +6741,7 @@ class HammerPatternScanner:
                 indicators = {'rsi': 50, 'vwap': current_price}
                 advanced_features = {}
             
-            # Calculate inducement if we have the dataas
+            # Calculate inducement
             inducement_count = 0
             if criteria in ['FVG+SMT', 'SD+SMT']:
                 # Get formation time and second swing
@@ -6783,7 +6776,7 @@ class HammerPatternScanner:
                 instrument, direction, current_price, sl_price
             )
             
-            # Prepare trade data - UPDATED
+            # NOW create trade_data dictionary
             trade_data = {
                 'timestamp': current_time.strftime('%Y-%m-%d %H:%M:%S'),
                 'signal_id': signal_id,
@@ -6833,7 +6826,6 @@ class HammerPatternScanner:
                 'time_to_exit_seconds': 0,
                 'tp_level_hit': 0,
                 # News data
-                
                 'news_context_json': safe_news_data['news_context_json'],
                 'news_high_count': safe_news_data['news_high_count'],
                 'news_medium_count': safe_news_data['news_medium_count'],
@@ -6850,11 +6842,14 @@ class HammerPatternScanner:
                 'news_fetch_status': safe_news_data['news_fetch_status']
             }
             
+            # Add higher timeframe features
+            trade_data.update(higher_tf_features)
+            
             # Add advanced features
             for key, value in advanced_features.items():
                 trade_data[key] = value
             
-            # Send Telegram signal (run feature calculation AFTER sending)
+            # Send Telegram signal
             self.logger.info(f"📤 Sending Telegram signal for hammer #{trade_id}")
             self.send_hammer_signal(trade_data, trigger_data)
             
