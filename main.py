@@ -6292,15 +6292,40 @@ class HammerPatternScanner:
                         
                         tf_scanned_candles.add(candle_key)
                         
-                        # 6. DEBUG: Log candle details
-                        # 6. DEBUG: Log candle details
+                        # 6. CHECK IF SL OR TP HAS BEEN HIT
+                        candle_high = closed_candle['high']
+                        candle_low = closed_candle['low']
+                        
+                        if direction == 'bearish':
+                            # For bearish: if candle high goes above SL, setup is invalid
+                            if candle_high >= sl_price:
+                                self.logger.info(f"❌ {instrument} {tf}: SL HIT! Candle high {candle_high:.5f} >= SL {sl_price:.5f}")
+                                break
+                            
+                            # For bearish: if candle low goes below TP, target reached
+                            if candle_low <= tp_price:
+                                self.logger.info(f"✅ {instrument} {tf}: TP HIT! Candle low {candle_low:.5f} <= TP {tp_price:.5f}")
+                                break
+                        else:  # bullish
+                            # For bullish: if candle low goes below SL, setup is invalid
+                            if candle_low <= sl_price:
+                                self.logger.info(f"❌ {instrument} {tf}: SL HIT! Candle low {candle_low:.5f} <= SL {sl_price:.5f}")
+                                break
+                            
+                            # For bullish: if candle high goes above TP, target reached
+                            if candle_high >= tp_price:
+                                self.logger.info(f"✅ {instrument} {tf}: TP HIT! Candle high {candle_high:.5f} >= TP {tp_price:.5f}")
+                                break
+                        # END OF SL/TP CHECK
+                        
+                        # 7. DEBUG: Log candle details
                         self.logger.info(f"📊 {instrument} {tf}: Scanning at {datetime.now(NY_TZ).strftime('%H:%M:%S')}")
                         self.logger.info(f"   Candle time: {closed_candle['time']}")
                         self.logger.info(f"   Prices: O:{closed_candle['open']:.5f} H:{closed_candle['high']:.5f} "
                                        f"L:{closed_candle['low']:.5f} C:{closed_candle['close']:.5f}")
                         self.logger.info(f"   Direction: {shared_state['direction']}")
                         
-                        # 7. Check hammer pattern
+                        # 8. Check hammer pattern
                         is_hammer, upper_ratio, lower_ratio = self.is_hammer_candle(
                             closed_candle, 
                             shared_state['direction']
@@ -6312,8 +6337,7 @@ class HammerPatternScanner:
                             self.logger.info(f"✅ {instrument} {tf}: HAMMER DETECTED! Checking if in zone...")
                             self.log_detailed_candle_analysis(closed_candle, tf, shared_state['direction'])
                         
-                        # 8. Check if candle is in VALID Fibonacci zone
-                        # 8. Check if candle is in VALID Fibonacci zone
+                        # 9. Check if candle is in VALID Fibonacci zone
                         candle_price = closed_candle['close']
                         in_valid_zone = False
                         target_zone = None
@@ -6356,14 +6380,14 @@ class HammerPatternScanner:
                             time.sleep(1)
                             continue
                         
-                        # 9. If hammer AND in zone, process it
+                        # 10. If hammer AND in zone, process it
                         if is_hammer:
                             self.logger.info(f"✅ {instrument} {tf}: HAMMER FOUND in Fibonacci zone!")
                             self.logger.info(f"   Time: {closed_candle['time']}")
                             self.logger.info(f"   Price: {candle_price:.5f}, Zone: {target_zone['zone_name'] if target_zone else 'N/A'}")
                             self.logger.info(f"   Wick ratios: upper={upper_ratio:.2f}, lower={lower_ratio:.2f}")
                             
-                            # 10. Process and record hammer with thread safety
+                            # 11. Process and record hammer with thread safety
                             with shared_state['lock']:
                                 shared_state['hammer_count'] += 1
                                 current_hammer_count = shared_state['hammer_count']
@@ -6392,33 +6416,6 @@ class HammerPatternScanner:
                     
                 except Exception as e:
                     self.logger.error(f"❌ Error in {instrument} {tf} scanner thread: {str(e)}", exc_info=True)
-            
-            # Start a thread for each timeframe
-            threads = []
-            for tf in timeframes:
-                thread = threading.Thread(
-                    target=scan_timeframe,
-                    args=(tf,),
-                    name=f"HammerScan_{instrument}_{tf}",
-                    daemon=True
-                )
-                thread.start()
-                threads.append(thread)
-                self.logger.info(f"🚀 Started {tf} scanner thread")
-            
-            # Main thread waits for scan duration or until interrupted
-            try:
-                # Calculate total seconds to wait
-                total_seconds = (shared_state['scan_end'] - datetime.now(NY_TZ)).total_seconds()
-                if total_seconds > 0:
-                    self.logger.info(f"⏰ Main thread waiting {total_seconds:.0f}s for scan completion...")
-                    time.sleep(total_seconds)
-                else:
-                    self.logger.warning(f"⚠️ Scan duration has already passed")
-            except KeyboardInterrupt:
-                self.logger.info(f"🛑 Scan interrupted for {instrument}")
-            except Exception as e:
-                self.logger.error(f"❌ Error in main thread wait: {str(e)}")
             
             # Wait for all threads to finish (they should finish when scan_end is reached)
             for thread in threads:
