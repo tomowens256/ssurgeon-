@@ -6757,7 +6757,7 @@ class HammerPatternScanner:
                 indicators = {'rsi': 50, 'vwap': current_price}
                 advanced_features = {}
             
-            # Calculate inducement if we have the data
+            # Calculate inducement if we have the dataas
             inducement_count = 0
             if criteria in ['FVG+SMT', 'SD+SMT']:
                 # Get formation time and second swing
