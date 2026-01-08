@@ -6318,45 +6318,38 @@ class HammerPatternScanner:
                             self.logger.info(f"✅ {instrument} {tf}: HAMMER DETECTED! Checking if in zone...")
                             self.log_detailed_candle_analysis(closed_candle, tf, shared_state['direction'])
                         
-                        # 9. Check if candle is in VALID Fibonacci zone
+                        
+                        # 9. Check if price is on correct side of 50% line
                         candle_price = closed_candle['close']
                         in_valid_zone = False
-                        target_zone = None
                         
-                        # Check each zone
+                        # Get 50% line from zone (or calculate it)
                         for zone in shared_state['fib_zones']:
-                            # First check if price is in this zone
-                            if zone['low'] <= candle_price <= zone['high']:
-                                self.logger.info(f"✅ {instrument} {tf}: Candle in zone {zone['zone_name']} ({zone['low']:.5f}-{zone['high']:.5f})")
-                                
-                                # Now check the 50% line condition
-                                if direction == 'bearish':
-                                    # For bearish: candle must be ABOVE 50% line
-                                    if candle_price > fifty_percent_line:
-                                        in_valid_zone = True
-                                        target_zone = zone
-                                        self.logger.info(f"✅ {instrument} {tf}: VALID - Above 50% line (candle: {candle_price:.5f} > 50%: {fifty_percent_line:.5f})")
-                                        break
-                                    else:
-                                        self.logger.info(f"❌ {instrument} {tf}: INVALID - Below 50% line (candle: {candle_price:.5f} <= 50%: {fifty_percent_line:.5f})")
-                                else:  # bullish
-                                    # For bullish: candle must be BELOW 50% line
-                                    if candle_price < fifty_percent_line:
-                                        in_valid_zone = True
-                                        target_zone = zone
-                                        self.logger.info(f"✅ {instrument} {tf}: VALID - Below 50% line (candle: {candle_price:.5f} < 50%: {fifty_percent_line:.5f})")
-                                        break
-                                    else:
-                                        self.logger.info(f"❌ {instrument} {tf}: INVALID - Above 50% line (candle: {candle_price:.5f} >= 50%: {fifty_percent_line:.5f})")
-                            else:
-                                # Log why this zone doesn't match
-                                if candle_price < zone['low']:
-                                    self.logger.debug(f"❌ {instrument} {tf}: Candle below zone {zone['zone_name']} ({candle_price:.5f} < {zone['low']:.5f})")
-                                elif candle_price > zone['high']:
-                                    self.logger.debug(f"❌ {instrument} {tf}: Candle above zone {zone['zone_name']} ({candle_price:.5f} > {zone['high']:.5f})")
+                            fifty_percent_line = zone.get('mid', zone['high'])  # Use mid or high as 50% line
+                            
+                            if direction == 'bearish':
+                                # For bearish: price must be ABOVE 50% line
+                                if candle_price >= fifty_percent_line:
+                                    in_valid_zone = True
+                                    target_zone = zone
+                                    self.logger.info(f"✅ {instrument} {tf}: Price {candle_price:.5f} ABOVE 50% line {fifty_percent_line:.5f}")
+                                    break
+                                else:
+                                    self.logger.info(f"❌ {instrument} {tf}: Price {candle_price:.5f} BELOW 50% line {fifty_percent_line:.5f}")
+                            else:  # bullish
+                                # For bullish: price must be BELOW 50% line
+                                if candle_price <= fifty_percent_line:
+                                    in_valid_zone = True
+                                    target_zone = zone
+                                    self.logger.info(f"✅ {instrument} {tf}: Price {candle_price:.5f} BELOW 50% line {fifty_percent_line:.5f}")
+                                    break
+                                else:
+                                    self.logger.info(f"❌ {instrument} {tf}: Price {candle_price:.5f} ABOVE 50% line {fifty_percent_line:.5f}")
+                            
+                            break  # Only check first zone (should be the 50% zone)
                         
                         if not in_valid_zone:
-                            self.logger.info(f"❌ {instrument} {tf}: Candle not in any valid Fibonacci zone")
+                            self.logger.info(f"❌ {instrument} {tf}: Candle not on correct side of 50% line")
                             self.logger.info(f"   Price: {candle_price:.5f}, 50% line: {fifty_percent_line:.5f}")
                             time.sleep(1)
                             continue
