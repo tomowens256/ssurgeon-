@@ -1443,9 +1443,15 @@ class UltimateSMTDetector:
     def _compare_quarters_with_3_candle_tolerance(self, asset1_prev, asset1_curr, asset2_prev, asset2_curr, cycle_type, prev_q, curr_q):
         """Compare quarters with debug info"""
         try:
-            # Get instrument names
-            asset1_name = self.instruments[0]  
-            asset2_name = self.instruments[1]  
+            # ======== FIX: Get instrument names ========
+            if not hasattr(self, 'instruments') or len(self.instruments) < 2:
+                self.logger.error("❌ Cannot get instrument names - self.instruments not available")
+                return None
+            
+            asset1_name = self.instruments[0]
+            asset2_name = self.instruments[1]
+            self.logger.info(f"📊 Using instrument names: {asset1_name}, {asset2_name}")
+            # ======== END FIX ======== 
             # Strict chronology check
             if not asset1_prev.empty and not asset1_curr.empty:
                 prev_end = asset1_prev['time'].max()
