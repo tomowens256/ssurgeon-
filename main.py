@@ -3256,7 +3256,7 @@ class FVGDetector:
         self.min_gap_pct = min_gap_pct
         self.active_fvgs = {}  # tf -> [fvgs]
         self.invalidate_std_mult = 4.0
-        self.fvg_expiry_hours = 4888  
+        self.fvg_expiry_hours = 48884  
 
     def scan_tf(self, df, tf, asset):
         if tf not in ['M15', 'H1','H2', 'H3', 'H4', 'D'] or len(df) < 39:
@@ -3266,7 +3266,7 @@ class FVGDetector:
         if 'complete' in df.columns:
             # Get only closed candles
             df = df[df['complete'] == True].copy()
-        recent = df.tail(38).reset_index(drop=True)
+        recent = df.tail(70).reset_index(drop=True)
         fvgs = []
         for i in range(2, len(recent)):
             a, b, c = recent.iloc[i-2], recent.iloc[i-1], recent.iloc[i]
