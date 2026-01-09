@@ -3138,8 +3138,8 @@ class RealTimeFeatureBox:
         
         return message
 
-    def _is_feature_expired(self, feature):
-        return datetime.now(NY_TZ) > feature['expiration']
+    # def _is_feature_expired(self, feature):
+    #     return datetime.now(NY_TZ) > feature['expiration']
     
     def _remove_feature(self, feature_type, feature_key):
         if feature_key in self.active_features[feature_type]:
