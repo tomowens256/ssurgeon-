@@ -2562,7 +2562,7 @@ class RealTimeFeatureBox:
     #     expired = hours_passed > expiry_hours.get(feature_type, 1)
         
     #     return expired
-    def cleanup_expired_features(self):
+    def cleanup_expired_features(self, market_data=None):
         """Remove all expired features with detailed logging"""
         current_time = datetime.now(NY_TZ)
         removed_counts = {}
@@ -2571,18 +2571,61 @@ class RealTimeFeatureBox:
             removed_counts[feature_type] = 0
             features_to_remove = []
             
-            # First pass: Identify expired featuresss
             for feature_key, feature in features.items():
+                # Check if feature is expired based on time
                 if current_time > feature['expiration']:
                     features_to_remove.append(feature_key)
+                    continue
+                
+                # SPECIAL CASE: SD Zone price invalidation (only if market_data provided)
+                if feature_type == 'sd_zone' and market_data:
+                    zone_data = feature.get('zone_data', {})
+                    asset = zone_data.get('asset')
+                    timeframe = zone_data.get('timeframe')
+                    direction = zone_data.get('direction', '').lower()
+                    
+                    if asset and timeframe and direction:
+                        # Get current price using the same structure as your system
+                        current_price = self._get_current_price_for_zone(
+                            asset, timeframe, market_data
+                        )
+                        
+                        if current_price is not None:
+                            zone_low = zone_data.get('zone_low')
+                            zone_high = zone_data.get('zone_high')
+                            
+                            # Check price invalidation
+                            if direction == 'bearish' and zone_high is not None:
+                                # Bearish (supply) zone invalidated if price goes ABOVE zone high
+                                if current_price > zone_high:
+                                    features_to_remove.append(feature_key)
+                                    self.logger.info(
+                                        f"🧹 PRICE-INVALIDATED SD Zone (bearish): {feature_key}"
+                                    )
+                                    self.logger.info(
+                                        f"   {asset} {timeframe}: Price {current_price:.5f} > Zone High {zone_high:.5f}"
+                                    )
+                                    continue
+                                    
+                            elif direction == 'bullish' and zone_low is not None:
+                                # Bullish (demand) zone invalidated if price goes BELOW zone low
+                                if current_price < zone_low:
+                                    features_to_remove.append(feature_key)
+                                    self.logger.info(
+                                        f"🧹 PRICE-INVALIDATED SD Zone (bullish): {feature_key}"
+                                    )
+                                    self.logger.info(
+                                        f"   {asset} {timeframe}: Price {current_price:.5f} < Zone Low {zone_low:.5f}"
+                                    )
+                                    continue
             
-            # Second pass: Remove expired features
+            # Remove identified features
             for feature_key in features_to_remove:
                 feature = features[feature_key]
                 del features[feature_key]
                 removed_counts[feature_type] += 1
                 
-                # Detailed logging from Method 1
+                # Log removal for non-price invalidation cases
                 if feature_type == 'smt':
                     smt_data = feature.get('smt_data', {})
                     signal_key = smt_data.get('signal_key', feature_key)
@@ -2593,16 +2636,81 @@ class RealTimeFeatureBox:
                         age_hours = (current_time - formation_time).total_seconds() / 3600
                         self.logger.info(f"🧹 REMOVED expired SMT: {signal_key}")
                         self.logger.info(f"   Cycle: {cycle}, Age: {age_hours:.1f}h")
+                        
+                elif feature_type == 'sd_zone' and feature_key not in features_to_remove:
+                    # This only logs if removed by time (not price invalidation)
+                    zone_data = feature.get('zone_data', {})
+                    zone_name = zone_data.get('zone_name', feature_key)
+                    direction = zone_data.get('direction', 'unknown')
+                    timeframe = zone_data.get('timeframe', 'unknown')
+                    
+                    self.logger.info(f"🧹 REMOVED expired SD Zone: {zone_name}")
+                    self.logger.info(f"   Direction: {direction}, Timeframe: {timeframe}")
+                    
                 else:
                     self.logger.debug(f"🧹 Removed expired {feature_type}: {feature_key}")
         
-        # Log summary from Method 1
+        # Log summary
         total_removed = sum(removed_counts.values())
         if total_removed > 0:
             summary_parts = [f"{count} {ftype}" for ftype, count in removed_counts.items() if count > 0]
             self.logger.info(f"🧹 Cleanup removed {total_removed} features: {', '.join(summary_parts)}")
         
         return removed_counts
+    
+    def _get_current_price_for_zone(self, asset, timeframe, market_data):
+        """
+        Extract current price from market_data for a specific asset/timeframe
+        Uses the same structure as your _check_smt_tap_in_sd_zone function
+        """
+        if not market_data:
+            return None
+        
+        try:
+            # Check if asset exists in market_data
+            if asset not in market_data:
+                self.logger.debug(f"No market data for asset: {asset}")
+                return None
+            
+            # Check if timeframe exists for this asset
+            asset_data = market_data.get(asset, {})
+            if not asset_data or timeframe not in asset_data:
+                self.logger.debug(f"No {timeframe} data for {asset}")
+                return None
+            
+            # Get the price data (should be a DataFrame)
+            price_data = asset_data[timeframe]
+            
+            # Check if DataFrame is empty
+            if price_data is None or price_data.empty:
+                self.logger.debug(f"Empty price data for {asset} {timeframe}")
+                return None
+            
+            # Get the latest close price (most recent candle)
+            # Using iloc[-1] to get last row, same as in your _check_smt_tap_in_sd_zone
+            last_row = price_data.iloc[-1]
+            
+            # Try to get close price (lowercase 'close' as in your code)
+            if 'close' in price_data.columns:
+                current_price = last_row['close']
+            elif 'Close' in price_data.columns:
+                current_price = last_row['Close']
+            elif 'last' in price_data.columns:
+                current_price = last_row['last']
+            else:
+                # Try to find any price column
+                price_columns = [col for col in price_data.columns if col.lower() in ['close', 'last', 'price']]
+                if price_columns:
+                    current_price = last_row[price_columns[0]]
+                else:
+                    self.logger.warning(f"No price column found for {asset} {timeframe}")
+                    return None
+            
+            return float(current_price)
+            
+        except Exception as e:
+            self.logger.error(f"Error getting price for {asset} {timeframe}: {str(e)}")
+            return None
     
     def add_crt(self, crt_data, psp_data=None):
         if not crt_data:
