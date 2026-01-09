@@ -2452,7 +2452,7 @@ class RealTimeFeatureBox:
         """Check if feature is expired based on its expiration time"""
         current_time = datetime.now(NY_TZ)
         
-        # For SMT features, also check if formation time is too old based on cycle
+        # For SMT features, also check if formation time is too old based on cycless
         if feature.get('type') == 'smt':
             cycle = feature.get('cycle', 'daily')
             formation_time = feature.get('formation_time')
