@@ -2564,23 +2564,25 @@ class RealTimeFeatureBox:
     #     return expired
     def cleanup_expired_features(self):
         """Remove all expired features with detailed logging"""
+        current_time = datetime.now(NY_TZ)
         removed_counts = {}
         
         for feature_type, features in self.active_features.items():
             removed_counts[feature_type] = 0
             features_to_remove = []
             
+            # First pass: Identify expired features
             for feature_key, feature in features.items():
-                if self._is_feature_expired(feature):
+                if current_time > feature['expiration']:
                     features_to_remove.append(feature_key)
             
-            # Remove expired features
+            # Second pass: Remove expired features
             for feature_key in features_to_remove:
                 feature = features[feature_key]
                 del features[feature_key]
                 removed_counts[feature_type] += 1
                 
-                # Detailed logging
+                # Detailed logging from Method 1
                 if feature_type == 'smt':
                     smt_data = feature.get('smt_data', {})
                     signal_key = smt_data.get('signal_key', feature_key)
@@ -2588,13 +2590,13 @@ class RealTimeFeatureBox:
                     cycle = smt_data.get('cycle', 'unknown')
                     
                     if formation_time:
-                        age_hours = (datetime.now(NY_TZ) - formation_time).total_seconds() / 3600
+                        age_hours = (current_time - formation_time).total_seconds() / 3600
                         self.logger.info(f"🧹 REMOVED expired SMT: {signal_key}")
                         self.logger.info(f"   Cycle: {cycle}, Age: {age_hours:.1f}h")
                 else:
                     self.logger.debug(f"🧹 Removed expired {feature_type}: {feature_key}")
         
-        # Log summary
+        # Log summary from Method 1
         total_removed = sum(removed_counts.values())
         if total_removed > 0:
             summary_parts = [f"{count} {ftype}" for ftype, count in removed_counts.items() if count > 0]
