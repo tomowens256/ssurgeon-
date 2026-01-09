@@ -9035,10 +9035,13 @@ class UltimateTradingSystem:
     def _scan_sd_with_smt_tap(self):
         """Find Supply/Demand zones where SMT's SECOND SWING traded in the zone - USING FEATUREBOX ZONES"""
         logger.info(f"🔍 SCANNING: Supply/Demand + SMT Tap - USING FEATUREBOX ZONES")
-
-        # First, cleanup expired features
+    
+        # First, cleanup expired features WITH market data for price invalidation
         if hasattr(self, 'feature_box') and self.feature_box:
-            self.feature_box.cleanup_expired_features()
+            # Pass the same market_data that this function uses for scanning
+            self.feature_box.cleanup_expired_features(market_data=self.market_data)
+        
+        # Rest of your existing code...
         
         # Timeframe mapping: SD Zone -> allowed SMT cycles
         sd_to_smt_cycles = {
