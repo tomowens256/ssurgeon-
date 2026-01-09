@@ -6919,11 +6919,11 @@ class HammerPatternScanner:
             return {'rsi': 50, 'macd_line': 0, 'vwap': 0}
 
     def calculate_higher_tf_features(self, instrument, hammer_close_price, hammer_time):
-        """Calculate higher timeframe features for the hammer candle"""
+        """Calculate higher timeframe features for the hammer candle - FIXED VERSION"""
         try:
             features = {}
             
-            # Define timeframes to analyze
+            # Define timeframes to analyze - use UPPERCASE to match CSV headers
             higher_tfs = ['H4', 'H6', 'D', 'W']
             
             for tf in higher_tfs:
@@ -6933,74 +6933,118 @@ class HammerPatternScanner:
                 
                 if df.empty:
                     self.logger.warning(f"⚠️ No {tf} data for {instrument}")
+                    # Set default values for all features
+                    features[f'{tf}_fib_zone'] = 0
+                    features[f'{tf}_fib_percent'] = 0.0
+                    features[f'{tf}_open_rel'] = 'unknown'
+                    features[f'{tf}_quarter'] = 0
+                    features[f'{tf}_candle_percent'] = 50.0
                     continue
                 
                 # Convert hammer_time to match dataframe timezone
+                # First, make sure hammer_time is a datetime
+                if isinstance(hammer_time, str):
+                    hammer_time = datetime.strptime(hammer_time, '%Y-%m-%d %H:%M:%S')
+                
+                # Ensure both are timezone aware
                 if df['time'].dt.tz is None:
                     df['time'] = df['time'].dt.tz_localize('UTC').dt.tz_convert(NY_TZ)
                 
+                if hammer_time.tzinfo is None:
+                    hammer_time = hammer_time.replace(tzinfo=NY_TZ)
+                
                 # Find the higher TF candle that contains the hammer time
-                # We'll use the last closed candle before or at hammer_time
-                mask = df['time'] <= hammer_time
-                if mask.any():
-                    # Get the most recent candle at or before hammer_time
-                    htf_candle = df[mask].iloc[-1]
-                else:
-                    # If no candle found, use the first one
-                    htf_candle = df.iloc[0]
+                # Look for candle where hammer_time is between candle open and close
+                htf_candle = None
+                
+                for idx in range(len(df)):
+                    candle = df.iloc[idx]
+                    candle_open = candle['time']
+                    
+                    # Calculate candle close time based on timeframe
+                    if tf == 'H4':
+                        candle_close = candle_open + timedelta(hours=4)
+                    elif tf == 'H6':
+                        candle_close = candle_open + timedelta(hours=6)
+                    elif tf == 'D':
+                        candle_close = candle_open + timedelta(days=1)
+                    elif tf == 'W':
+                        candle_close = candle_open + timedelta(weeks=1)
+                    else:
+                        candle_close = candle_open + timedelta(hours=4)  # default
+                    
+                    if candle_open <= hammer_time < candle_close:
+                        htf_candle = candle
+                        break
+                
+                # If no candle found, use the last candle
+                if htf_candle is None:
+                    htf_candle = df.iloc[-1]
                 
                 # ============================================
                 # 1. Pd-(tf): Fibonacci Zone (10 zones)
                 # ============================================
                 fib_zone, fib_percent = self._calculate_fib_zone(df, hammer_close_price, tf)
-                features[f'{tf.lower()}_fib_zone'] = fib_zone
-                features[f'{tf.lower()}_fib_percent'] = fib_percent
+                features[f'{tf}_fib_zone'] = fib_zone
+                features[f'{tf}_fib_percent'] = fib_percent
                 
                 # ============================================
                 # 2. Price Relative to Candle Open
                 # ============================================
                 if hammer_close_price > htf_candle['open']:
-                    features[f'{tf.lower()}_open_rel'] = 'up'
+                    features[f'{tf}_open_rel'] = 'up'
                 elif hammer_close_price < htf_candle['open']:
-                    features[f'{tf.lower()}_open_rel'] = 'down'
+                    features[f'{tf}_open_rel'] = 'down'
                 else:
-                    features[f'{tf.lower()}_open_rel'] = 'equal'
+                    features[f'{tf}_open_rel'] = 'equal'
                 
                 # ============================================
                 # 3. Candle Quarter Position
                 # ============================================
                 quarter = self._calculate_candle_quarter(htf_candle, hammer_close_price)
-                features[f'{tf.lower()}_quarter'] = quarter
+                features[f'{tf}_quarter'] = quarter
                 
                 # ============================================
                 # 4. Price Position Percentage within Candle
                 # ============================================
                 candle_percent = self._calculate_candle_position_percent(htf_candle, hammer_close_price)
-                features[f'{tf.lower()}_candle_percent'] = candle_percent
+                features[f'{tf}_candle_percent'] = candle_percent
                 
                 # Log for debugging
                 self.logger.info(f"📊 {tf} Features for {instrument}:")
                 self.logger.info(f"   Fib Zone: {fib_zone} ({fib_percent:.1f}%)")
-                self.logger.info(f"   Open Rel: {features[f'{tf.lower()}_open_rel']}")
+                self.logger.info(f"   Open Rel: {features[f'{tf}_open_rel']}")
                 self.logger.info(f"   Quarter: {quarter}")
                 self.logger.info(f"   Candle %: {candle_percent:.1f}%")
             
             return features
             
         except Exception as e:
-            self.logger.error(f"❌ Error calculating higher TF features: {str(e)}")
-            return {}
+            self.logger.error(f"❌ Error calculating higher TF features: {str(e)}", exc_info=True)
+            # Return empty features with all required keys
+            features = {}
+            for tf in ['H4', 'H6', 'D', 'W']:
+                features[f'{tf}_fib_zone'] = 0
+                features[f'{tf}_fib_percent'] = 0.0
+                features[f'{tf}_open_rel'] = 'error'
+                features[f'{tf}_quarter'] = 0
+                features[f'{tf}_candle_percent'] = 50.0
+            return features
+            
     
     def _calculate_fib_zone(self, df, current_price, timeframe):
         """Calculate which Fibonacci zone (1-10) price is in for given data"""
         try:
+            if df.empty or len(df) < 10:
+                return 0, 0.0
+            
             # Use the entire dataframe for highest/lowest
             highest = df['high'].max()
             lowest = df['low'].min()
             total_range = highest - lowest
             
             if total_range <= 0:
-                return 0, 0
+                return 0, 0.0
             
             # Create 10 Fibonacci-like zones (not actual Fibonacci ratios)
             # Zone 1 is near the top, Zone 10 is near the bottom
@@ -7014,13 +7058,13 @@ class HammerPatternScanner:
             zone = max(1, min(10, zone))
             
             # Calculate percentage from top (0% at top, 100% at bottom)
-            percent_from_top = (distance_from_top / total_range) * 100
+            percent_from_top = (distance_from_top / total_range) * 100 if total_range > 0 else 0.0
             
-            return zone, percent_from_top
+            return zone, round(percent_from_top, 2)
             
         except Exception as e:
             self.logger.error(f"Error calculating Fib zone for {timeframe}: {str(e)}")
-            return 0, 0
+            return 0, 0.0
     
     def _calculate_candle_quarter(self, candle, current_price):
         """Calculate which quarter of the candle price is in (1-4)"""
@@ -7036,11 +7080,17 @@ class HammerPatternScanner:
             
             # Calculate which quarter (1 = bottom quarter, 4 = top quarter)
             distance_from_bottom = current_price - candle_low
+            
+            # Handle edge cases
+            if distance_from_bottom <= 0:
+                return 1
+            elif distance_from_bottom >= candle_range:
+                return 4
+            
             quarter = int(distance_from_bottom // quarter_size) + 1
             
-            # Adjust: if price is exactly at high, it's quarter 4
-            if quarter > 4:
-                quarter = 4
+            # Adjust: if price is exactly at a boundary
+            quarter = max(1, min(4, quarter))
             
             return quarter
             
@@ -7056,14 +7106,16 @@ class HammerPatternScanner:
             candle_range = candle_high - candle_low
             
             if candle_range <= 0:
-                return 50  # Middle if no range
+                return 50.0  # Middle if no range
             
             position = ((current_price - candle_low) / candle_range) * 100
+            position = max(0.0, min(100.0, position))  # Clamp between 0-100
+            
             return round(position, 1)
             
         except Exception as e:
             self.logger.error(f"Error calculating candle position %: {str(e)}")
-            return 50
+            return 50.0
 
     def calculate_advanced_features(self, df, candle_index):
         """Calculate advanced features for the hammer candle"""
