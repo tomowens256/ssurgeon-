@@ -2571,7 +2571,7 @@ class RealTimeFeatureBox:
             removed_counts[feature_type] = 0
             features_to_remove = []
             
-            # First pass: Identify expired features
+            # First pass: Identify expired featuresss
             for feature_key, feature in features.items():
                 if current_time > feature['expiration']:
                     features_to_remove.append(feature_key)
