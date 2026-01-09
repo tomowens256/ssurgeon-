@@ -3147,13 +3147,13 @@ class RealTimeFeatureBox:
         if feature_key in self.active_features[feature_type]:
             del self.active_features[feature_type][feature_key]
     
-    def cleanup_expired_features(self):
-        current_time = datetime.now(NY_TZ)
+    # def cleanup_expired_features(self):
+    #     current_time = datetime.now(NY_TZ)
         
-        for feature_type in self.active_features:
-            for feature_key, feature in list(self.active_features[feature_type].items()):
-                if current_time > feature['expiration']:
-                    del self.active_features[feature_type][feature_key]
+    #     for feature_type in self.active_features:
+    #         for feature_key, feature in list(self.active_features[feature_type].items()):
+    #             if current_time > feature['expiration']:
+    #                 del self.active_features[feature_type][feature_key]
     
     def get_active_features_summary(self):
         summary = {
