@@ -5006,6 +5006,7 @@ class HammerPatternScanner:
                 # Market Context
                 'rsi', 'vwap',
 
+                
                 # Higher Timeframe Fibonacci Zones (Pd-tf)
                 'H4_fib_zone', 'H6_fib_zone', 'D_fib_zone', 'W_fib_zone',
                 'H4_fib_percent', 'H6_fib_percent', 'D_fib_percent', 'W_fib_percent',  # For more granular analysis
