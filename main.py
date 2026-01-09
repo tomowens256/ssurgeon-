@@ -5663,36 +5663,38 @@ class HammerPatternScanner:
             return []
 
     def calculate_pips(self, instrument, price1, price2):
-        """Calculate pip difference between two prices"""
+        """
+        Correct pip calculation aligned with MT5-style contracts
+        """
         try:
-            price_diff = abs(price1 - price2)
-            
-            # Handle different instrument types
-            if '_' in instrument:  # Forex pairs
-                if 'JPY' in instrument:
-                    # JPY pairs: 2 decimal places, 1 pip = 0.01
-                    return round(price_diff * 100, 1)
+            diff = abs(price1 - price2)
+            symbol = instrument.upper()
+    
+            # ---- METALS ----
+            if "XAU" in symbol:
+                # XAUUSD: 1 pip = 0.1
+                return round(diff / 0.1, 1)
+    
+            if "XAG" in symbol:
+                # XAGUSD: 1 pip = 0.01
+                return round(diff / 0.01, 1)
+    
+            # ---- FOREX ----
+            clean = symbol.replace("_", "")
+            if len(clean) == 6 and clean.isalpha():
+                if clean.endswith("JPY"):
+                    return round(diff / 0.01, 1)
                 else:
-                    # Other forex: 4-5 decimal places, 1 pip = 0.0001
-                    return round(price_diff * 10000, 1)
-            
-            # Indices
-            indices = ['NAS100', 'SPX500', 'DE30', 'EU50', 'UK100', 'AUS200', 'US30', 'US500', 'USTEC']
-            if any(idx in instrument for idx in indices):
-                # Indices: usually 1 point = 1 pip
-                return round(price_diff, 1)
-            
-            # Gold/Silver
-            if 'XAU' in instrument or 'XAG' in instrument:
-                # Gold/Silver: usually 2 decimal places, 1 pip = 0.01
-                return round(price_diff * 100, 1)
-            
-            # Default (shouldn't reach here)
-            return round(price_diff * 10000, 1)
-            
+                    return round(diff / 0.0001, 1)
+    
+            # ---- INDICES ----
+            # Indices: points = pips
+            return round(diff, 1)
+    
         except Exception as e:
-            self.logger.error(f"Error calculating pips: {str(e)}")
-            return 0
+            self.logger.error(f"❌ Pip calculation error: {e}")
+            return None
+
 
     def _clean_string_for_csv(self, text):
         """Clean string to avoid encoding issues in CSV"""
