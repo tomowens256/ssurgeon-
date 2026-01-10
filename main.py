@@ -5130,6 +5130,9 @@ class HammerPatternScanner:
                 # Additional: Price position percentage within candle
                 'H4_candle_percent', 'H6_candle_percent', 'D_candle_percent', 'W_candle_percent',
                 
+                # In the headers list, add these:
+                '1m_zebra', '3m_zebra', '5m_zebra', '15m_zebra', '1h_zebra', '4h_zebra', '6h_zebra', '1d_zebra',
+                
                 # New Features
                 'signal_latency_seconds',  # Time from candle close to Telegram send
                 'hammer_volume',
