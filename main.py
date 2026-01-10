@@ -6730,6 +6730,169 @@ class HammerPatternScanner:
                 'news_timing_category': '',
                 'news_fetch_status': f'error: {str(e)[:50]}'
             }
+
+    def calculate_zebra_features(self, instrument, hammer_time):
+        """Calculate HalfTrend Zebra indicator for multiple timeframes"""
+        try:
+            features = {}
+            
+            # Define timeframes for Zebra
+            zebra_timeframes = ['M1', 'M3', 'M5', 'M15', 'H1', 'H4', 'H6', 'D']
+            
+            for tf in zebra_timeframes:
+                try:
+                    # Fetch enough data for HalfTrend calculation (need at least 100+ for ATR)
+                    df = fetch_candles(instrument, tf, count=200, 
+                                      api_key=self.credentials['oanda_api_key'])
+                    
+                    if df.empty or len(df) < 100:
+                        self.logger.warning(f"⚠️ Not enough data for {tf} Zebra calculation")
+                        features[f'{tf.lower()}_zebra'] = 'NaN'
+                        continue
+                    
+                    # Calculate HalfTrend indicator
+                    arrup, arrdwn = self._calculate_half_trend(df)
+                    
+                    # Find the most recent arrow signal
+                    last_signal = self._get_last_half_trend_signal(arrup, arrdwn, hammer_time, df)
+                    features[f'{tf.lower()}_zebra'] = last_signal
+                    
+                except Exception as e:
+                    self.logger.error(f"❌ Error calculating {tf} Zebra: {str(e)}")
+                    features[f'{tf.lower()}_zebra'] = 'NaN'
+            
+            return features
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error in calculate_zebra_features: {str(e)}")
+            # Return NaN for all timeframes on error
+            return {f'{tf.lower()}_zebra': 'NaN' for tf in zebra_timeframes}
+
+    def _calculate_half_trend(self, df, amplitude=2, atr_period=100):
+        """Calculate HalfTrend indicator following MQL4 logic"""
+        try:
+            import numpy as np
+            
+            n = len(df)
+            trend = np.zeros(n)
+            up = np.zeros(n)
+            down = np.zeros(n)
+            atrlo = np.zeros(n)
+            atrhi = np.zeros(n)
+            arrup = np.full(n, np.nan)
+            arrdwn = np.full(n, np.nan)
+            
+            # Initialize as in MQL4
+            nexttrend = 0
+            minhighprice = df['high'].iloc[0] if n > 0 else 0
+            maxlowprice = df['low'].iloc[0] if n > 0 else 0
+            
+            # Calculate ATR/2 for each bar
+            # First calculate True Range
+            high_low = df['high'] - df['low']
+            high_close_prev = abs(df['high'] - df['close'].shift(1))
+            low_close_prev = abs(df['low'] - df['close'].shift(1))
+            tr = pd.concat([high_low, high_close_prev, low_close_prev], axis=1).max(axis=1)
+            
+            # Calculate ATR (SMA of TR)
+            atr = tr.rolling(window=atr_period, min_periods=1).mean() / 2
+            
+            # Main loop following MQL4 logic
+            for i in range(1, n):
+                # Get lowest low and highest high of Amplitude period
+                start_idx = max(0, i - amplitude + 1)
+                lowprice_i = df['low'].iloc[start_idx:i+1].min()
+                highprice_i = df['high'].iloc[start_idx:i+1].max()
+                
+                # Calculate SMA of low and high
+                lowma = df['low'].iloc[start_idx:i+1].mean()
+                highma = df['high'].iloc[start_idx:i+1].mean()
+                
+                # Copy previous trend
+                trend[i] = trend[i-1]
+                
+                if nexttrend == 1:
+                    maxlowprice = max(lowprice_i, maxlowprice)
+                    if highma < maxlowprice and df['close'].iloc[i] < df['low'].iloc[i-1]:
+                        trend[i] = 1.0
+                        nexttrend = 0
+                        minhighprice = highprice_i
+                        
+                if nexttrend == 0:
+                    minhighprice = min(highprice_i, minhighprice)
+                    if lowma > minhighprice and df['close'].iloc[i] > df['high'].iloc[i-1]:
+                        trend[i] = 0.0
+                        nexttrend = 1
+                        maxlowprice = lowprice_i
+                
+                # Set up and down lines
+                if trend[i] == 0.0:  # Uptrend
+                    if trend[i-1] != 0.0:  # Trend just changed
+                        up[i] = down[i-1]
+                        if i-1 >= 0:
+                            up[i-1] = up[i]
+                        arrup[i] = up[i] - 2 * atr.iloc[i]
+                    else:
+                        up[i] = max(maxlowprice, up[i-1])
+                    
+                    atrhi[i] = up[i] - atr.iloc[i]
+                    atrlo[i] = up[i]
+                    down[i] = 0.0
+                    
+                else:  # Downtrend
+                    if trend[i-1] != 1.0:  # Trend just changed
+                        down[i] = up[i-1]
+                        if i-1 >= 0:
+                            down[i-1] = down[i]
+                        arrdwn[i] = down[i] + 2 * atr.iloc[i]
+                    else:
+                        down[i] = min(minhighprice, down[i-1])
+                    
+                    atrhi[i] = down[i] + atr.iloc[i]
+                    atrlo[i] = down[i]
+                    up[i] = 0.0
+            
+            return arrup, arrdwn
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error in _calculate_half_trend: {str(e)}")
+            return np.array([]), np.array([])
+    
+    def _get_last_half_trend_signal(self, arrup, arrdwn, hammer_time, df):
+        """Get the most recent HalfTrend arrow signal"""
+        try:
+            # Find indices where we have arrows
+            arrup_indices = np.where(~np.isnan(arrup))[0]
+            arrdwn_indices = np.where(~np.isnan(arrdwn))[0]
+            
+            if len(arrup_indices) == 0 and len(arrdwn_indices) == 0:
+                return 'NaN'
+            
+            # Get the most recent arrow before or at hammer_time
+            # Since we're looking for most recent signal overall (not just at hammer_time),
+            # we take the last index from either array
+            
+            last_arrup_idx = arrup_indices[-1] if len(arrup_indices) > 0 else -1
+            last_arrdwn_idx = arrdwn_indices[-1] if len(arrdwn_indices) > 0 else -1
+            
+            if last_arrup_idx > last_arrdwn_idx:
+                return 'green'
+            elif last_arrdwn_idx > last_arrup_idx:
+                return 'red'
+            else:
+                # If both have same index (shouldn't happen), check which one is not NaN at that index
+                idx = last_arrup_idx
+                if idx >= 0:
+                    if not np.isnan(arrup[idx]):
+                        return 'green'
+                    elif not np.isnan(arrdwn[idx]):
+                        return 'red'
+            
+            return 'NaN'
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error in _get_last_half_trend_signal: {str(e)}")
+            return 'NaN'
     
     def _process_and_record_hammer(self, instrument, tf, candle, direction, criteria, 
                                signal_data, signal_id, trigger_data):
@@ -6803,6 +6966,9 @@ class HammerPatternScanner:
                 current_price, 
                 candle['time']  # This is the hammer candle time
             )
+            # Calculate Zebra features
+            zebra_features = self.calculate_zebra_features(instrument, candle['time'])
+            trade_data.update(zebra_features)
             
             # Pip multiplier
             pip_multiplier = 100 if 'JPY' in instrument else 10000
