@@ -7126,7 +7126,11 @@ class HammerPatternScanner:
                 'seconds_to_next_news': safe_news_data['seconds_to_next_news'],
                 'seconds_since_last_news': safe_news_data['seconds_since_last_news'],
                 'news_timing_category': safe_news_data['news_timing_category'],
-                'news_fetch_status': safe_news_data['news_fetch_status']
+                'news_fetch_status': safe_news_data['news_fetch_status'],
+                # Will store RR multiple (e.g., 2 for TP2, 3 for TP3, 2.5 for open TP, 0 for SL)
+                'tp_level_hit': 0,  
+                'exit_time': '',
+                'time_to_exit_seconds': 0
             }
             
             # Add higher timeframe features
