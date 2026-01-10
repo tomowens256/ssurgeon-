@@ -5159,6 +5159,11 @@ class HammerPatternScanner:
                 'prev_news_time', 'prev_news_event', 'prev_news_currency',
                 'seconds_to_next_news', 'seconds_since_last_news',
                 'news_timing_category', 'news_fetch_status',
+
+                # Be tracking 
+                'if_BE_TP1', 'if_BE_TP2', 'if_BE_TP3', 'if_BE_TP4', 'if_BE_TP5',
+                'if_BE_TP6', 'if_BE_TP7', 'if_BE_TP8', 'if_BE_TP9', 'if_BE_TP10',
+                'if_BE_open_TP'
                 
                 # Result Tracking
                 'exit_time', 'time_to_exit_seconds', 'tp_level_hit'
