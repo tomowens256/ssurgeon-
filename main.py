@@ -8106,7 +8106,7 @@ class HammerPatternScanner:
             self.logger.error(f"❌ Error in TP monitoring: {str(e)}")
     
     def _record_tp_result(self, trade_data, tp_type, result_value, hit_time, time_seconds=None):
-        """Record TP result to CSV"""
+        """Record TP result to CSV with RR values"""
         try:
             # Update trade_data
             if tp_type.startswith('TP_'):
@@ -8114,10 +8114,27 @@ class HammerPatternScanner:
                 trade_data[f'tp_1_{tp_num}_result'] = f"+{result_value}"
                 if time_seconds:
                     trade_data[f'tp_1_{tp_num}_time_seconds'] = int(time_seconds)
+                
+                # Update highest RR achieved (TP number = RR multiple)
+                current_highest_rr = trade_data.get('tp_level_hit', 0)
+                if tp_num > current_highest_rr:
+                    trade_data['tp_level_hit'] = tp_num  # This is the RR multiple
+                    trade_data['time_to_exit_seconds'] = int(time_seconds) if time_seconds else 0
+                    trade_data['exit_time'] = hit_time.strftime('%Y-%m-%d %H:%M:%S')
+                    
             elif tp_type == 'OPEN_TP':
                 trade_data['open_tp_result'] = f"+{result_value}"
                 if time_seconds:
                     trade_data['open_tp_time_seconds'] = int(time_seconds)
+                
+                # For open TP, we store the RR value from open_tp_rr
+                # Only update if no fixed TP was hit (tp_level_hit == 0)
+                if trade_data.get('tp_level_hit', 0) == 0:
+                    open_tp_rr = trade_data.get('open_tp_rr', 0)
+                    trade_data['tp_level_hit'] = open_tp_rr  # Store the RR value
+                    trade_data['time_to_exit_seconds'] = int(time_seconds) if time_seconds else 0
+                    trade_data['exit_time'] = hit_time.strftime('%Y-%m-%d %H:%M:%S')
+                    
             elif tp_type == 'SL':
                 # Record -1 for all TPs that weren't hit
                 for i in range(1, 11):
@@ -8125,10 +8142,15 @@ class HammerPatternScanner:
                         trade_data[f'tp_1_{i}_result'] = "-1"
                 if trade_data.get('open_tp_result') == '':
                     trade_data['open_tp_result'] = "-1"
+                
+                # Update for SL hit - RR = 0
+                trade_data['tp_level_hit'] = 0  # 0 RR for SL hit
+                trade_data['time_to_exit_seconds'] = int(time_seconds) if time_seconds else 0
+                trade_data['exit_time'] = hit_time.strftime('%Y-%m-%d %H:%M:%S')
             
             # Update CSV
             self._update_trade_in_csv(trade_data)
-            self.logger.info(f"📊 {tp_type} hit: result {result_value}, time {time_seconds}s")
+            self.logger.info(f"📊 {tp_type} hit: RR {trade_data['tp_level_hit']}, time {time_seconds}s")
             
         except Exception as e:
             self.logger.error(f"❌ Error recording TP result: {str(e)}")
