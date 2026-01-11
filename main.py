@@ -6898,6 +6898,162 @@ class HammerPatternScanner:
         except Exception as e:
             self.logger.error(f"❌ Error in _get_last_half_trend_signal: {str(e)}")
             return 'NaN'
+
+    def send_webhook_signal(self, instrument, direction, entry_price, sl_price, tp_price, 
+                        signal_id, trade_id, timeframe, criteria, risk_usd=50.0):
+        """
+        Send low-latency webhook signal for immediate execution with retry logic
+        """
+        try:
+            # Get webhook configuration
+            webhook_url = os.getenv('WEBHOOK_URL', 'http://localhost:8080/webhook')
+            webhook_token = os.getenv('WEBHOOK_TOKEN', 'uVDdSdTrQCDiAQwU9YR-LIeHMKJ8Ewgz')
+            
+            if not webhook_url or webhook_url == 'http://localhost:8080/webhook':
+                self.logger.warning("⚠️ Webhook URL not configured or using default")
+                return False
+            
+            if not webhook_token or webhook_token == 'your-secret-token-here-123':
+                self.logger.warning("⚠️ Webhook token not configured or using default")
+                return False
+            
+            # Prepare headers
+            headers = {
+                "Authorization": f"Bearer {webhook_token}",
+                "Content-Type": "application/json",
+                "User-Agent": "HammerScanner/1.0",
+                "X-Signal-ID": signal_id,
+                "X-Trade-ID": trade_id
+            }
+            
+            # Prepare body exactly as specified
+            body = {
+                "signal_id": signal_id,
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "symbol": instrument,
+                "direction": "BUY" if direction.lower() == 'bullish' else "SELL",
+                "stop_loss": round(sl_price, 5),
+                "take_profit": round(tp_price, 5),
+                "risk_usd": float(risk_usd),
+                "strategy_tag": f"Hammer_{criteria}",
+                "entry_price": round(entry_price, 5),
+                "timeframe": timeframe,
+                "trade_id": trade_id,
+                "instrument": instrument
+            }
+            
+            self.logger.info(f"🚀 Sending webhook signal for {instrument} {direction}")
+            self.logger.info(f"   URL: {webhook_url}")
+            self.logger.info(f"   Entry: {entry_price:.5f}, SL: {sl_price:.5f}, TP: {tp_price:.5f}")
+            self.logger.info(f"   Signal ID: {signal_id}, Trade ID: {trade_id}")
+            
+            # Check if requests library is available
+            try:
+                import requests
+            except ImportError:
+                self.logger.error("❌ 'requests' library not installed. Install with: pip install requests")
+                return False
+            
+            # Retry configuration
+            max_retries = 3
+            retry_delay = 0.5  # seconds
+            timeout = 3  # seconds
+            
+            last_exception = None
+            
+            for attempt in range(1, max_retries + 1):
+                try:
+                    self.logger.info(f"   Attempt {attempt}/{max_retries}...")
+                    
+                    # Send POST request
+                    response = requests.post(
+                        webhook_url, 
+                        json=body, 
+                        headers=headers, 
+                        timeout=timeout
+                    )
+                    
+                    # Log response details
+                    self.logger.info(f"   Response: {response.status_code} - {response.reason}")
+                    
+                    # Check if successful (2xx status code)
+                    if 200 <= response.status_code < 300:
+                        self.logger.info(f"✅ Webhook sent successfully on attempt {attempt}")
+                        
+                        # Optional: log response body for debugging
+                        if response.text:
+                            try:
+                                response_data = response.json()
+                                self.logger.info(f"   Server response: {response_data}")
+                            except:
+                                self.logger.info(f"   Server response: {response.text[:100]}...")
+                        
+                        return True
+                    
+                    # If not successful but not a server error, don't retry
+                    elif 400 <= response.status_code < 500:
+                        self.logger.error(f"❌ Client error {response.status_code}: {response.text}")
+                        
+                        # Don't retry client errors (bad request, unauthorized, etc.)
+                        break
+                    
+                    else:
+                        # Server error (5xx), retry
+                        self.logger.warning(f"⚠️ Server error {response.status_code}, retrying...")
+                        
+                except requests.exceptions.Timeout:
+                    self.logger.warning(f"⚠️ Timeout on attempt {attempt}, retrying...")
+                    last_exception = "Timeout"
+                    
+                except requests.exceptions.ConnectionError as e:
+                    self.logger.warning(f"⚠️ Connection error on attempt {attempt}: {str(e)}")
+                    last_exception = f"ConnectionError: {str(e)}"
+                    
+                except requests.exceptions.RequestException as e:
+                    self.logger.warning(f"⚠️ Request error on attempt {attempt}: {str(e)}")
+                    last_exception = f"RequestException: {str(e)}"
+                    
+                except Exception as e:
+                    self.logger.error(f"❌ Unexpected error on attempt {attempt}: {str(e)}")
+                    last_exception = f"Unexpected: {str(e)}"
+                    break  # Don't retry on unexpected errors
+                
+                # Wait before retry (except on last attempt)
+                if attempt < max_retries:
+                    time.sleep(retry_delay)
+                    # Exponential backoff (optional)
+                    retry_delay *= 1.5
+            
+            # If we get here, all retries failed
+            self.logger.error(f"❌ Failed to send webhook after {max_retries} attempts")
+            if last_exception:
+                self.logger.error(f"   Last error: {last_exception}")
+            
+            # Optionally save failed webhook for later retry
+            self._save_failed_webhook(body, instrument, trade_id)
+            
+            return False
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error in send_webhook_signal: {str(e)}", exc_info=True)
+            return False
+    
+    def _save_failed_webhook(self, webhook_data, instrument, trade_id):
+        """Save failed webhook data for later retry"""
+        try:
+            failed_dir = os.path.join(self.csv_base_path, 'failed_webhooks')
+            os.makedirs(failed_dir, exist_ok=True)
+            
+            filename = f"failed_{instrument}_{trade_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            filepath = os.path.join(failed_dir, filename)
+            
+            with open(filepath, 'w') as f:
+                json.dump(webhook_data, f, indent=2)
+            
+            self.logger.info(f"💾 Saved failed webhook to {filepath}")
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error saving failed webhook: {str(e)}")
     
     def _process_and_record_hammer(self, instrument, tf, candle, direction, criteria, 
                                signal_data, signal_id, trigger_data):
@@ -6960,20 +7116,11 @@ class HammerPatternScanner:
             # Extract news data safely
             safe_news_data = self._get_safe_news_data(news_context, instrument)
             
+            
             # Calculate price levels
             hammer_high = candle['high']
             hammer_low = candle['low']
             hammer_range = hammer_high - hammer_low
-    
-            # Calculate higher timeframe features BEFORE creating trade_data
-            higher_tf_features = self.calculate_higher_tf_features(
-                instrument, 
-                current_price, 
-                candle['time']  # This is the hammer candle time
-            )
-            # Calculate Zebra features
-            zebra_features = self.calculate_zebra_features(instrument, candle['time'])
-            trade_data.update(zebra_features)
             
             # Pip multiplier
             pip_multiplier = 100 if 'JPY' in instrument else 10000
@@ -6981,12 +7128,45 @@ class HammerPatternScanner:
             if direction == 'bearish':
                 sl_price = hammer_high + (hammer_range * 0.25)
                 tp_1_4_price = current_price - (4 * (sl_price - current_price))
+                # NEW: Calculate TP3 for webhook (1:3 RR)
+                tp_1_3_price = current_price - (3 * (sl_price - current_price))
             else:  # bullish
                 sl_price = hammer_low - (hammer_range * 0.25)
                 tp_1_4_price = current_price + (4 * (current_price - sl_price))
+                # NEW: Calculate TP3 for webhook (1:3 RR)
+                tp_1_3_price = current_price + (3 * (current_price - sl_price))
             
             # Calculate pips
             sl_distance_pips = abs(current_price - sl_price) * pip_multiplier
+            
+            # ============================================
+            # 🚀 WEBHOOK SIGNAL - LOW LATENCY EXECUTION
+            # ============================================
+            # Send webhook IMMEDIATELY after calculating SL/TP
+            # BEFORE any other calculations to minimize latency
+            risk_usd = 50.0  # Default $50 risk
+            
+            # Use tp_1_3_price for webhook (1:3 RR)
+            success = self.send_webhook_signal(
+                instrument=instrument,
+                direction=direction,
+                entry_price=current_price,
+                sl_price=sl_price,
+                tp_price=tp_1_3_price,  # Using TP3 (1:3 RR) instead of TP4
+                signal_id=signal_id,
+                trade_id=trade_id,
+                timeframe=tf,
+                criteria=criteria,
+                risk_usd=risk_usd
+            )
+            
+            if success:
+                self.logger.info(f"✅ Webhook dispatched for {instrument} at TP3 (1:3 RR)")
+                self.logger.info(f"   TP3 Price: {tp_1_3_price:.5f}")
+            else:
+                self.logger.warning(f"⚠️ Webhook failed for {instrument} (trade will still be logged)")
+            
+            
     
             # Calculate position sizes for risk management
             risk_10_lots, risk_100_lots = self.calculate_position_sizes(
