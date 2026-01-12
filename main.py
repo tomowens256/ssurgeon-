@@ -5008,7 +5008,7 @@ class HammerPatternScanner:
         
         self.credentials = credentials
         # Webhook configuration - set your values here
-        self.webhook_url = "http://localhost:8080/webhook"  
+        self.webhook_url = "https://d4a270af4ba7.ngrok-free.app/"  
         self.webhook_token = "uVDdSdTrQCDiAQwU9YR-LIeHMKJ8Ewgz"  
         self.running = False
         self.scanner_thread = None
@@ -6969,11 +6969,11 @@ class HammerPatternScanner:
             # 🚀 HARDCODED WEBHOOK CONFIGURATION
             # ============================================
             # Set your webhook URL and token here
-            webhook_url = "http://localhost:8080/webhook"  
+            webhook_url = "https://d4a270af4ba7.ngrok-free.app/"  
             webhook_token = "uVDdSdTrQCDiAQwU9YR-LIeHMKJ8Ewgz"  # ⚠️ CHECK
             
             # Optional: You can also use environment variables as fallback
-            if not webhook_url or webhook_url == "http://localhost:8080/webhook":
+            if not webhook_url or webhook_url == "https://d4a270af4ba7.ngrok-free.app/":
                 # Try environment variable
                 webhook_url = os.getenv('WEBHOOK_URL', webhook_url)
             
@@ -6984,7 +6984,7 @@ class HammerPatternScanner:
             # ============================================
             # VALIDATE CONFIGURATION
             # ============================================
-            if webhook_url == "http://localhost:8080/webhook":
+            if webhook_url == "https://d4a270af4ba7.ngrok-free.app/":
                 self.logger.warning("⚠️ Using default webhook URL. Change it in send_webhook_signal()")
                 # Return success anyway for testing
                 return True
