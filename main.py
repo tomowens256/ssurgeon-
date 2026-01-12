@@ -6963,85 +6963,103 @@ class HammerPatternScanner:
                         signal_id, trade_id, timeframe, criteria, risk_usd=50.0):
         """
         Send low-latency webhook signal for immediate execution with retry logic
+        UPDATED VERSION - FIXED FOR LOCAL BRIDGE
         """
         try:
             # ============================================
-            # 🚀 HARDCODED WEBHOOK CONFIGURATION
+            # 🚀 **FIXED WEBHOOK CONFIGURATION**
             # ============================================
-            # Set your webhook URL and token here
-            webhook_url = webhook_url = "https://d4a270af4ba7.ngrok-free.app/webhook"  
-            webhook_token = "uVDdSdTrQCDiAQwU9YR-LIeHMKJ8Ewgz"  # ⚠️ CHECK
+            # 1. ADD /webhook to URL
+            # 2. Use ngrok-free.app domain (you're already using it)
+            webhook_url = "https://d4a270af4ba7.ngrok-free.app/webhook"  # ✅ FIXED - ADDED /webhook
             
-            # Optional: You can also use environment variables as fallback
-            if not webhook_url or webhook_url == webhook_url = "https://d4a270af4ba7.ngrok-free.app/webhook" 
-                # Try environment variable
-                webhook_url = os.getenv('WEBHOOK_URL', webhook_url)
-            
-            if not webhook_token or webhook_token == "uVDdSdTrQCDiAQwU9YR-LIeHMKJ8Ewgz":
-                # Try environment variable
-                webhook_token = os.getenv('WEBHOOK_TOKEN', webhook_token)
+            # 3. Your secret token (keep this secret!)
+            webhook_token = "uVDdSdTrQCDiAQwU9YR-LIeHMKJ8Ewgz"
             
             # ============================================
-            # VALIDATE CONFIGURATION
+            # **SYMBOL MAPPING - CRITICAL!**
             # ============================================
-            if webhook_url == webhook_url = "https://d4a270af4ba7.ngrok-free.app/webhook"  :
-                self.logger.warning("⚠️ Using default webhook URL. Change it in send_webhook_signal()")
-                # Return success anyway for testing
-                return True
+            # Your local server expects these exact symbols in VALID_SYMBOLS:
+            # 'EUR_USD', 'GBP_USD', 'XAU_USD', 'XAG_USD', 'NAS100_USD', 'SPX500_USD', 'DE30_EUR', 'EU50_EUR'
             
-            if webhook_token == "uVDdSdTrQCDiAQwU9YR-LIeHMKJ8Ewgz":
-                self.logger.warning("⚠️ Using default webhook token. Change it in send_webhook_signal()")
+            # Map your instrument names to what local server expects:
+            symbol_map = {
+                # Colab Instrument → Local Server Symbol
+                'EUR_USD': 'EUR_USD',
+                'GBP_USD': 'GBP_USD', 
+                'XAU_USD': 'XAU_USD',
+                'XAG_USD': 'XAG_USD',
+                'NAS100_USD': 'NAS100_USD',
+                'SPX500_USD': 'SPX500_USD',
+                'DE30_EUR': 'DE30_EUR',
+                'EU50_EUR': 'EU50_EUR'
+            }
             
+            # Convert instrument to uppercase and map
+            instrument_upper = instrument.upper()
+            local_symbol = symbol_map.get(instrument_upper, instrument_upper)
             
-            # Prepare headers
+            # Log the mapping for debugging
+            self.logger.info(f"🔀 Symbol mapping: {instrument} → {local_symbol}")
+            
+            # ============================================
+            # **AUTHORIZATION HEADERS - MUST MATCH LOCAL**
+            # ============================================
             headers = {
-                "Authorization": f"Bearer {webhook_token}",
+                "Authorization": f"Bearer {webhook_token}",  # ✅ EXACTLY matches WEBHOOK_SECRET
                 "Content-Type": "application/json",
                 "User-Agent": "HammerScanner/1.0",
-                "X-Signal-ID": signal_id,
-                "X-Trade-ID": trade_id
+                "X-Signal-ID": signal_id
             }
             
-            # Prepare body exactly as specified
+            # ============================================
+            # **JSON BODY - EXACT FORMAT LOCAL SERVER EXPECTS**
+            # ============================================
+            # Your local TradingSignal dataclass expects these 8 fields:
+            # signal_id, timestamp, symbol, direction, stop_loss, take_profit, risk_usd, strategy_tag
+            
             body = {
-                "signal_id": signal_id,
-                "timestamp": datetime.utcnow().isoformat() + "Z",
-                "symbol": instrument,
-                "direction": "BUY" if direction.lower() == 'bullish' else "SELL",
-                "stop_loss": round(sl_price, 5),
-                "take_profit": round(tp_price, 5),
-                "risk_usd": float(risk_usd),
-                "strategy_tag": f"Hammer_{criteria}",
-                "entry_price": round(entry_price, 5),
-                "timeframe": timeframe,
-                "trade_id": trade_id,
-                "instrument": instrument
+                "signal_id": signal_id,  # Required
+                "timestamp": datetime.utcnow().isoformat() + "Z",  # Required
+                "symbol": local_symbol,  # Required - MUST be in VALID_SYMBOLS
+                "direction": "BUY" if direction.lower() == 'bullish' else "SELL",  # Required
+                "stop_loss": round(float(sl_price), 5),  # Required - float
+                "take_profit": round(float(tp_price), 5),  # Required - float
+                "risk_usd": float(risk_usd),  # Required - float
+                "strategy_tag": f"Hammer_{criteria}"  # Optional but nice to have
             }
             
-            self.logger.info(f"🚀 Sending webhook signal for {instrument} {direction}")
-            self.logger.info(f"   URL: {webhook_url}")
-            self.logger.info(f"   Entry: {entry_price:.5f}, SL: {sl_price:.5f}, TP: {tp_price:.5f}")
-            self.logger.info(f"   Signal ID: {signal_id}, Trade ID: {trade_id}")
+            # ⚠️ **REMOVED THESE FIELDS** - Local server doesn't expect them:
+            # - "entry_price"
+            # - "timeframe" 
+            # - "trade_id"
+            # - "instrument"
             
-            # Check if requests library is available
-            try:
-                import requests
-            except ImportError:
-                self.logger.error("❌ 'requests' library not installed. Install with: pip install requests")
-                return False
+            self.logger.info("=" * 60)
+            self.logger.info(f"🚀 WEBHOOK SENDING SIGNAL")
+            self.logger.info(f"   📡 URL: {webhook_url}")
+            self.logger.info(f"   🎯 Symbol: {instrument} → {local_symbol}")
+            self.logger.info(f"   📊 Direction: {direction} → {body['direction']}")
+            self.logger.info(f"   💰 Entry: {entry_price:.5f}")
+            self.logger.info(f"   🛑 SL: {sl_price:.5f}")
+            self.logger.info(f"   🎯 TP: {tp_price:.5f}")
+            self.logger.info(f"   🔑 Signal ID: {signal_id}")
+            self.logger.info("=" * 60)
             
-            # Retry configuration
+            # ============================================
+            # **SEND WITH RETRY LOGIC**
+            # ============================================
+            import requests
+            import time
+            
             max_retries = 3
-            retry_delay = 0.5  # seconds
-            timeout = 3  # seconds
-            
-            last_exception = None
+            retry_delay = 1.0  # seconds
+            timeout = 5  # seconds
             
             for attempt in range(1, max_retries + 1):
                 try:
-                    self.logger.info(f"   Attempt {attempt}/{max_retries}...")
+                    self.logger.info(f"📤 Attempt {attempt}/{max_retries}...")
                     
-                    # Send POST request
                     response = requests.post(
                         webhook_url, 
                         json=body, 
@@ -7049,69 +7067,65 @@ class HammerPatternScanner:
                         timeout=timeout
                     )
                     
-                    # Log response details
-                    self.logger.info(f"   Response: {response.status_code} - {response.reason}")
+                    self.logger.info(f"📥 Response: HTTP {response.status_code}")
                     
-                    # Check if successful (2xx status code)
+                    # SUCCESS: 200-299 status codes
                     if 200 <= response.status_code < 300:
-                        self.logger.info(f"✅ Webhook sent successfully on attempt {attempt}")
+                        self.logger.info(f"✅ WEBHOOK SUCCESS on attempt {attempt}")
                         
-                        # Optional: log response body for debugging
-                        if response.text:
-                            try:
-                                response_data = response.json()
-                                self.logger.info(f"   Server response: {response_data}")
-                            except:
-                                self.logger.info(f"   Server response: {response.text[:100]}...")
+                        # Log server response for debugging
+                        try:
+                            response_json = response.json()
+                            self.logger.info(f"   Server: {response_json}")
+                        except:
+                            self.logger.info(f"   Server: {response.text[:100]}")
                         
                         return True
                     
-                    # If not successful but not a server error, don't retry
+                    # CLIENT ERROR (400-499): Don't retry
                     elif 400 <= response.status_code < 500:
-                        self.logger.error(f"❌ Client error {response.status_code}: {response.text}")
+                        self.logger.error(f"❌ CLIENT ERROR {response.status_code}")
+                        self.logger.error(f"   Response: {response.text[:200]}")
+                        self.logger.error(f"   Body sent: {body}")
                         
-                        # Don't retry client errors (bad request, unauthorized, etc.)
-                        break
+                        # Special debug for 401 Unauthorized
+                        if response.status_code == 401:
+                            self.logger.error("   401 UNAUTHORIZED: Check WEBHOOK_SECRET matches")
+                            self.logger.error(f"   Sent token: ...{webhook_token[-4:]}")
+                        
+                        return False  # No retry for client errors
                     
+                    # SERVER ERROR (500+): Retry
                     else:
-                        # Server error (5xx), retry
                         self.logger.warning(f"⚠️ Server error {response.status_code}, retrying...")
-                        
+                
                 except requests.exceptions.Timeout:
-                    self.logger.warning(f"⚠️ Timeout on attempt {attempt}, retrying...")
-                    last_exception = "Timeout"
-                    
+                    self.logger.warning(f"⏱️ Timeout on attempt {attempt}, retrying...")
+                
                 except requests.exceptions.ConnectionError as e:
-                    self.logger.warning(f"⚠️ Connection error on attempt {attempt}: {str(e)}")
-                    last_exception = f"ConnectionError: {str(e)}"
-                    
-                except requests.exceptions.RequestException as e:
-                    self.logger.warning(f"⚠️ Request error on attempt {attempt}: {str(e)}")
-                    last_exception = f"RequestException: {str(e)}"
-                    
+                    self.logger.warning(f"🔌 Connection error: {str(e)[:50]}...")
+                
                 except Exception as e:
-                    self.logger.error(f"❌ Unexpected error on attempt {attempt}: {str(e)}")
-                    last_exception = f"Unexpected: {str(e)}"
+                    self.logger.error(f"❌ Request error: {str(e)}")
                     break  # Don't retry on unexpected errors
                 
-                # Wait before retry (except on last attempt)
+                # Wait before next retry
                 if attempt < max_retries:
                     time.sleep(retry_delay)
-                    # Exponential backoff (optional)
-                    retry_delay *= 1.5
+                    retry_delay *= 1.5  # Exponential backoff
             
-            # If we get here, all retries failed
-            self.logger.error(f"❌ Failed to send webhook after {max_retries} attempts")
-            if last_exception:
-                self.logger.error(f"   Last error: {last_exception}")
+            # All retries failed
+            self.logger.error(f"❌ FAILED after {max_retries} attempts")
             
-            # Optionally save failed webhook for later retry
+            # Save failed webhook for debugging
             self._save_failed_webhook(body, instrument, trade_id)
             
             return False
             
         except Exception as e:
-            self.logger.error(f"❌ Error in send_webhook_signal: {str(e)}", exc_info=True)
+            self.logger.error(f"❌ FATAL ERROR in send_webhook_signal: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
             return False
     
     def _save_failed_webhook(self, webhook_data, instrument, trade_id):
