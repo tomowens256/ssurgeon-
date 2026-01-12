@@ -6269,7 +6269,7 @@ class HammerPatternScanner:
             self.logger.error(f"❌ Error adding missing headers: {str(e)}")
     
     def scan_fibonacci_hammer(self, trigger_data):
-        """Main hammer scanning function with CONCURRENT timeframe scanning"""
+        """Main hammer scanning function with CONCURRENT timeframe scanniggng"""
         try:
             instrument = trigger_data.get('instrument')
             direction = trigger_data.get('direction')
