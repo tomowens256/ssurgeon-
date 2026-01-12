@@ -6792,7 +6792,7 @@ class HammerPatternScanner:
             features = {}
             timeframe_map = {
                 'M1': '1m', 'M3': '3m', 'M5': '5m', 'M15': '15m',
-                'H1': '1h', 'H4': '4h', 'H6': '6h', 'D': '1d'
+                'H1': 'h1', 'H4': 'h4', 'H6': 'h6', 'D': 'd'
             }
             
             for tf, csv_key in timeframe_map.items():
