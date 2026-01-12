@@ -6969,11 +6969,11 @@ class HammerPatternScanner:
             # 🚀 HARDCODED WEBHOOK CONFIGURATION
             # ============================================
             # Set your webhook URL and token here
-            webhook_url = "https://d4a270af4ba7.ngrok-free.app/"  
+            webhook_url = webhook_url = "https://d4a270af4ba7.ngrok-free.app/webhook"  
             webhook_token = "uVDdSdTrQCDiAQwU9YR-LIeHMKJ8Ewgz"  # ⚠️ CHECK
             
             # Optional: You can also use environment variables as fallback
-            if not webhook_url or webhook_url == "https://d4a270af4ba7.ngrok-free.app/":
+            if not webhook_url or webhook_url == webhook_url = "https://d4a270af4ba7.ngrok-free.app/webhook" 
                 # Try environment variable
                 webhook_url = os.getenv('WEBHOOK_URL', webhook_url)
             
@@ -6984,12 +6984,12 @@ class HammerPatternScanner:
             # ============================================
             # VALIDATE CONFIGURATION
             # ============================================
-            if webhook_url == "https://d4a270af4ba7.ngrok-free.app/":
+            if webhook_url == webhook_url = "https://d4a270af4ba7.ngrok-free.app/webhook"  :
                 self.logger.warning("⚠️ Using default webhook URL. Change it in send_webhook_signal()")
                 # Return success anyway for testing
                 return True
             
-            if webhook_token == "your-secret-token-here-123":
+            if webhook_token == "uVDdSdTrQCDiAQwU9YR-LIeHMKJ8Ewgz":
                 self.logger.warning("⚠️ Using default webhook token. Change it in send_webhook_signal()")
             
             
