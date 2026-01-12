@@ -7287,6 +7287,7 @@ class HammerPatternScanner:
             open_tp_price, open_tp_rr, open_tp_type = self.calculate_open_tp(
                 instrument, direction, current_price, sl_price
             )
+            higher_tf_features = self.calculate_higher_tf_features(instrument, current_price, candle['time'])
             
             # NOW create trade_data dictionary
             trade_data = {
