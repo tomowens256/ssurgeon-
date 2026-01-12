@@ -7462,18 +7462,21 @@ class HammerPatternScanner:
             self.logger.error(f"Error calculating indicators: {str(e)}")
             return {'rsi': 50, 'macd_line': 0, 'vwap': 0}
 
-    def calculate_higher_tf_features(self, instrument, hammer_close_price, hammer_time):
-        """Calculate higher timeframe features for the hammer candle - FIXED VERSION"""
+    def calculate_higher_tf_features(self, instrument, hammer_close_price, hammer_time, timeframe_data=None):
+        """Calculate higher timeframe features using pre-fetched data"""
         try:
             features = {}
-            
-            # Define timeframes to analyze - use UPPERCASE to match CSV headers
             higher_tfs = ['H4', 'H6', 'D', 'W']
             
             for tf in higher_tfs:
-                # Fetch data for this timeframe
-                df = fetch_candles(instrument, tf, count=100, 
-                                  api_key=self.credentials['oanda_api_key'])
+                # Use pre-fetched data
+                if timeframe_data and tf in timeframe_data:
+                    df = timeframe_data[tf]
+                else:
+                    # Fallback
+                    df = fetch_candles(instrument, tf, count=100, 
+                                      api_key=self.credentials['oanda_api_key'])
+                
                 
                 if df.empty:
                     self.logger.warning(f"⚠️ No {tf} data for {instrument}")
