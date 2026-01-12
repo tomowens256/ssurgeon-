@@ -6796,7 +6796,6 @@ class HammerPatternScanner:
             return {f'{tf.lower()}_zebra': 'NaN' for tf in zebra_timeframes}
 
     def _calculate_half_trend(self, df, amplitude=2, atr_period=100):
-        """Calculate HalfTrend indicator following MQL4 logic"""
         try:
             import numpy as np
             
@@ -6819,7 +6818,7 @@ class HammerPatternScanner:
             high_low = df['high'] - df['low']
             high_close_prev = abs(df['high'] - df['close'].shift(1))
             low_close_prev = abs(df['low'] - df['close'].shift(1))
-            tr = pd.concat([high_low, high_close_prev, low_close_prev], axis=1).max(axis=1)
+            tr = pd.concat([high_low, high_close_prev, low_close_prev], axis=1).max(axis=1)  # BUG: pd not imported here!
             
             # Calculate ATR (SMA of TR)
             atr = tr.rolling(window=atr_period, min_periods=1).mean() / 2
