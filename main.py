@@ -6963,8 +6963,8 @@ class HammerPatternScanner:
             # 🚀 HARDCODED WEBHOOK CONFIGURATION
             # ============================================
             # Set your webhook URL and token here
-            webhook_url = "http://localhost:8080/webhook" 
-            webhook_token = "uVDdSdTrQCDiAQwU9YR-LIeHMKJ8Ewgz"   
+            webhook_url = "http://localhost:8080/webhook"  
+            webhook_token = "uVDdSdTrQCDiAQwU9YR-LIeHMKJ8Ewgz"  # ⚠️ CHECK
             
             # Optional: You can also use environment variables as fallback
             if not webhook_url or webhook_url == "http://localhost:8080/webhook":
