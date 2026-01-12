@@ -7312,8 +7312,16 @@ class HammerPatternScanner:
             open_tp_price, open_tp_rr, open_tp_type = self.calculate_open_tp(
                 instrument, direction, current_price, sl_price
             )
-            higher_tf_features = self.calculate_higher_tf_features(instrument, current_price, candle['time'])
-            zebra_features = self.calculate_zebra_features(instrument, candle['time'])
+            # Fetch ALL timeframe data ONCE
+            timeframe_data = self.fetch_all_timeframe_data(instrument)
+            
+            # Reuse the SAME data for both calculations
+            higher_tf_features = self.calculate_higher_tf_features(
+                instrument, current_price, candle['time'], timeframe_data
+            )
+            zebra_features = self.calculate_zebra_features(
+                instrument, candle['time'], timeframe_data
+            )
             
             # NOW create trade_data dictionary
             trade_data = {
