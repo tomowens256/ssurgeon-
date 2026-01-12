@@ -7288,6 +7288,7 @@ class HammerPatternScanner:
                 instrument, direction, current_price, sl_price
             )
             higher_tf_features = self.calculate_higher_tf_features(instrument, current_price, candle['time'])
+            zebra_features = self.calculate_zebra_features(instrument, candle['time'])
             
             # NOW create trade_data dictionary
             trade_data = {
@@ -7361,6 +7362,7 @@ class HammerPatternScanner:
             
             # Add higher timeframe features
             trade_data.update(higher_tf_features)
+            trade_data.update(zebra_features)
             
             # Add advanced features
             for key, value in advanced_features.items():
