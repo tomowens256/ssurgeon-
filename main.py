@@ -5413,6 +5413,24 @@ class HammerPatternScanner:
                 swing_highs.append(current_high)
         
         return swing_highs
+
+    def configure_webhook(self, url=None, token=None):
+        """Configure webhook settings"""
+        if url:
+            self.webhook_url = url
+            self.logger.info(f"📡 Webhook URL set to: {url}")
+        
+        if token:
+            self.webhook_token = token
+            self.logger.info(f"🔑 Webhook token set (length: {len(token)})")
+        
+        # Also set as environment variables for backward compatibility
+        if url:
+            os.environ['WEBHOOK_URL'] = url
+        if token:
+            os.environ['WEBHOOK_TOKEN'] = token
+        
+        return True
     
     
 
