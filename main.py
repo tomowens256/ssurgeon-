@@ -5009,7 +5009,7 @@ class HammerPatternScanner:
         self.credentials = credentials
         # Webhook configuration - set your values here
         self.webhook_url = "http://localhost:8080/webhook"  
-        self.webhook_token = "uVDdSdTrQCDiAQwU9YR-LIeHMKJ8Ewgz"   
+        self.webhook_token = "uVDdSdTrQCDiAQwU9YR-LIeHMKJ8Ewgz"  
         self.running = False
         self.scanner_thread = None
         self.active_scans = {}
