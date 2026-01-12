@@ -5083,7 +5083,7 @@ class HammerPatternScanner:
             headers = [
                 # Core Identification & Timing
                 'timestamp', 'signal_id', 'trade_id', 'instrument', 'hammer_timeframe',
-                'direction', 'entry_time', 'entry_price',
+                'direction','tp_level_hit', 'entry_time', 'entry_price',
                 
                 # Price Levels
                 'sl_price', 'tp_1_4_price', 'open_tp_price',
@@ -5163,10 +5163,10 @@ class HammerPatternScanner:
                 # Be tracking 
                 'if_BE_TP1', 'if_BE_TP2', 'if_BE_TP3', 'if_BE_TP4', 'if_BE_TP5',
                 'if_BE_TP6', 'if_BE_TP7', 'if_BE_TP8', 'if_BE_TP9', 'if_BE_TP10',
-                'if_BE_open_TP'
+                'if_BE_open_TP',
                 
                 # Result Tracking
-                'exit_time', 'time_to_exit_seconds', 'tp_level_hit'
+                'exit_time', 'time_to_exit_seconds'
                 
             ]
             
