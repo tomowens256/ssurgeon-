@@ -6795,19 +6795,12 @@ class HammerPatternScanner:
                 'H1': '1h', 'H4': '4h', 'H6': '6h', 'D': '1d'
             }
             
-            # 🔍 ADD THIS DEBUG LOG
-            self.logger.info(f"📊 [ZEBRA-DEBUG] Timeframe data keys available: {list(timeframe_data.keys()) if timeframe_data else 'None'}")
-            
             for tf, csv_key in timeframe_map.items():
                 try:
                     # Use pre-fetched data if available
                     if timeframe_data and tf in timeframe_data:
                         df = timeframe_data[tf]
-                        # 🔍 ADD THIS DEBUG LOG
-                        self.logger.info(f"📊 [ZEBRA-DEBUG] Using cached {tf} data. Shape: {df.shape}")
                     else:
-                        # 🔍 ADD THIS DEBUG LOG
-                        self.logger.warning(f"⚠️ [ZEBRA-DEBUG] No cached data for {tf}, falling back to direct fetch")
                         df = fetch_candles(instrument, tf, count=200, 
                                           api_key=self.credentials['oanda_api_key'])
                     
@@ -6815,22 +6808,35 @@ class HammerPatternScanner:
                         features[f'{csv_key}_zebra'] = 'NaN'
                         continue
                     
-                    # Rest of your Zebra calculation...
+                    # Calculate HalfTrend
                     arrup, arrdwn = self._calculate_half_trend(df)
+                    
+                    # DEBUG: Check if calculation returned valid data
+                    if len(arrup) == 0 or len(arrdwn) == 0:
+                        self.logger.warning(f"⚠️ HalfTrend calculation failed for {tf}")
+                        features[f'{csv_key}_zebra'] = 'ERROR'
+                        continue
+                    
+                    # Get last signal
                     last_signal = self._get_last_half_trend_signal(arrup, arrdwn, hammer_time, df)
                     features[f'{csv_key}_zebra'] = last_signal
                     
+                    # DEBUG: Log the result
+                    self.logger.info(f"📊 {tf} Zebra signal: {last_signal}")
+                    
                 except Exception as e:
+                    self.logger.error(f"❌ Error in Zebra for {tf}: {str(e)}")
                     features[f'{csv_key}_zebra'] = 'ERROR'
             
             return features
         except Exception as e:
-            # Return default values
+            self.logger.error(f"❌ Error in calculate_zebra_features: {str(e)}")
             return {f'{csv_key}_zebra': 'ERROR' for csv_key in timeframe_map.values()}
 
     def _calculate_half_trend(self, df, amplitude=2, atr_period=100):
         try:
             import numpy as np
+            import pandas as pd  # <-- ADD THIS LINE
             
             n = len(df)
             trend = np.zeros(n)
