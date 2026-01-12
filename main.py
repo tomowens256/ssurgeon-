@@ -7129,15 +7129,21 @@ class HammerPatternScanner:
                 sl_price = hammer_high + (hammer_range * 0.25)
                 tp_1_4_price = current_price - (4 * (sl_price - current_price))
                 # NEW: Calculate TP3 for webhook (1:3 RR)
-                tp_1_3_price = current_price - (3 * (sl_price - current_price))
+                tp_1_2_price = current_price - (2 * (sl_price - current_price))
             else:  # bullish
                 sl_price = hammer_low - (hammer_range * 0.25)
                 tp_1_4_price = current_price + (4 * (current_price - sl_price))
                 # NEW: Calculate TP3 for webhook (1:3 RR)
-                tp_1_3_price = current_price + (3 * (current_price - sl_price))
+                tp_1_2_price = current_price + (2 * (current_price - sl_price))
             
             # Calculate pips
             sl_distance_pips = abs(current_price - sl_price) * pip_multiplier
+            
+            # ============================================
+            # 🚀 GENERATE TRADE ID FOR WEBHOOK
+            # ============================================
+            # Generate trade ID BEFORE webhook to ensure it's available
+            trade_id = self._generate_trade_id(instrument, tf)
             
             # ============================================
             # 🚀 WEBHOOK SIGNAL - LOW LATENCY EXECUTION
@@ -7152,17 +7158,18 @@ class HammerPatternScanner:
                 direction=direction,
                 entry_price=current_price,
                 sl_price=sl_price,
-                tp_price=tp_1_3_price,  # Using TP3 (1:3 RR) instead of TP4
+                tp_price=tp_1_2_price,  # Using TP3 (1:3 RR) instead of TP4
                 signal_id=signal_id,
-                trade_id=trade_id,
+                trade_id=trade_id,  # ✅ NOW trade_id IS DEFINED
                 timeframe=tf,
                 criteria=criteria,
                 risk_usd=risk_usd
             )
             
             if success:
-                self.logger.info(f"✅ Webhook dispatched for {instrument} at TP3 (1:3 RR)")
-                self.logger.info(f"   TP3 Price: {tp_1_3_price:.5f}")
+                self.logger.info(f"✅ Webhook dispatched for {instrument} at TP3 (1:2 RR)")
+                self.logger.info(f"   TP3 Price: {tp_1_2_price:.5f}")
+                self.logger.info(f"   Trade ID: {trade_id}")
             else:
                 self.logger.warning(f"⚠️ Webhook failed for {instrument} (trade will still be logged)")
             
@@ -7182,7 +7189,7 @@ class HammerPatternScanner:
                 tp_distances[f'tp_1_{i}_distance'] = round(tp_distance_pips, 1)
             
             # Generate trade ID
-            trade_id = self._generate_trade_id(instrument, tf)
+            # trade_id = self._generate_trade_id(instrument, tf)
             
             # Extract signal data
             fvg_idea = signal_data.get('fvg_idea', {})
