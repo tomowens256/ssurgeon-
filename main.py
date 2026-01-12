@@ -6795,13 +6795,19 @@ class HammerPatternScanner:
                 'H1': '1h', 'H4': '4h', 'H6': '6h', 'D': '1d'
             }
             
+            # 🔍 ADD THIS DEBUG LOG
+            self.logger.info(f"📊 [ZEBRA-DEBUG] Timeframe data keys available: {list(timeframe_data.keys()) if timeframe_data else 'None'}")
+            
             for tf, csv_key in timeframe_map.items():
                 try:
                     # Use pre-fetched data if available
                     if timeframe_data and tf in timeframe_data:
                         df = timeframe_data[tf]
+                        # 🔍 ADD THIS DEBUG LOG
+                        self.logger.info(f"📊 [ZEBRA-DEBUG] Using cached {tf} data. Shape: {df.shape}")
                     else:
-                        # Fallback to direct fetch
+                        # 🔍 ADD THIS DEBUG LOG
+                        self.logger.warning(f"⚠️ [ZEBRA-DEBUG] No cached data for {tf}, falling back to direct fetch")
                         df = fetch_candles(instrument, tf, count=200, 
                                           api_key=self.credentials['oanda_api_key'])
                     
