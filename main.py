@@ -6785,42 +6785,41 @@ class HammerPatternScanner:
                 'news_fetch_status': f'error: {str(e)[:50]}'
             }
 
-    def calculate_zebra_features(self, instrument, hammer_time):
-        """Calculate HalfTrend Zebra indicator for multiple timeframes"""
+    def calculate_zebra_features(self, instrument, hammer_time, timeframe_data=None):
+        """Calculate HalfTrend Zebra indicator using pre-fetched data"""
         try:
             features = {}
+            timeframe_map = {
+                'M1': '1m', 'M3': '3m', 'M5': '5m', 'M15': '15m',
+                'H1': '1h', 'H4': '4h', 'H6': '6h', 'D': '1d'
+            }
             
-            # Define timeframes for Zebra
-            zebra_timeframes = ['M1', 'M3', 'M5', 'M15', 'H1', 'H4', 'H6', 'D']
-            
-            for tf in zebra_timeframes:
+            for tf, csv_key in timeframe_map.items():
                 try:
-                    # Fetch enough data for HalfTrend calculation (need at least 100+ for ATR)
-                    df = fetch_candles(instrument, tf, count=200, 
-                                      api_key=self.credentials['oanda_api_key'])
+                    # Use pre-fetched data if available
+                    if timeframe_data and tf in timeframe_data:
+                        df = timeframe_data[tf]
+                    else:
+                        # Fallback to direct fetch
+                        df = fetch_candles(instrument, tf, count=200, 
+                                          api_key=self.credentials['oanda_api_key'])
                     
                     if df.empty or len(df) < 100:
-                        self.logger.warning(f"⚠️ Not enough data for {tf} Zebra calculation")
-                        features[f'{tf.lower()}_zebra'] = 'NaN'
+                        features[f'{csv_key}_zebra'] = 'NaN'
                         continue
                     
-                    # Calculate HalfTrend indicator
+                    # Rest of your Zebra calculation...
                     arrup, arrdwn = self._calculate_half_trend(df)
-                    
-                    # Find the most recent arrow signal
                     last_signal = self._get_last_half_trend_signal(arrup, arrdwn, hammer_time, df)
-                    features[f'{tf.lower()}_zebra'] = last_signal
+                    features[f'{csv_key}_zebra'] = last_signal
                     
                 except Exception as e:
-                    self.logger.error(f"❌ Error calculating {tf} Zebra: {str(e)}")
-                    features[f'{tf.lower()}_zebra'] = 'NaN'
+                    features[f'{csv_key}_zebra'] = 'ERROR'
             
             return features
-            
         except Exception as e:
-            self.logger.error(f"❌ Error in calculate_zebra_features: {str(e)}")
-            # Return NaN for all timeframes on error
-            return {f'{tf.lower()}_zebra': 'NaN' for tf in zebra_timeframes}
+            # Return default values
+            return {f'{csv_key}_zebra': 'ERROR' for csv_key in timeframe_map.values()}
 
     def _calculate_half_trend(self, df, amplitude=2, atr_period=100):
         try:
