@@ -5347,7 +5347,7 @@ class HammerPatternScanner:
             # Strict 50% wick rule (no body size or pip requirements)
             if direction == 'bearish':
                 # Bearish hammer: upper wick > 50%
-                if upper_ratio > 0.5:
+                if upper_ratio > 0.05:
                     return True, upper_ratio, lower_ratio
             else:  # bullish
                 # Bullish hammer: lower wick > 50%
