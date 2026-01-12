@@ -5292,14 +5292,15 @@ class HammerPatternScanner:
             time.sleep(5)
             return True
 
-    def fetch_all_timeframe_data(self, instrument, count=200):
+    def fetch_all_timeframe_data(self, instrument):
         """Fetch data for ALL timeframes needed for features in one go"""
+        # Define ALL timeframes needed by BOTH Zebra and Higher TF features
         timeframes = {
-            # Zebra features
-            'M1': 200, 'M3': 200, 'M5': 200, 'M15': 200, 
+            # Zebra features (with required candle count)
+            'M1': 200, 'M3': 200, 'M5': 200, 'M15': 200,
             'H1': 200, 'H4': 200, 'H6': 200, 'D': 200,
-            # Higher TF features
-            'W': 100  # Only for higher TF features
+            # Higher TF features (with different count requirements)
+            'W': 100  # Weekly for higher TF features (not used in Zebra)
         }
         
         data_cache = {}
@@ -5313,7 +5314,7 @@ class HammerPatternScanner:
                     api_key=self.credentials['oanda_api_key']
                 )
                 data_cache[tf] = df
-                self.logger.debug(f"📊 Fetched {tf} data: {len(df)} candles")
+                self.logger.info(f"📊 Fetched {tf} data: {len(df)} candles")
             except Exception as e:
                 self.logger.error(f"❌ Failed to fetch {tf} data: {str(e)}")
                 data_cache[tf] = pd.DataFrame()  # Empty dataframe as fallback
