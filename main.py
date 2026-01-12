@@ -5008,7 +5008,7 @@ class HammerPatternScanner:
         
         self.credentials = credentials
         # Webhook configuration - set your values here
-        self.webhook_url = "https://d4a270af4ba7.ngrok-free.app/"  
+        self.webhook_url = "https://d4a270af4ba7.ngrok-free.app/webhook"
         self.webhook_token = "uVDdSdTrQCDiAQwU9YR-LIeHMKJ8Ewgz"  
         self.running = False
         self.scanner_thread = None
