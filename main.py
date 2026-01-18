@@ -7373,47 +7373,82 @@ class HammerPatternScanner:
             return False
     
     def calculate_simple_indicators(self, df, candle_index):
-        """Calculate only essential indicators"""
+        """Calculate only essential indicators - OPTIMIZED VERSION"""
         try:
             if len(df) < 14 or candle_index < 13:
                 return {'rsi': 50, 'macd_line': 0, 'vwap': df.iloc[candle_index]['close'] if not df.empty else 0}
             
-            close_prices = df['close'].iloc[:candle_index+1]
-            current_close = close_prices.iloc[-1]
+            # Convert to numpy for speed
+            close_np = df['close'].values[:candle_index+1]
+            high_np = df['high'].values
+            low_np = df['low'].values
+            volume_np = df['volume'].values
+            current_close = close_np[-1]
             
-            # RSI (14)
-            if len(close_prices) >= 14:
-                delta = close_prices.diff()
-                gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-                loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-                rs = gain / loss
+            # RSI (14) - Vectorized
+            if len(close_np) >= 14:
+                delta = np.diff(close_np, prepend=close_np[0])
+                gain = np.where(delta > 0, delta, 0)
+                loss = np.where(delta < 0, -delta, 0)
+                
+                # EMA calculation for RSI
+                alpha = 1.0 / 14
+                avg_gain = np.zeros_like(gain)
+                avg_loss = np.zeros_like(loss)
+                
+                # Initial SMA
+                avg_gain[13] = np.mean(gain[0:14])
+                avg_loss[13] = np.mean(loss[0:14])
+                
+                # EMA for rest
+                for i in range(14, len(gain)):
+                    avg_gain[i] = alpha * gain[i] + (1 - alpha) * avg_gain[i-1]
+                    avg_loss[i] = alpha * loss[i] + (1 - alpha) * avg_loss[i-1]
+                
+                rs = avg_gain / (avg_loss + 1e-10)
                 rsi = 100 - (100 / (1 + rs))
-                rsi_value = rsi.iloc[-1] if not rsi.empty else 50
+                rsi_value = rsi[-1]
             else:
                 rsi_value = 50
             
-            # MACD Line only (12, 26)
-            if len(close_prices) >= 26:
-                exp1 = close_prices.ewm(span=12, adjust=False).mean()
-                exp2 = close_prices.ewm(span=26, adjust=False).mean()
+            # MACD Line only (12, 26) - Vectorized
+            if len(close_np) >= 26:
+                # EMA calculation
+                def calculate_ema(prices, span):
+                    alpha = 2.0 / (span + 1)
+                    ema = np.zeros_like(prices)
+                    ema[0] = prices[0]
+                    for i in range(1, len(prices)):
+                        ema[i] = alpha * prices[i] + (1 - alpha) * ema[i-1]
+                    return ema
+                
+                exp1 = calculate_ema(close_np, 12)
+                exp2 = calculate_ema(close_np, 26)
                 macd_line = exp1 - exp2
-                macd_value = macd_line.iloc[-1] if not macd_line.empty else 0
+                macd_value = macd_line[-1]
             else:
                 macd_value = 0
             
-            # Simple VWAP (20-period)
+            # Simple VWAP (20-period) - Vectorized
             if len(df) >= 20:
                 start_idx = max(0, candle_index - 19)
                 end_idx = candle_index + 1
-                typical_price = (df['high'].iloc[start_idx:end_idx] + df['low'].iloc[start_idx:end_idx] + df['close'].iloc[start_idx:end_idx]) / 3
-                vwap = (typical_price * df['volume'].iloc[start_idx:end_idx]).sum() / df['volume'].iloc[start_idx:end_idx].sum()
+                
+                # Use numpy slicing for speed
+                high_slice = high_np[start_idx:end_idx]
+                low_slice = low_np[start_idx:end_idx]
+                close_slice = close_np[start_idx:end_idx]
+                volume_slice = volume_np[start_idx:end_idx]
+                
+                typical_price = (high_slice + low_slice + close_slice) / 3
+                vwap = np.sum(typical_price * volume_slice) / np.sum(volume_slice)
             else:
                 vwap = current_close
             
             return {
-                'rsi': round(rsi_value, 2),
-                'macd_line': round(macd_value, 6),
-                'vwap': round(vwap, 5)
+                'rsi': round(float(rsi_value), 2),
+                'macd_line': round(float(macd_value), 6),
+                'vwap': round(float(vwap), 5)
             }
             
         except Exception as e:
@@ -7421,7 +7456,7 @@ class HammerPatternScanner:
             return {'rsi': 50, 'macd_line': 0, 'vwap': 0}
 
     def calculate_higher_tf_features(self, instrument, hammer_close_price, hammer_time, timeframe_data=None):
-        """Calculate higher timeframe features using pre-fetched data"""
+        """Calculate higher timeframe features using vectorization - OPTIMIZED VERSION"""
         try:
             features = {}
             higher_tfs = ['H4', 'H6', 'D', 'W']
@@ -7431,10 +7466,9 @@ class HammerPatternScanner:
                 if timeframe_data and tf in timeframe_data:
                     df = timeframe_data[tf]
                 else:
-                    # Fallback
+                    # Fallback (keep original)
                     df = fetch_candles(instrument, tf, count=100, 
                                       api_key=self.credentials['oanda_api_key'])
-                
                 
                 if df.empty:
                     self.logger.warning(f"⚠️ No {tf} data for {instrument}")
@@ -7446,27 +7480,25 @@ class HammerPatternScanner:
                     features[f'{tf}_candle_percent'] = 50.0
                     continue
                 
-                # Convert hammer_time to match dataframe timezone
-                # First, make sure hammer_time is a datetime
+                # Timezone handling (same as original)
                 if isinstance(hammer_time, str):
+                    from datetime import datetime
                     hammer_time = datetime.strptime(hammer_time, '%Y-%m-%d %H:%M:%S')
                 
-                # Ensure both are timezone aware
                 if df['time'].dt.tz is None:
                     df['time'] = df['time'].dt.tz_localize('UTC').dt.tz_convert(NY_TZ)
                 
                 if hammer_time.tzinfo is None:
                     hammer_time = hammer_time.replace(tzinfo=NY_TZ)
                 
-                # Find the higher TF candle that contains the hammer time
-                # Look for candle where hammer_time is between candle open and close
+                # Find the higher TF candle (optimized)
                 htf_candle = None
-                
+                times = df['time'].values
                 for idx in range(len(df)):
-                    candle = df.iloc[idx]
-                    candle_open = candle['time']
+                    candle_open = times[idx]
                     
-                    # Calculate candle close time based on timeframe
+                    # Calculate candle close time
+                    from datetime import timedelta
                     if tf == 'H4':
                         candle_close = candle_open + timedelta(hours=4)
                     elif tf == 'H6':
@@ -7476,26 +7508,25 @@ class HammerPatternScanner:
                     elif tf == 'W':
                         candle_close = candle_open + timedelta(weeks=1)
                     else:
-                        candle_close = candle_open + timedelta(hours=4)  # default
+                        candle_close = candle_open + timedelta(hours=4)
                     
                     if candle_open <= hammer_time < candle_close:
-                        htf_candle = candle
+                        htf_candle = df.iloc[idx]
                         break
                 
-                # If no candle found, use the last candle
                 if htf_candle is None:
                     htf_candle = df.iloc[-1]
                 
-                # ============================================
-                # 1. Pd-(tf): Fibonacci Zone (10 zones)
-                # ============================================
-                fib_zone, fib_percent = self._calculate_fib_zone(df, hammer_close_price, tf)
+                # Vectorized calculations
+                fib_zone, fib_percent = _calculate_fib_zone_vectorized(
+                    df['high'].values, 
+                    df['low'].values, 
+                    hammer_close_price
+                )
                 features[f'{tf}_fib_zone'] = fib_zone
-                features[f'{tf}_fib_percent'] = fib_percent
+                features[f'{tf}_fib_percent'] = round(fib_percent, 2)
                 
-                # ============================================
-                # 2. Price Relative to Candle Open
-                # ============================================
+                # Open relation (same logic)
                 if hammer_close_price > htf_candle['open']:
                     features[f'{tf}_open_rel'] = 'up'
                 elif hammer_close_price < htf_candle['open']:
@@ -7503,19 +7534,24 @@ class HammerPatternScanner:
                 else:
                     features[f'{tf}_open_rel'] = 'equal'
                 
-                # ============================================
-                # 3. Candle Quarter Position
-                # ============================================
-                quarter = self._calculate_candle_quarter(htf_candle, hammer_close_price)
+                # Vectorized quarter calculation
+                quarter = _calculate_candle_quarter_vectorized(
+                    htf_candle['high'], 
+                    htf_candle['low'], 
+                    htf_candle['open'], 
+                    hammer_close_price
+                )
                 features[f'{tf}_quarter'] = quarter
                 
-                # ============================================
-                # 4. Price Position Percentage within Candle
-                # ============================================
-                candle_percent = self._calculate_candle_position_percent(htf_candle, hammer_close_price)
-                features[f'{tf}_candle_percent'] = candle_percent
+                # Vectorized position percentage
+                candle_percent = _calculate_candle_position_percent_vectorized(
+                    htf_candle['high'], 
+                    htf_candle['low'], 
+                    hammer_close_price
+                )
+                features[f'{tf}_candle_percent'] = round(candle_percent, 1)
                 
-                # Log for debugging
+                # Log for debugging (same as original)
                 self.logger.info(f"📊 {tf} Features for {instrument}:")
                 self.logger.info(f"   Fib Zone: {fib_zone} ({fib_percent:.1f}%)")
                 self.logger.info(f"   Open Rel: {features[f'{tf}_open_rel']}")
@@ -7526,7 +7562,7 @@ class HammerPatternScanner:
             
         except Exception as e:
             self.logger.error(f"❌ Error calculating higher TF features: {str(e)}", exc_info=True)
-            # Return empty features with all required keys
+            # Return empty features with all required keys (same as original)
             features = {}
             for tf in ['H4', 'H6', 'D', 'W']:
                 features[f'{tf}_fib_zone'] = 0
@@ -7537,227 +7573,323 @@ class HammerPatternScanner:
             return features
             
     
-    def _calculate_fib_zone(self, df, current_price, timeframe):
-        """Calculate which Fibonacci zone (1-10) price is in for given data"""
-        try:
-            if df.empty or len(df) < 10:
-                return 0, 0.0
-            
-            # Use the entire dataframe for highest/lowest
-            highest = df['high'].max()
-            lowest = df['low'].min()
-            total_range = highest - lowest
-            
-            if total_range <= 0:
-                return 0, 0.0
-            
-            # Create 10 Fibonacci-like zones (not actual Fibonacci ratios)
-            # Zone 1 is near the top, Zone 10 is near the bottom
-            zone_size = total_range / 10
-            
-            # Calculate which zone price is in
-            distance_from_top = highest - current_price
-            zone = int(distance_from_top // zone_size) + 1
-            
-            # Ensure zone is between 1 and 10
-            zone = max(1, min(10, zone))
-            
-            # Calculate percentage from top (0% at top, 100% at bottom)
-            percent_from_top = (distance_from_top / total_range) * 100 if total_range > 0 else 0.0
-            
-            return zone, round(percent_from_top, 2)
-            
-        except Exception as e:
-            self.logger.error(f"Error calculating Fib zone for {timeframe}: {str(e)}")
+    @jit(nopython=True, cache=True)
+    def _calculate_fib_zone(highs, lows, current_price):
+        """Vectorized Fibonacci zone calculation"""
+        highest = np.max(highs)
+        lowest = np.min(lows)
+        total_range = highest - lowest
+        
+        if total_range <= 0:
             return 0, 0.0
+        
+        zone_size = total_range / 10
+        distance_from_top = highest - current_price
+        zone = int(distance_from_top // zone_size) + 1
+        zone = max(1, min(10, zone))
+        
+        percent_from_top = (distance_from_top / total_range) * 100 if total_range > 0 else 0.0
+        return zone, percent_from_top
+            
     
-    def _calculate_candle_quarter(self, candle, current_price):
-        """Calculate which quarter of the candle price is in (1-4)"""
-        try:
-            candle_high = candle['high']
-            candle_low = candle['low']
-            candle_range = candle_high - candle_low
-            
-            if candle_range <= 0:
-                return 0
-            
-            quarter_size = candle_range / 4
-            
-            # Calculate which quarter (1 = bottom quarter, 4 = top quarter)
-            distance_from_bottom = current_price - candle_low
-            
-            # Handle edge cases
-            if distance_from_bottom <= 0:
-                return 1
-            elif distance_from_bottom >= candle_range:
-                return 4
-            
-            quarter = int(distance_from_bottom // quarter_size) + 1
-            
-            # Adjust: if price is exactly at a boundary
-            quarter = max(1, min(4, quarter))
-            
-            return quarter
-            
-        except Exception as e:
-            self.logger.error(f"Error calculating candle quarter: {str(e)}")
+    @jit(nopython=True, cache=True)
+    def _calculate_candle_quarter(high, low, open_price, current_price):
+        """Vectorized candle quarter calculation"""
+        candle_range = high - low
+        
+        if candle_range <= 0:
             return 0
+        
+        quarter_size = candle_range / 4
+        distance_from_bottom = current_price - low
+        
+        if distance_from_bottom <= 0:
+            return 1
+        elif distance_from_bottom >= candle_range:
+            return 4
+        
+        quarter = int(distance_from_bottom // quarter_size) + 1
+        quarter = max(1, min(4, quarter))
+        return quarter
     
-    def _calculate_candle_position_percent(self, candle, current_price):
-        """Calculate percentage position within candle (0% at low, 100% at high)"""
+    @jit(nopython=True, cache=True)
+    def _calculate_candle_position_percent(high, low, current_price):
+        """Vectorized candle position percentage"""
+        candle_range = high - low
+        
+        if candle_range <= 0:
+            return 50.0
+        
+        position = ((current_price - low) / candle_range) * 100
+        position = max(0.0, min(100.0, position))
+        return position
+
+    def calculate_higher_tf_features(self, instrument, hammer_close_price, hammer_time, timeframe_data=None):
+        """Calculate higher timeframe features using vectorization - OPTIMIZED VERSION"""
         try:
-            candle_high = candle['high']
-            candle_low = candle['low']
-            candle_range = candle_high - candle_low
+            features = {}
+            higher_tfs = ['H4', 'H6', 'D', 'W']
             
-            if candle_range <= 0:
-                return 50.0  # Middle if no range
+            for tf in higher_tfs:
+                # Use pre-fetched data
+                if timeframe_data and tf in timeframe_data:
+                    df = timeframe_data[tf]
+                else:
+                    # Fallback (keep original)
+                    df = fetch_candles(instrument, tf, count=100, 
+                                      api_key=self.credentials['oanda_api_key'])
+                
+                if df.empty:
+                    self.logger.warning(f"⚠️ No {tf} data for {instrument}")
+                    # Set default values for all features
+                    features[f'{tf}_fib_zone'] = 0
+                    features[f'{tf}_fib_percent'] = 0.0
+                    features[f'{tf}_open_rel'] = 'unknown'
+                    features[f'{tf}_quarter'] = 0
+                    features[f'{tf}_candle_percent'] = 50.0
+                    continue
+                
+                # Timezone handling (same as original)
+                if isinstance(hammer_time, str):
+                    from datetime import datetime
+                    hammer_time = datetime.strptime(hammer_time, '%Y-%m-%d %H:%M:%S')
+                
+                if df['time'].dt.tz is None:
+                    df['time'] = df['time'].dt.tz_localize('UTC').dt.tz_convert(NY_TZ)
+                
+                if hammer_time.tzinfo is None:
+                    hammer_time = hammer_time.replace(tzinfo=NY_TZ)
+                
+                # Find the higher TF candle (optimized)
+                htf_candle = None
+                times = df['time'].values
+                for idx in range(len(df)):
+                    candle_open = times[idx]
+                    
+                    # Calculate candle close time
+                    from datetime import timedelta
+                    if tf == 'H4':
+                        candle_close = candle_open + timedelta(hours=4)
+                    elif tf == 'H6':
+                        candle_close = candle_open + timedelta(hours=6)
+                    elif tf == 'D':
+                        candle_close = candle_open + timedelta(days=1)
+                    elif tf == 'W':
+                        candle_close = candle_open + timedelta(weeks=1)
+                    else:
+                        candle_close = candle_open + timedelta(hours=4)
+                    
+                    if candle_open <= hammer_time < candle_close:
+                        htf_candle = df.iloc[idx]
+                        break
+                
+                if htf_candle is None:
+                    htf_candle = df.iloc[-1]
+                
+                # Vectorized calculations
+                fib_zone, fib_percent = _calculate_fib_zone_vectorized(
+                    df['high'].values, 
+                    df['low'].values, 
+                    hammer_close_price
+                )
+                features[f'{tf}_fib_zone'] = fib_zone
+                features[f'{tf}_fib_percent'] = round(fib_percent, 2)
+                
+                # Open relation (same logic)
+                if hammer_close_price > htf_candle['open']:
+                    features[f'{tf}_open_rel'] = 'up'
+                elif hammer_close_price < htf_candle['open']:
+                    features[f'{tf}_open_rel'] = 'down'
+                else:
+                    features[f'{tf}_open_rel'] = 'equal'
+                
+                # Vectorized quarter calculation
+                quarter = _calculate_candle_quarter_vectorized(
+                    htf_candle['high'], 
+                    htf_candle['low'], 
+                    htf_candle['open'], 
+                    hammer_close_price
+                )
+                features[f'{tf}_quarter'] = quarter
+                
+                # Vectorized position percentage
+                candle_percent = _calculate_candle_position_percent_vectorized(
+                    htf_candle['high'], 
+                    htf_candle['low'], 
+                    hammer_close_price
+                )
+                features[f'{tf}_candle_percent'] = round(candle_percent, 1)
+                
+                # Log for debugging (same as original)
+                self.logger.info(f"📊 {tf} Features for {instrument}:")
+                self.logger.info(f"   Fib Zone: {fib_zone} ({fib_percent:.1f}%)")
+                self.logger.info(f"   Open Rel: {features[f'{tf}_open_rel']}")
+                self.logger.info(f"   Quarter: {quarter}")
+                self.logger.info(f"   Candle %: {candle_percent:.1f}%")
             
-            position = ((current_price - candle_low) / candle_range) * 100
-            position = max(0.0, min(100.0, position))  # Clamp between 0-100
-            
-            return round(position, 1)
+            return features
             
         except Exception as e:
-            self.logger.error(f"Error calculating candle position %: {str(e)}")
-            return 50.0
-
+            self.logger.error(f"❌ Error calculating higher TF features: {str(e)}", exc_info=True)
+            # Return empty features with all required keys (same as original)
+            features = {}
+            for tf in ['H4', 'H6', 'D', 'W']:
+                features[f'{tf}_fib_zone'] = 0
+                features[f'{tf}_fib_percent'] = 0.0
+                features[f'{tf}_open_rel'] = 'error'
+                features[f'{tf}_quarter'] = 0
+                features[f'{tf}_candle_percent'] = 50.0
+            return features
+    
+    # ============================================
+    # OPTIMIZED ADVANCED FEATURES (SAME INTERFACE)
+    # ============================================
+    
+    @jit(nopython=True, parallel=True, cache=True)
+    def _calculate_moving_averages_vectorized(prices, windows):
+        """Vectorized moving averages for multiple windows"""
+        n = len(prices)
+        m = len(windows)
+        results = np.zeros((n, m))
+        
+        for j in prange(m):
+            window = windows[j]
+            # Cumulative sum for fast moving average
+            cumsum = np.zeros(n + 1)
+            cumsum[1:] = np.cumsum(prices)
+            
+            for i in range(n):
+                if i >= window - 1:
+                    results[i, j] = (cumsum[i+1] - cumsum[i+1-window]) / window
+                else:
+                    results[i, j] = np.mean(prices[:i+1])
+        
+        return results
+    
+    @jit(nopython=True, cache=True)
+    def _calculate_vwap_vectorized(high, low, close, volume):
+        """Vectorized VWAP calculation"""
+        n = len(close)
+        typical_price = (high + low + close) / 3
+        
+        # Cumulative sums
+        cum_tp_volume = np.cumsum(typical_price * volume)
+        cum_volume = np.cumsum(volume)
+        
+        vwap = np.zeros(n)
+        for i in range(n):
+            if cum_volume[i] > 0:
+                vwap[i] = cum_tp_volume[i] / cum_volume[i]
+            else:
+                vwap[i] = typical_price[i]
+        
+        return vwap
+    
     def calculate_advanced_features(self, df, candle_index):
-        """Calculate advanced features for the hammer candle"""
+        """Calculate advanced features for the hammer candle - OPTIMIZED VERSION"""
         try:
             if df.empty or len(df) < 100:
                 return {}
             
-            # Make a copy to avoid modifying original
-            df_features = df.copy()
+            n = len(df)
+            idx = min(candle_index, n-1)
             
-            # Ensure we have necessary columns
-            if 'adj close' not in df_features.columns:
-                df_features['adj close'] = df_features['close']
+            # Convert to numpy arrays for speed
+            high = df['high'].values
+            low = df['low'].values
+            close = df['close'].values
+            volume = df['volume'].values
             
-            # Moving averages
-            for length in [10, 20, 30, 40, 60, 100]:
-                df_features[f'ma_{length}'] = df_features['adj close'].rolling(window=length, min_periods=1).mean()
+            if 'adj close' in df.columns:
+                adj_close = df['adj close'].values
+            else:
+                adj_close = close
             
-            # VWAP calculation
-            try:
-                typical_price = (df_features['high'] + df_features['low'] + df_features['close']) / 3
-                vwap_num = (typical_price * df_features['volume']).cumsum()
-                vwap_den = df_features['volume'].cumsum()
-                df_features['vwap_value'] = vwap_num / vwap_den
-                df_features['vwap_std'] = df_features['vwap_value'].rolling(window=20, min_periods=1).std()
-            except:
-                df_features['vwap_value'] = df_features['adj close']
-                df_features['vwap_std'] = 0
+            # Moving averages - vectorized
+            ma_windows = np.array([10, 20, 30, 40, 60, 100], dtype=np.int32)
+            ma_results = _calculate_moving_averages_vectorized(adj_close, ma_windows)
+            
+            # VWAP calculation - vectorized
+            vwap_value = _calculate_vwap_vectorized(high, low, close, volume)
+            
+            # VWAP standard deviation
+            vwap_std = np.zeros(n)
+            for i in range(n):
+                start = max(0, i - 19)
+                vwap_std[i] = np.std(vwap_value[start:i+1])
             
             # VWAP bands
-            try:
-                for i in range(1, 4):
-                    df_features[f'upper_band_{i}'] = df_features['vwap_value'] + i * df_features['vwap_std']
-                    df_features[f'lower_band_{i}'] = df_features['vwap_value'] - i * df_features['vwap_std']
-            except:
-                for i in range(1, 4):
-                    df_features[f'upper_band_{i}'] = df_features['vwap_value']
-                    df_features[f'lower_band_{i}'] = df_features['vwap_value']
+            upper_bands = np.zeros((n, 3))
+            lower_bands = np.zeros((n, 3))
+            for i in range(1, 4):
+                upper_bands[:, i-1] = vwap_value + i * vwap_std
+                lower_bands[:, i-1] = vwap_value - i * vwap_std
             
-            # Touch indicators (using the hammer candle)
-            try:
-                hammer_low = df_features['low'].iloc[candle_index]
-                hammer_high = df_features['high'].iloc[candle_index]
-                
-                for i in range(1, 4):
-                    touches_upper = (hammer_low <= df_features[f'upper_band_{i}'].iloc[candle_index]) & \
-                                   (df_features[f'upper_band_{i}'].iloc[candle_index] <= hammer_high)
-                    touches_lower = (hammer_low <= df_features[f'lower_band_{i}'].iloc[candle_index]) & \
-                                   (df_features[f'lower_band_{i}'].iloc[candle_index] <= hammer_high)
-                    
-                    df_features[f'touches_upper_band_{i}'] = int(touches_upper)
-                    df_features[f'touches_lower_band_{i}'] = int(touches_lower)
-                
-                touches_vwap = (hammer_low <= df_features['vwap_value'].iloc[candle_index]) & \
-                              (df_features['vwap_value'].iloc[candle_index] <= hammer_high)
-                df_features['touches_vwap'] = int(touches_vwap)
-            except:
-                for i in range(1, 4):
-                    df_features[f'touches_upper_band_{i}'] = 0
-                    df_features[f'touches_lower_band_{i}'] = 0
-                df_features['touches_vwap'] = 0
-            
-            # Distance ratios
-            try:
-                hammer_close = df_features['close'].iloc[candle_index]
-                for i in range(1, 4):
-                    upper_dist = abs(hammer_close - df_features[f'upper_band_{i}'].iloc[candle_index])
-                    lower_dist = abs(hammer_close - df_features[f'lower_band_{i}'].iloc[candle_index])
-                    
-                    df_features[f'far_ratio_upper_band_{i}'] = upper_dist / (df_features['vwap_std'].iloc[candle_index] + 1e-6)
-                    df_features[f'far_ratio_lower_band_{i}'] = lower_dist / (df_features['vwap_std'].iloc[candle_index] + 1e-6)
-                
-                vwap_dist = abs(hammer_close - df_features['vwap_value'].iloc[candle_index])
-                df_features['far_ratio_vwap'] = vwap_dist / (df_features['vwap_std'].iloc[candle_index] + 1e-6)
-            except:
-                for i in range(1, 4):
-                    df_features[f'far_ratio_upper_band_{i}'] = 0
-                    df_features[f'far_ratio_lower_band_{i}'] = 0
-                df_features['far_ratio_vwap'] = 0
-            
-            # Bearish stack
-            try:
-                bearish = (
-                    (df_features['ma_20'].iloc[candle_index] < df_features['ma_30'].iloc[candle_index]) & 
-                    (df_features['ma_30'].iloc[candle_index] < df_features['ma_40'].iloc[candle_index]) & 
-                    (df_features['ma_40'].iloc[candle_index] < df_features['ma_60'].iloc[candle_index])
-                )
-                df_features['bearish_stack'] = int(bearish)
-            except:
-                df_features['bearish_stack'] = 0
-            
-            # Trend strength
-            try:
-                trend_up = (
-                    (df_features['ma_20'].iloc[candle_index] > df_features['ma_30'].iloc[candle_index]) & 
-                    (df_features['ma_30'].iloc[candle_index] > df_features['ma_40'].iloc[candle_index]) & 
-                    (df_features['ma_40'].iloc[candle_index] > df_features['ma_60'].iloc[candle_index])
-                )
-                trend_down = (
-                    (df_features['ma_20'].iloc[candle_index] < df_features['ma_30'].iloc[candle_index]) & 
-                    (df_features['ma_30'].iloc[candle_index] < df_features['ma_40'].iloc[candle_index]) & 
-                    (df_features['ma_40'].iloc[candle_index] < df_features['ma_60'].iloc[candle_index])
-                )
-                df_features['trend_strength_up'] = int(trend_up)
-                df_features['trend_strength_down'] = int(trend_down)
-            except:
-                df_features['trend_strength_up'] = 0
-                df_features['trend_strength_down'] = 0
-            
-            # Previous volume
-            try:
-                if candle_index > 0:
-                    df_features['prev_volume'] = df_features['volume'].iloc[candle_index - 1]
-                else:
-                    df_features['prev_volume'] = df_features['volume'].iloc[candle_index]
-            except:
-                df_features['prev_volume'] = 0
-            
-            # Extract values for the hammer candle
+            # Extract values at candle_index
             features = {}
-            for col in ['vwap_value', 'vwap_std', 'bearish_stack', 'trend_strength_up', 
-                       'trend_strength_down', 'prev_volume']:
-                features[col] = df_features[col].iloc[candle_index]
+            features['vwap_value'] = float(vwap_value[idx])
+            features['vwap_std'] = float(vwap_std[idx])
             
-            for length in [10, 20, 30, 40, 60, 100]:
-                features[f'ma_{length}'] = df_features[f'ma_{length}'].iloc[candle_index]
+            # Moving averages
+            for j, window in enumerate([10, 20, 30, 40, 60, 100]):
+                features[f'ma_{window}'] = float(ma_results[idx, j])
+            
+            # VWAP bands
+            for i in range(1, 4):
+                features[f'upper_band_{i}'] = float(upper_bands[idx, i-1])
+                features[f'lower_band_{i}'] = float(lower_bands[idx, i-1])
+            
+            # Touch indicators (same logic but vectorized)
+            hammer_low = low[idx]
+            hammer_high = high[idx]
+            hammer_close = close[idx]
             
             for i in range(1, 4):
-                features[f'upper_band_{i}'] = df_features[f'upper_band_{i}'].iloc[candle_index]
-                features[f'lower_band_{i}'] = df_features[f'lower_band_{i}'].iloc[candle_index]
-                features[f'touches_upper_band_{i}'] = df_features[f'touches_upper_band_{i}']
-                features[f'touches_lower_band_{i}'] = df_features[f'touches_lower_band_{i}']
-                features[f'far_ratio_upper_band_{i}'] = df_features[f'far_ratio_upper_band_{i}']
-                features[f'far_ratio_lower_band_{i}'] = df_features[f'far_ratio_lower_band_{i}']
+                upper_band_val = features[f'upper_band_{i}']
+                lower_band_val = features[f'lower_band_{i}']
+                
+                touches_upper = int(hammer_low <= upper_band_val <= hammer_high)
+                touches_lower = int(hammer_low <= lower_band_val <= hammer_high)
+                
+                features[f'touches_upper_band_{i}'] = touches_upper
+                features[f'touches_lower_band_{i}'] = touches_lower
+                
+                # Distance ratios
+                upper_dist = abs(hammer_close - upper_band_val)
+                lower_dist = abs(hammer_close - lower_band_val)
+                
+                vwap_std_val = features['vwap_std'] or 1e-6
+                features[f'far_ratio_upper_band_{i}'] = float(upper_dist / vwap_std_val)
+                features[f'far_ratio_lower_band_{i}'] = float(lower_dist / vwap_std_val)
             
-            features['touches_vwap'] = df_features['touches_vwap']
-            features['far_ratio_vwap'] = df_features['far_ratio_vwap']
+            # VWAP touch
+            touches_vwap = int(hammer_low <= features['vwap_value'] <= hammer_high)
+            features['touches_vwap'] = touches_vwap
+            
+            vwap_dist = abs(hammer_close - features['vwap_value'])
+            features['far_ratio_vwap'] = float(vwap_dist / (vwap_std_val or 1e-6))
+            
+            # Bearish stack (same logic)
+            ma_20 = features['ma_20']
+            ma_30 = features['ma_30']
+            ma_40 = features['ma_40']
+            ma_60 = features['ma_60']
+            
+            bearish = (ma_20 < ma_30) and (ma_30 < ma_40) and (ma_40 < ma_60)
+            features['bearish_stack'] = int(bearish)
+            
+            # Trend strength (same logic)
+            trend_up = (ma_20 > ma_30) and (ma_30 > ma_40) and (ma_40 > ma_60)
+            trend_down = (ma_20 < ma_30) and (ma_30 < ma_40) and (ma_40 < ma_60)
+            
+            features['trend_strength_up'] = int(trend_up)
+            features['trend_strength_down'] = int(trend_down)
+            
+            # Previous volume (same logic)
+            if idx > 0:
+                features['prev_volume'] = float(volume[idx-1])
+            else:
+                features['prev_volume'] = float(volume[idx])
             
             return features
             
@@ -7765,14 +7897,35 @@ class HammerPatternScanner:
             self.logger.error(f"❌ Error calculating advanced features: {str(e)}")
             return {}
     
+    @jit(nopython=True, cache=True)
+    def _count_swing_extremes_vectorized(prices, direction, threshold):
+        """Vectorized swing extremes counting"""
+        n = len(prices)
+        count = 0
+        
+        if direction == 'bearish':
+            for i in range(1, n-1):
+                if (prices[i] > prices[i-1] and 
+                    prices[i] > prices[i+1] and 
+                    prices[i] > threshold):
+                    count += 1
+        else:
+            for i in range(1, n-1):
+                if (prices[i] < prices[i-1] and 
+                    prices[i] < prices[i+1] and 
+                    prices[i] < threshold):
+                    count += 1
+        
+        return count
+    
     def calculate_inducement(self, instrument, direction, fib_zones, 
                              formation_time, second_swing_time, zone_timeframe):
-        """Calculate inducement (swing highs/lows count between formation and second swing)"""
+        """Calculate inducement - OPTIMIZED VERSION"""
         try:
-            if not fib_zones or len(fib_zones) < 3:  # Need at least 0.5 fib zone
+            if not fib_zones or len(fib_zones) < 3:
                 return 0
             
-            # Get the 0.5 Fibonacci zone
+            # Find the 0.5 Fibonacci zone
             fib_50_zone = None
             for zone in fib_zones:
                 if abs(zone.get('ratio', 0) - 0.5) < 0.01:
@@ -7782,43 +7935,29 @@ class HammerPatternScanner:
             if not fib_50_zone:
                 return 0
             
-            # Fetch data between formation time and second swing
+            # Fetch data
             df = fetch_candles(instrument, zone_timeframe, count=500, 
                               api_key=self.credentials['oanda_api_key'])
             
             if df.empty:
                 return 0
             
-            # Filter to the time range
+            # Filter to time range
             df_period = df[(df['time'] >= formation_time) & 
                           (df['time'] <= second_swing_time)]
             
             if df_period.empty:
                 return 0
             
-            # Find swing highs/lows using simple peak detection
-            inducement_count = 0
-            
+            # Vectorized counting
             if direction == 'bearish':
-                # Look for swing highs above fib 50%
                 threshold = fib_50_zone.get('high', 0)
-                
-                # Simple peak detection: high is greater than neighbors
-                for i in range(1, len(df_period)-1):
-                    if (df_period['high'].iloc[i] > df_period['high'].iloc[i-1] and
-                        df_period['high'].iloc[i] > df_period['high'].iloc[i+1] and
-                        df_period['high'].iloc[i] > threshold):
-                        inducement_count += 1
-                        
-            else:  # bullish
-                # Look for swing lows below fib 50%
+                prices = df_period['high'].values
+            else:
                 threshold = fib_50_zone.get('low', float('inf'))
-                
-                for i in range(1, len(df_period)-1):
-                    if (df_period['low'].iloc[i] < df_period['low'].iloc[i-1] and
-                        df_period['low'].iloc[i] < df_period['low'].iloc[i+1] and
-                        df_period['low'].iloc[i] < threshold):
-                        inducement_count += 1
+                prices = df_period['low'].values
+            
+            inducement_count = _count_swing_extremes_vectorized(prices, direction, threshold)
             
             self.logger.info(f"📊 Inducement count: {inducement_count} swing {'highs' if direction == 'bearish' else 'lows'}")
             return inducement_count
@@ -7827,107 +7966,68 @@ class HammerPatternScanner:
             self.logger.error(f"❌ Error calculating inducement: {str(e)}")
             return 0
     
+    
     def calculate_open_tp(self, instrument, direction, entry_price, sl_price):
-        """Calculate open TP (previous day/week/month highs/lows)"""
+        """Calculate open TP - OPTIMIZED VERSION"""
         try:
             from datetime import datetime, timedelta
             
-            current_time = datetime.now(NY_TZ)
-            
-            # Fetch daily data for last 5 days
+            # Fetch data
             df_daily = fetch_candles(instrument, 'D', count=5, 
                                     api_key=self.credentials['oanda_api_key'])
-            
-            # Fetch weekly data for last 4 weeks
             df_weekly = fetch_candles(instrument, 'W', count=4,
                                      api_key=self.credentials['oanda_api_key'])
-            
-            # Fetch monthly data for last 3 months
             df_monthly = fetch_candles(instrument, 'M', count=3,
                                       api_key=self.credentials['oanda_api_key'])
             
             open_tp_candidates = []
             
-            # Previous day levels
-            if not df_daily.empty and len(df_daily) >= 2:
-                prev_day = df_daily.iloc[-2]
+            # Vectorized processing for each timeframe
+            for df, tf, lookback in [(df_daily, 'daily', 10), 
+                                      (df_weekly, 'weekly', 5), 
+                                      (df_monthly, 'monthly', 3)]:
                 
-                # Check if price hasn't traded above/beyond these levels
-                if direction == 'bearish':
-                    # For selling: use previous day low (if price hasn't traded below it)
-                    recent_lows = df_daily['low'].tail(10).min()
-                    if prev_day['low'] < recent_lows:
-                        open_tp_candidates.append({
-                            'price': prev_day['low'],
-                            'type': 'daily_low',
-                            'distance': abs(entry_price - prev_day['low'])
-                        })
-                else:  # bullish
-                    # For buying: use previous day high (if price hasn't traded above it)
-                    recent_highs = df_daily['high'].tail(10).max()
-                    if prev_day['high'] > recent_highs:
-                        open_tp_candidates.append({
-                            'price': prev_day['high'],
-                            'type': 'daily_high',
-                            'distance': abs(entry_price - prev_day['high'])
-                        })
-            
-            # Previous week levels
-            if not df_weekly.empty and len(df_weekly) >= 2:
-                prev_week = df_weekly.iloc[-2]
+                if df.empty or len(df) < 2:
+                    continue
                 
                 if direction == 'bearish':
-                    recent_lows = df_weekly['low'].tail(5).min()
-                    if prev_week['low'] < recent_lows:
+                    # Previous day low
+                    prev_val = df.iloc[-2]['low']
+                    recent_min = df['low'].tail(lookback).min()
+                    
+                    if prev_val < recent_min:
+                        distance = abs(entry_price - prev_val)
                         open_tp_candidates.append({
-                            'price': prev_week['low'],
-                            'type': 'weekly_low',
-                            'distance': abs(entry_price - prev_week['low'])
+                            'price': prev_val,
+                            'type': f'{tf}_low',
+                            'distance': distance
                         })
                 else:
-                    recent_highs = df_weekly['high'].tail(5).max()
-                    if prev_week['high'] > recent_highs:
+                    # Previous day high
+                    prev_val = df.iloc[-2]['high']
+                    recent_max = df['high'].tail(lookback).max()
+                    
+                    if prev_val > recent_max:
+                        distance = abs(entry_price - prev_val)
                         open_tp_candidates.append({
-                            'price': prev_week['high'],
-                            'type': 'weekly_high',
-                            'distance': abs(entry_price - prev_week['high'])
-                        })
-            
-            # Previous month levels
-            if not df_monthly.empty and len(df_monthly) >= 2:
-                prev_month = df_monthly.iloc[-2]
-                
-                if direction == 'bearish':
-                    recent_lows = df_monthly['low'].tail(3).min()
-                    if prev_month['low'] < recent_lows:
-                        open_tp_candidates.append({
-                            'price': prev_month['low'],
-                            'type': 'monthly_low',
-                            'distance': abs(entry_price - prev_month['low'])
-                        })
-                else:
-                    recent_highs = df_monthly['high'].tail(3).max()
-                    if prev_month['high'] > recent_highs:
-                        open_tp_candidates.append({
-                            'price': prev_month['high'],
-                            'type': 'monthly_high',
-                            'distance': abs(entry_price - prev_month['high'])
+                            'price': prev_val,
+                            'type': f'{tf}_high',
+                            'distance': distance
                         })
             
             if not open_tp_candidates:
                 return None, None, None
             
-            # Pick the closest one
-            closest = min(open_tp_candidates, key=lambda x: x['distance'])
+            # Find closest using numpy
+            import numpy as np
+            distances = np.array([c['distance'] for c in open_tp_candidates])
+            closest_idx = np.argmin(distances)
+            closest = open_tp_candidates[closest_idx]
             
-            # Calculate risk:reward ratio
+            # Calculate risk:reward
             risk = abs(entry_price - sl_price)
             reward = abs(entry_price - closest['price'])
-            
-            if risk > 0:
-                rr_ratio = round(reward / risk, 2)
-            else:
-                rr_ratio = 0
+            rr_ratio = round(reward / risk, 2) if risk > 0 else 0
             
             self.logger.info(f"📊 Open TP: {closest['type']} at {closest['price']:.5f}, RR: {rr_ratio}")
             
