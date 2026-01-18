@@ -5327,6 +5327,28 @@ class HammerPatternScanner:
         
         return data_cache
 
+    def _fetch_with_cache(self, instrument, timeframe, count):
+        """Fetch candles with caching to reduce API calls"""
+        cache_key = f"{instrument}_{timeframe}_{count}"
+        current_time = time.time()
+        
+        # Check if valid cache exists
+        if (cache_key in self.data_cache and 
+            cache_key in self.cache_expiry and
+            current_time < self.cache_expiry[cache_key]):
+            self.logger.debug(f"📦 Using cached data for {instrument} {timeframe}")
+            return self.data_cache[cache_key]
+        
+        # Fetch fresh data
+        df = fetch_candles(instrument, timeframe, count=count,
+                          api_key=self.credentials['oanda_api_key'])
+        
+        # Store in cache
+        self.data_cache[cache_key] = df
+        self.cache_expiry[cache_key] = current_time + self.cache_duration
+        
+        return df
+
     def start_news_background_fetch(self, interval_hours=6):
         """Start background news fetching thread"""
         if not self.news_calendar:
