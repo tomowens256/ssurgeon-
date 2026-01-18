@@ -8066,7 +8066,7 @@ class HammerPatternScanner:
             return None, None, None
     
     def save_trade_to_csv(self, trade_data):
-        """Save trade data to CSV with latest trades at the TOP (FIXED VERSION)"""
+        """Save trade data safely - APPEND only (no overwrite)"""
         try:
             self.logger.info(f"💾 Saving trade {trade_data['trade_id']} to CSV...")
             
@@ -8075,35 +8075,37 @@ class HammerPatternScanner:
             for header in self.headers:
                 new_row[header] = trade_data.get(header, '')
             
-            # ALWAYS read existing data first
-            existing_rows = []
-            if os.path.exists(self.csv_file_path):
-                try:
-                    with open(self.csv_file_path, 'r', newline='', encoding='utf-8') as f:
-                        reader = csv.DictReader(f)
-                        existing_rows = list(reader)
-                    self.logger.info(f"📁 Read {len(existing_rows)} existing rows")
-                except Exception as e:
-                    self.logger.error(f"❌ Error reading existing data: {str(e)}")
-                    # Don't overwrite - just append instead
-                    existing_rows = []
+            # Write ONLY the new row (append mode)
+            file_exists = os.path.exists(self.csv_file_path)
             
-            # Insert new row at the BEGINNING (top of file)
-            all_rows = [new_row] + existing_rows
-            
-            # Write ALL rows back (keeps old data + adds new at top)
-            with open(self.csv_file_path, 'w', newline='', encoding='utf-8') as f:
+            with open(self.csv_file_path, 'a', newline='', encoding='utf-8') as f:
                 writer = csv.DictWriter(f, fieldnames=self.headers)
-                writer.writeheader()
-                writer.writerows(all_rows)
+                
+                # Write header if file is new
+                if not file_exists:
+                    writer.writeheader()
+                
+                writer.writerow(new_row)
             
-            self.logger.info(f"✅ Saved trade {trade_data['trade_id']}. Total rows: {len(all_rows)}")
+            self.logger.info(f"✅ Appended trade {trade_data['trade_id']} to CSV")
             return True
             
         except Exception as e:
             self.logger.error(f"❌ Error saving to CSV: {str(e)}", exc_info=True)
+            
+            # Emergency backup save
+            try:
+                backup_path = f"{self.csv_file_path}.backup_{int(time.time())}"
+                with open(backup_path, 'w', newline='', encoding='utf-8') as f:
+                    writer = csv.DictWriter(f, fieldnames=self.headers)
+                    writer.writeheader()
+                    writer.writerow(new_row)
+                self.logger.info(f"📦 Saved backup to {backup_path}")
+            except:
+                pass
+                
             return False
-    
+        
     def send_hammer_signal(self, trade_data, trigger_data):
         """Send hammer signal to Telegram with price levels and risk management"""
         try:
