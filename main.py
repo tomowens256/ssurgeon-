@@ -5007,12 +5007,18 @@ class HammerPatternScanner:
         """Concurrent hammer pattern scanner with shared news calendar support"""
         
         self.credentials = credentials
+                     
         # Webhook configuration - set your values here
         self.webhook_url = "https://d4a270af4ba7.ngrok-free.app/webhook"
         self.webhook_token = "uVDdSdTrQCDiAQwU9YR-LIeHMKJ8Ewgz"  
         self.running = False
         self.scanner_thread = None
         self.active_scans = {}
+        # Add caching for API calls
+        self.data_cache = {}
+        self.cache_expiry = {}  # Track when cache expires
+        self.cache_duration = 45  # Cache for 60 seconds
+                     
                      
         
         # Use passed logger or create new one
@@ -7574,7 +7580,7 @@ class HammerPatternScanner:
             
     
     @jit(nopython=True, cache=True)
-    def _calculate_fib_zone(highs, lows, current_price):
+    def _calculate_fib_zone_vectorized(highs, lows, current_price):
         """Vectorized Fibonacci zone calculation"""
         highest = np.max(highs)
         lowest = np.min(lows)
@@ -7593,7 +7599,7 @@ class HammerPatternScanner:
             
     
     @jit(nopython=True, cache=True)
-    def _calculate_candle_quarter(high, low, open_price, current_price):
+    def _calculate_candle_quarter_vectorized(high, low, open_price, current_price):
         """Vectorized candle quarter calculation"""
         candle_range = high - low
         
@@ -7611,9 +7617,9 @@ class HammerPatternScanner:
         quarter = int(distance_from_bottom // quarter_size) + 1
         quarter = max(1, min(4, quarter))
         return quarter
-    
+        
     @jit(nopython=True, cache=True)
-    def _calculate_candle_position_percent(high, low, current_price):
+    def _calculate_candle_position_percent_vectorized(high, low, current_price):
         """Vectorized candle position percentage"""
         candle_range = high - low
         
