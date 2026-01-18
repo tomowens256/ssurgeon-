@@ -7932,46 +7932,38 @@ class HammerPatternScanner:
             return None, None, None
     
     def save_trade_to_csv(self, trade_data):
-        """Save trade data to CSV with latest trades at the TOP"""
+        """Save trade data to CSV with latest trades at the TOP (FIXED VERSION)"""
         try:
-            self.logger.info(f"💾 Attempting to save trade {trade_data['trade_id']} to CSV...")
+            self.logger.info(f"💾 Saving trade {trade_data['trade_id']} to CSV...")
             
             # Create new row with all headers
             new_row = {}
             for header in self.headers:
                 new_row[header] = trade_data.get(header, '')
             
-            # If file doesn't exist, just create with this row
-            if not os.path.exists(self.csv_file_path):
-                self.init_csv_storage()  # Creates file with headers
-                with open(self.csv_file_path, 'a', newline='', encoding='utf-8') as f:
-                    writer = csv.DictWriter(f, fieldnames=self.headers)
-                    writer.writerow(new_row)
-                self.logger.info(f"✅ Created new file and added trade {trade_data['trade_id']}")
-                return True
-            
-            # File exists - read, prepend new row, and rewrite
+            # ALWAYS read existing data first
             existing_rows = []
-            try:
-                with open(self.csv_file_path, 'r', newline='', encoding='utf-8') as f:
-                    reader = csv.DictReader(f)
-                    existing_rows = list(reader)
-                self.logger.info(f"📁 Read {len(existing_rows)} existing rows")
-            except Exception as e:
-                self.logger.error(f"❌ Error reading existing data: {str(e)}")
-                # If can't read, start fresh with this row
-                existing_rows = []
+            if os.path.exists(self.csv_file_path):
+                try:
+                    with open(self.csv_file_path, 'r', newline='', encoding='utf-8') as f:
+                        reader = csv.DictReader(f)
+                        existing_rows = list(reader)
+                    self.logger.info(f"📁 Read {len(existing_rows)} existing rows")
+                except Exception as e:
+                    self.logger.error(f"❌ Error reading existing data: {str(e)}")
+                    # Don't overwrite - just append instead
+                    existing_rows = []
             
-            # Insert new row at the BEGINNING
+            # Insert new row at the BEGINNING (top of file)
             all_rows = [new_row] + existing_rows
             
-            # Write all rows back
+            # Write ALL rows back (keeps old data + adds new at top)
             with open(self.csv_file_path, 'w', newline='', encoding='utf-8') as f:
                 writer = csv.DictWriter(f, fieldnames=self.headers)
                 writer.writeheader()
                 writer.writerows(all_rows)
             
-            self.logger.info(f"✅ Trade {trade_data['trade_id']} saved (TOP). Total rows: {len(all_rows)}")
+            self.logger.info(f"✅ Saved trade {trade_data['trade_id']}. Total rows: {len(all_rows)}")
             return True
             
         except Exception as e:
