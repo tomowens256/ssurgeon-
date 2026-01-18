@@ -12,6 +12,7 @@ import time
 import re
 import requests
 import pandas as pd
+from numba import jit
 import numpy as np
 import pytz
 import threading
