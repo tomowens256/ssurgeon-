@@ -4524,7 +4524,7 @@ class NewsCalendar:
                 elif 'LOW' in impact:
                     summary['by_currency'][currency]['low'] += 1
         
-        # Get time range
+        # Get time ranges
         if events:
             times = [datetime.fromisoformat(e['ny_datetime']) for e in events]
             summary['earliest_time'] = min(times).isoformat()
