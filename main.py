@@ -7146,6 +7146,9 @@ class HammerPatternScanner:
             # Calculate pips
             sl_distance_pips = abs(current_price - sl_price) * pip_multiplier
             
+            # Check if we have PSP
+            has_psp = signal_data.get('has_psp', False)
+            
             # ============================================
             # 🚀 GENERATE TRADE ID FOR WEBHOOK
             # ============================================
@@ -7153,33 +7156,36 @@ class HammerPatternScanner:
             trade_id = self._generate_trade_id(instrument, tf)
             
             # ============================================
-            # 🚀 WEBHOOK SIGNAL - LOW LATENCY EXECUTION
+            # 🚀 WEBHOOK SIGNAL - ONLY IF has_psp == 1
             # ============================================
-            # Send webhook IMMEDIATELY after calculating SL/TP
-            # BEFORE any other calculations to minimize latency
-            risk_usd = 50.0  # Default $50 risk
-            
-            # Use tp_1_3_price for webhook (1:3 RR)
-            success = self.send_webhook_signal(
-                instrument=instrument,
-                direction=direction,
-                entry_price=current_price,
-                sl_price=sl_price,
-                tp_price=tp_1_2_price,  # Using TP3 (1:3 RR) instead of TP4
-                signal_id=signal_id,
-                trade_id=trade_id,  # ✅ NOW trade_id IS DEFINED
-                timeframe=tf,
-                criteria=criteria,
-                risk_usd=risk_usd
-            )
-            
-            if success:
-                self.logger.info(f"✅ Webhook dispatched for {instrument} at TP3 (1:2 RR)")
-                self.logger.info(f"   TP3 Price: {tp_1_2_price:.5f}")
-                self.logger.info(f"   Trade ID: {trade_id}")
+            webhook_sent = False
+            if has_psp:
+                # Send webhook ONLY if we have PSP
+                risk_usd = 50.0  # Default $50 risk
+                
+                # Use tp_1_3_price for webhook (1:3 RR)
+                success = self.send_webhook_signal(
+                    instrument=instrument,
+                    direction=direction,
+                    entry_price=current_price,
+                    sl_price=sl_price,
+                    tp_price=tp_1_2_price,  # Using TP3 (1:3 RR) instead of TP4
+                    signal_id=signal_id,
+                    trade_id=trade_id,  # ✅ NOW trade_id IS DEFINED
+                    timeframe=tf,
+                    criteria=criteria,
+                    risk_usd=risk_usd
+                )
+                
+                if success:
+                    self.logger.info(f"✅ Webhook dispatched for {instrument} at TP3 (1:2 RR)")
+                    self.logger.info(f"   TP3 Price: {tp_1_2_price:.5f}")
+                    self.logger.info(f"   Trade ID: {trade_id}")
+                    webhook_sent = True
+                else:
+                    self.logger.warning(f"⚠️ Webhook failed for {instrument} (trade will still be logged)")
             else:
-                self.logger.warning(f"⚠️ Webhook failed for {instrument} (trade will still be logged)")
-            
+                self.logger.info(f"⏭️ Skipping webhook for {instrument} - No PSP (has_psp = {has_psp})")
             
     
             # Calculate position sizes for risk management
@@ -7194,9 +7200,6 @@ class HammerPatternScanner:
             for i in range(1, 11):
                 tp_distance_pips = sl_distance_pips * i
                 tp_distances[f'tp_1_{i}_distance'] = round(tp_distance_pips, 1)
-            
-            # Generate trade ID
-            # trade_id = self._generate_trade_id(instrument, tf)
             
             # Extract signal data
             fvg_idea = signal_data.get('fvg_idea', {})
@@ -7305,7 +7308,7 @@ class HammerPatternScanner:
                 'crt_formation_time': crt_signal.get('timestamp', '').strftime('%Y-%m-%d %H:%M:%S') if crt_signal.get('timestamp') else '',
                 'smt_cycle': smt_data.get('cycle', ''),
                 'smt_quarters': smt_data.get('quarters', ''),
-                'has_psp': 1 if signal_data.get('has_psp') else 0,
+                'has_psp': 1 if has_psp else 0,  # Store the actual has_psp value
                 'is_hp_fvg': 1 if signal_data.get('is_hp_fvg') else 0,
                 'is_hp_zone': 1 if signal_data.get('is_hp_zone') else 0,
                 'rsi': indicators.get('rsi', 50),
@@ -7316,6 +7319,8 @@ class HammerPatternScanner:
                 'exit_time': '',
                 'time_to_exit_seconds': 0,
                 'tp_level_hit': 0,
+                # Webhook status
+                'webhook_sent': 1 if webhook_sent else 0,  # Add webhook status to CSV
                 # News data
                 'news_context_json': safe_news_data['news_context_json'],
                 'news_high_count': safe_news_data['news_high_count'],
@@ -7345,19 +7350,20 @@ class HammerPatternScanner:
             for key, value in advanced_features.items():
                 trade_data[key] = value
             
-            # Send Telegram signal
+            # Send Telegram signal (regardless of PSP)
             self.logger.info(f"📤 Sending Telegram signal for hammer #{trade_id}")
             self.send_hammer_signal(trade_data, trigger_data)
             
-            # Save to CSV
+            # Save to CSV (regardless of PSP)
             self.logger.info(f"💾 Saving hammer #{trade_id} to CSV")
             self.save_trade_to_csv(trade_data)
             
             self.logger.info(f"✅ Hammer recorded: {instrument} {tf} at {candle['time']}")
             self.logger.info(f"   Entry: {current_price:.5f}, SL: {sl_price:.5f}")
             self.logger.info(f"   Latency: {signal_latency_seconds:.2f}s, Inducement: {inducement_count}")
+            self.logger.info(f"   PSP: {has_psp}, Webhook sent: {webhook_sent}")
             
-            # Start TP monitoring in background thread
+            # Start TP monitoring in background thread (regardless of PSP)
             self._start_tp_monitoring(trade_data)
             
             return True
