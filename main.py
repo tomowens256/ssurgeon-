@@ -74,17 +74,17 @@ TRADING_PAIRS = {
             'daily': 'M15',
             '90min': 'M5'
         }
-    },
-    'european_indices': {
-        'pair1': 'DE30_EUR',
-        'pair2': 'EU50_EUR',
-        'instruments': ['DE30_EUR', 'EU50_EUR'],
-        'timeframe_mapping': {
-            'monthly': 'H4',
-            'weekly': 'H1',
-            'daily': 'M15',
-            '90min': 'M5'
-        }
+    # },
+    # 'european_indices': {
+    #     'pair1': 'DE30_EUR',
+    #     'pair2': 'EU50_EUR',
+    #     'instruments': ['DE30_EUR', 'EU50_EUR'],
+    #     'timeframe_mapping': {
+    #         'monthly': 'H4',
+    #         'weekly': 'H1',
+    #         'daily': 'M15',
+    #         '90min': 'M5'
+    #     }
     }
 }
 
