@@ -5056,14 +5056,14 @@ class HammerPatternScanner:
         # Timeframe alignment
         self.timeframe_alignment = {
             'XAU_USD': {
-                'FVG+SMT': {'M15': ['M1', 'M3', 'M5'], 'H1': ['M3','M5', 'M15'], 'H4': ['M5', 'M15']},
-                'SD+SMT': {'M15': ['M1', 'M3', 'M5'], 'H1': ['M5', 'M15'], 'H4': ['M5', 'M15'], 'D': ['M15'], 'W': ['M15']},
+                'FVG+SMT': {'M15': ['M1', 'M3', 'M5'], 'H1': ['M3','M5','M10', 'M15'], 'H4': ['M5','M10', 'M15']},
+                'SD+SMT': {'M15': ['M1', 'M3', 'M5'], 'H1': ['M5','M10', 'M15'], 'H4': ['M5','M10', 'M15'], 'D': ['M10','M15'], 'W': ['M15']},
                 'CRT+SMT': {'H1': ['M5', 'M15'], 'H4': ['M5', 'M15']}
             },
             'default': {
-                'FVG+SMT': {'M15': ['M3', 'M5'], 'H1': ['M5', 'M15'], 'H4': ['M5', 'M15']},
-                'SD+SMT': {'M15': ['M3', 'M5'], 'H1': ['M5', 'M15'], 'H4': ['M5', 'M15'], 'D': ['M15'], 'W': ['M15']},
-                'CRT+SMT': {'H1': ['M5', 'M15'], 'H4': ['M5', 'M15']}
+                'FVG+SMT': {'M15': ['M3', 'M5'], 'H1': ['M5','M10', 'M15'], 'H4': ['M5','M10', 'M15']},
+                'SD+SMT': {'M15': ['M3', 'M5','M10'], 'H1': ['M5','M10', 'M15'], 'H4': ['M5','M10', 'M15'], 'D': ['M10','M15'], 'W': ['M10','M15']},
+                'CRT+SMT': {'H1': ['M5', 'M10'], 'H4': ['M5','M10', 'M15']}
             }
         }
         
@@ -5304,7 +5304,7 @@ class HammerPatternScanner:
         # Define ALL timeframes needed by BOTH Zebra and Higher TF features
         timeframes = {
             # Zebra features (with required candle count)
-            'M1': 200, 'M3': 200, 'M5': 200, 'M15': 200,
+            'M1': 200, 'M3': 200, 'M5': 200,'M10': 200, 'M15': 200,
             'H1': 200, 'H4': 200, 'H6': 200, 'D': 200,
             # Higher TF features (with different count requirements)
             'W': 100  # Weekly for higher TF features (not used in Zebra)
