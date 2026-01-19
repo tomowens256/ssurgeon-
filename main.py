@@ -7699,36 +7699,38 @@ class HammerPatternScanner:
                 if hammer_time.tzinfo is None:
                     hammer_time = hammer_time.replace(tzinfo=NY_TZ)
                 
-                # Find the higher TF candle (optimized)
+                # Find the higher TF candle (FIXED - use pandas iloc directly)
                 htf_candle = None
-                times = df['time'].values
+                
+                # IMPORTANT: Keep original logic using pandas Series, not numpy array
                 for idx in range(len(df)):
-                    candle_open = times[idx]
+                    candle = df.iloc[idx]  # Get the row as Series
+                    candle_open = candle['time']  # This is a pandas Timestamp
                     
-                    # Calculate candle close time
-                    from datetime import timedelta
+                    # Calculate candle close time - USE PANDAS TIMEDELTA
+                    from pandas import Timedelta
                     if tf == 'H4':
-                        candle_close = candle_open + timedelta(hours=4)
+                        candle_close = candle_open + Timedelta(hours=4)
                     elif tf == 'H6':
-                        candle_close = candle_open + timedelta(hours=6)
+                        candle_close = candle_open + Timedelta(hours=6)
                     elif tf == 'D':
-                        candle_close = candle_open + timedelta(days=1)
+                        candle_close = candle_open + Timedelta(days=1)
                     elif tf == 'W':
-                        candle_close = candle_open + timedelta(weeks=1)
+                        candle_close = candle_open + Timedelta(weeks=1)
                     else:
-                        candle_close = candle_open + timedelta(hours=4)
+                        candle_close = candle_open + Timedelta(hours=4)  # default
                     
                     if candle_open <= hammer_time < candle_close:
-                        htf_candle = df.iloc[idx]
+                        htf_candle = candle
                         break
                 
                 if htf_candle is None:
                     htf_candle = df.iloc[-1]
                 
-                # Vectorized calculations
+                # Vectorized Fibonacci calculation using numpy arrays
                 fib_zone, fib_percent = _calculate_fib_zone_vectorized(
-                    df['high'].values, 
-                    df['low'].values, 
+                    df['high'].values,  # Convert to numpy array
+                    df['low'].values,   # Convert to numpy array
                     hammer_close_price
                 )
                 features[f'{tf}_fib_zone'] = fib_zone
@@ -7744,17 +7746,17 @@ class HammerPatternScanner:
                 
                 # Vectorized quarter calculation
                 quarter = _calculate_candle_quarter_vectorized(
-                    htf_candle['high'], 
-                    htf_candle['low'], 
-                    htf_candle['open'], 
+                    float(htf_candle['high']), 
+                    float(htf_candle['low']), 
+                    float(htf_candle['open']), 
                     hammer_close_price
                 )
                 features[f'{tf}_quarter'] = quarter
                 
                 # Vectorized position percentage
                 candle_percent = _calculate_candle_position_percent_vectorized(
-                    htf_candle['high'], 
-                    htf_candle['low'], 
+                    float(htf_candle['high']), 
+                    float(htf_candle['low']), 
                     hammer_close_price
                 )
                 features[f'{tf}_candle_percent'] = round(candle_percent, 1)
