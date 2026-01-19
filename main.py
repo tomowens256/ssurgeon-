@@ -7165,12 +7165,12 @@ class HammerPatternScanner:
                 sl_price = hammer_high + (hammer_range * 0.25)
                 tp_1_4_price = current_price - (4 * (sl_price - current_price))
                 # NEW: Calculate TP3 for webhook (1:3 RR)
-                tp_1_2_price = current_price - (2 * (sl_price - current_price))
+                tp_1_2_price = current_price - (2.2 * (sl_price - current_price))
             else:  # bullish
                 sl_price = hammer_low - (hammer_range * 0.25)
                 tp_1_4_price = current_price + (4 * (current_price - sl_price))
                 # NEW: Calculate TP3 for webhook (1:3 RR)
-                tp_1_2_price = current_price + (2 * (current_price - sl_price))
+                tp_1_2_price = current_price + (2.2 * (current_price - sl_price))
             
             # Calculate pips
             sl_distance_pips = abs(current_price - sl_price) * pip_multiplier
