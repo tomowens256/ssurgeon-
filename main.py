@@ -7414,52 +7414,62 @@ class HammerPatternScanner:
             volume_np = df['volume'].values
             current_close = close_np[-1]
             
-            # RSI (14) - Vectorized
+            # RSI (14) - Fixed calculation
             if len(close_np) >= 14:
-                delta = np.diff(close_np, prepend=close_np[0])
-                gain = np.where(delta > 0, delta, 0)
-                loss = np.where(delta < 0, -delta, 0)
+                # Calculate price changes
+                deltas = np.diff(close_np)
                 
-                # EMA calculation for RSI
-                alpha = 1.0 / 14
-                avg_gain = np.zeros_like(gain)
-                avg_loss = np.zeros_like(loss)
+                # Separate gains and losses
+                gains = np.where(deltas > 0, deltas, 0)
+                losses = np.where(deltas < 0, -deltas, 0)
                 
-                # Initial SMA
-                avg_gain[13] = np.mean(gain[0:14])
-                avg_loss[13] = np.mean(loss[0:14])
+                # Initial SMA (first 14 periods)
+                avg_gain = np.mean(gains[:14])
+                avg_loss = np.mean(losses[:14])
                 
-                # EMA for rest
-                for i in range(14, len(gain)):
-                    avg_gain[i] = alpha * gain[i] + (1 - alpha) * avg_gain[i-1]
-                    avg_loss[i] = alpha * loss[i] + (1 - alpha) * avg_loss[i-1]
+                # Wilder's Smoothing (RSI uses SMMA)
+                for i in range(14, len(deltas)):
+                    avg_gain = (avg_gain * 13 + gains[i]) / 14
+                    avg_loss = (avg_loss * 13 + losses[i]) / 14
                 
-                rs = avg_gain / (avg_loss + 1e-10)
-                rsi = 100 - (100 / (1 + rs))
-                rsi_value = rsi[-1]
+                # Calculate RS and RSI
+                if avg_loss != 0:
+                    rs = avg_gain / avg_loss
+                    rsi_value = 100 - (100 / (1 + rs))
+                else:
+                    rsi_value = 100  # No losses means RSI = 100
             else:
                 rsi_value = 50
             
-            # MACD Line only (12, 26) - Vectorized
+            # MACD Line only (12, 26) - Fixed calculation
             if len(close_np) >= 26:
-                # EMA calculation
-                def calculate_ema(prices, span):
-                    alpha = 2.0 / (span + 1)
-                    ema = np.zeros_like(prices)
-                    ema[0] = prices[0]
-                    for i in range(1, len(prices)):
-                        ema[i] = alpha * prices[i] + (1 - alpha) * ema[i-1]
+                # EMA calculation function with proper initialization
+                def calculate_ema(data, period):
+                    ema = np.zeros_like(data)
+                    # Start with SMA for first period
+                    ema[period-1] = np.mean(data[:period])
+                    
+                    # Calculate multiplier
+                    multiplier = 2.0 / (period + 1)
+                    
+                    # Calculate EMA for remaining periods
+                    for i in range(period, len(data)):
+                        ema[i] = (data[i] - ema[i-1]) * multiplier + ema[i-1]
                     return ema
                 
-                exp1 = calculate_ema(close_np, 12)
-                exp2 = calculate_ema(close_np, 26)
-                macd_line = exp1 - exp2
+                # Calculate both EMAs
+                ema_12 = calculate_ema(close_np, 12)
+                ema_26 = calculate_ema(close_np, 26)
+                
+                # MACD line is difference between them
+                macd_line = ema_12 - ema_26
                 macd_value = macd_line[-1]
             else:
                 macd_value = 0
             
-            # Simple VWAP (20-period) - Vectorized
+            # Simple VWAP (20-period) - Keep original but fix slice
             if len(df) >= 20:
+                # Ensure we don't go out of bounds
                 start_idx = max(0, candle_index - 19)
                 end_idx = candle_index + 1
                 
