@@ -7494,122 +7494,122 @@ class HammerPatternScanner:
             self.logger.error(f"Error calculating indicators: {str(e)}")
             return {'rsi': 50, 'macd_line': 0, 'vwap': 0}
 
-    def calculate_higher_tf_features(self, instrument, hammer_close_price, hammer_time, timeframe_data=None):
-        """Calculate higher timeframe features using vectorization - OPTIMIZED VERSION"""
-        try:
-            features = {}
-            higher_tfs = ['H4', 'H6', 'D', 'W']
+    # def calculate_higher_tf_features(self, instrument, hammer_close_price, hammer_time, timeframe_data=None):
+    #     """Calculate higher timeframe features using vectorization - OPTIMIZED VERSION"""
+    #     try:
+    #         features = {}
+    #         higher_tfs = ['H4', 'H6', 'D', 'W']
             
-            for tf in higher_tfs:
-                # Use pre-fetched data
-                if timeframe_data and tf in timeframe_data:
-                    df = timeframe_data[tf]
-                else:
-                    # Fallback (keep original)
-                    df = fetch_candles(instrument, tf, count=100, 
-                                      api_key=self.credentials['oanda_api_key'])
+    #         for tf in higher_tfs:
+    #             # Use pre-fetched data
+    #             if timeframe_data and tf in timeframe_data:
+    #                 df = timeframe_data[tf]
+    #             else:
+    #                 # Fallback (keep original)
+    #                 df = fetch_candles(instrument, tf, count=100, 
+    #                                   api_key=self.credentials['oanda_api_key'])
                 
-                if df.empty:
-                    self.logger.warning(f"⚠️ No {tf} data for {instrument}")
-                    # Set default values for all features
-                    features[f'{tf}_fib_zone'] = 0
-                    features[f'{tf}_fib_percent'] = 0.0
-                    features[f'{tf}_open_rel'] = 'unknown'
-                    features[f'{tf}_quarter'] = 0
-                    features[f'{tf}_candle_percent'] = 50.0
-                    continue
+    #             if df.empty:
+    #                 self.logger.warning(f"⚠️ No {tf} data for {instrument}")
+    #                 # Set default values for all features
+    #                 features[f'{tf}_fib_zone'] = 0
+    #                 features[f'{tf}_fib_percent'] = 0.0
+    #                 features[f'{tf}_open_rel'] = 'unknown'
+    #                 features[f'{tf}_quarter'] = 0
+    #                 features[f'{tf}_candle_percent'] = 50.0
+    #                 continue
                 
-                # Timezone handling (same as original)
-                if isinstance(hammer_time, str):
-                    from datetime import datetime
-                    hammer_time = datetime.strptime(hammer_time, '%Y-%m-%d %H:%M:%S')
+    #             # Timezone handling (same as original)
+    #             if isinstance(hammer_time, str):
+    #                 from datetime import datetime
+    #                 hammer_time = datetime.strptime(hammer_time, '%Y-%m-%d %H:%M:%S')
                 
-                if df['time'].dt.tz is None:
-                    df['time'] = df['time'].dt.tz_localize('UTC').dt.tz_convert(NY_TZ)
+    #             if df['time'].dt.tz is None:
+    #                 df['time'] = df['time'].dt.tz_localize('UTC').dt.tz_convert(NY_TZ)
                 
-                if hammer_time.tzinfo is None:
-                    hammer_time = hammer_time.replace(tzinfo=NY_TZ)
+    #             if hammer_time.tzinfo is None:
+    #                 hammer_time = hammer_time.replace(tzinfo=NY_TZ)
                 
-                # Find the higher TF candle (optimized)
-                htf_candle = None
-                times = df['time'].values
-                for idx in range(len(df)):
-                    candle_open = times[idx]
+    #             # Find the higher TF candle (optimized)
+    #             htf_candle = None
+    #             times = df['time'].values
+    #             for idx in range(len(df)):
+    #                 candle_open = times[idx]
                     
-                    # Calculate candle close time
-                    from datetime import timedelta
-                    if tf == 'H4':
-                        candle_close = candle_open + timedelta(hours=4)
-                    elif tf == 'H6':
-                        candle_close = candle_open + timedelta(hours=6)
-                    elif tf == 'D':
-                        candle_close = candle_open + timedelta(days=1)
-                    elif tf == 'W':
-                        candle_close = candle_open + timedelta(weeks=1)
-                    else:
-                        candle_close = candle_open + timedelta(hours=4)
+    #                 # Calculate candle close time
+    #                 from datetime import timedelta
+    #                 if tf == 'H4':
+    #                     candle_close = candle_open + timedelta(hours=4)
+    #                 elif tf == 'H6':
+    #                     candle_close = candle_open + timedelta(hours=6)
+    #                 elif tf == 'D':
+    #                     candle_close = candle_open + timedelta(days=1)
+    #                 elif tf == 'W':
+    #                     candle_close = candle_open + timedelta(weeks=1)
+    #                 else:
+    #                     candle_close = candle_open + timedelta(hours=4)
                     
-                    if candle_open <= hammer_time < candle_close:
-                        htf_candle = df.iloc[idx]
-                        break
+    #                 if candle_open <= hammer_time < candle_close:
+    #                     htf_candle = df.iloc[idx]
+    #                     break
                 
-                if htf_candle is None:
-                    htf_candle = df.iloc[-1]
+    #             if htf_candle is None:
+    #                 htf_candle = df.iloc[-1]
                 
-                # Vectorized calculations
-                fib_zone, fib_percent = _calculate_fib_zone_vectorized(
-                    df['high'].values, 
-                    df['low'].values, 
-                    hammer_close_price
-                )
-                features[f'{tf}_fib_zone'] = fib_zone
-                features[f'{tf}_fib_percent'] = round(fib_percent, 2)
+    #             # Vectorized calculations
+    #             fib_zone, fib_percent = _calculate_fib_zone_vectorized(
+    #                 df['high'].values, 
+    #                 df['low'].values, 
+    #                 hammer_close_price
+    #             )
+    #             features[f'{tf}_fib_zone'] = fib_zone
+    #             features[f'{tf}_fib_percent'] = round(fib_percent, 2)
                 
-                # Open relation (same logic)
-                if hammer_close_price > htf_candle['open']:
-                    features[f'{tf}_open_rel'] = 'up'
-                elif hammer_close_price < htf_candle['open']:
-                    features[f'{tf}_open_rel'] = 'down'
-                else:
-                    features[f'{tf}_open_rel'] = 'equal'
+    #             # Open relation (same logic)
+    #             if hammer_close_price > htf_candle['open']:
+    #                 features[f'{tf}_open_rel'] = 'up'
+    #             elif hammer_close_price < htf_candle['open']:
+    #                 features[f'{tf}_open_rel'] = 'down'
+    #             else:
+    #                 features[f'{tf}_open_rel'] = 'equal'
                 
-                # Vectorized quarter calculation
-                quarter = _calculate_candle_quarter_vectorized(
-                    htf_candle['high'], 
-                    htf_candle['low'], 
-                    htf_candle['open'], 
-                    hammer_close_price
-                )
-                features[f'{tf}_quarter'] = quarter
+    #             # Vectorized quarter calculation
+    #             quarter = _calculate_candle_quarter_vectorized(
+    #                 htf_candle['high'], 
+    #                 htf_candle['low'], 
+    #                 htf_candle['open'], 
+    #                 hammer_close_price
+    #             )
+    #             features[f'{tf}_quarter'] = quarter
                 
-                # Vectorized position percentage
-                candle_percent = _calculate_candle_position_percent_vectorized(
-                    htf_candle['high'], 
-                    htf_candle['low'], 
-                    hammer_close_price
-                )
-                features[f'{tf}_candle_percent'] = round(candle_percent, 1)
+    #             # Vectorized position percentage
+    #             candle_percent = _calculate_candle_position_percent_vectorized(
+    #                 htf_candle['high'], 
+    #                 htf_candle['low'], 
+    #                 hammer_close_price
+    #             )
+    #             features[f'{tf}_candle_percent'] = round(candle_percent, 1)
                 
-                # Log for debugging (same as original)
-                self.logger.info(f"📊 {tf} Features for {instrument}:")
-                self.logger.info(f"   Fib Zone: {fib_zone} ({fib_percent:.1f}%)")
-                self.logger.info(f"   Open Rel: {features[f'{tf}_open_rel']}")
-                self.logger.info(f"   Quarter: {quarter}")
-                self.logger.info(f"   Candle %: {candle_percent:.1f}%")
+    #             # Log for debugging (same as original)
+    #             self.logger.info(f"📊 {tf} Features for {instrument}:")
+    #             self.logger.info(f"   Fib Zone: {fib_zone} ({fib_percent:.1f}%)")
+    #             self.logger.info(f"   Open Rel: {features[f'{tf}_open_rel']}")
+    #             self.logger.info(f"   Quarter: {quarter}")
+    #             self.logger.info(f"   Candle %: {candle_percent:.1f}%")
             
-            return features
+    #         return features
             
-        except Exception as e:
-            self.logger.error(f"❌ Error calculating higher TF features: {str(e)}", exc_info=True)
-            # Return empty features with all required keys (same as original)
-            features = {}
-            for tf in ['H4', 'H6', 'D', 'W']:
-                features[f'{tf}_fib_zone'] = 0
-                features[f'{tf}_fib_percent'] = 0.0
-                features[f'{tf}_open_rel'] = 'error'
-                features[f'{tf}_quarter'] = 0
-                features[f'{tf}_candle_percent'] = 50.0
-            return features
+    #     except Exception as e:
+    #         self.logger.error(f"❌ Error calculating higher TF features: {str(e)}", exc_info=True)
+    #         # Return empty features with all required keys (same as original)
+    #         features = {}
+    #         for tf in ['H4', 'H6', 'D', 'W']:
+    #             features[f'{tf}_fib_zone'] = 0
+    #             features[f'{tf}_fib_percent'] = 0.0
+    #             features[f'{tf}_open_rel'] = 'error'
+    #             features[f'{tf}_quarter'] = 0
+    #             features[f'{tf}_candle_percent'] = 50.0
+    #         return features
             
     
     @jit(nopython=True, cache=True)
