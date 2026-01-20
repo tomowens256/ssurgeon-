@@ -5861,37 +5861,65 @@ class HammerPatternScanner:
 
     def calculate_pips(self, instrument, price1, price2):
         """
-        Correct pip calculation aligned with MT5-style contracts
+        Correct pip calculation for OANDA instruments (Forex, Indices, Metals)
+        Based on actual market conventions and contract specifications
         """
         try:
             diff = abs(price1 - price2)
-            symbol = instrument.upper()
-    
-            # ---- METALS ----
-            if "XAU" in symbol:
-                # XAUUSD: 1 pip = 0.1
-                return round(diff / 0.1, 1)
-    
-            if "XAG" in symbol:
-                # XAGUSD: 1 pip = 0.01
-                return round(diff / 0.01, 1)
-    
-            # ---- FOREX ----
-            clean = symbol.replace("_", "")
-            if len(clean) == 6 and clean.isalpha():
-                if clean.endswith("JPY"):
+            symbol = instrument.upper().replace("_", "")
+            
+            # ---- FOREX PAIRS ----
+            # Forex pairs: 1 pip = 0.0001 for most pairs, 0.01 for JPY pairs
+            if len(symbol) == 6 and symbol.isalpha():
+                if symbol.endswith("JPY") or symbol[3:] == "JPY":
+                    # JPY pairs: 1 pip = 0.01
                     return round(diff / 0.01, 1)
                 else:
+                    # Non-JPY pairs: 1 pip = 0.0001
                     return round(diff / 0.0001, 1)
-    
+            
+            # ---- METALS ----
+            # Gold (XAU): Typically quoted to 2 decimal places, 1 pip = 0.01
+            if "XAU" in symbol:
+                # XAU/USD, XAU/EUR, XAU/JPY: 1 pip = 0.01
+                return round(diff / 0.01, 1)
+            
+            # Silver (XAG): Typically quoted to 3 decimal places, 1 pip = 0.001
+            if "XAG" in symbol:
+                return round(diff / 0.001, 1)
+            
             # ---- INDICES ----
-            # Indices: points = pips
-            return round(diff, 1)
-    
+            indices = ['DE30', 'EU50', 'NAS100', 'SPX500', 'US500', 'USTEC', 'US30', 
+                       'UK100', 'AUS200', 'FRA40', 'ESP35', 'JPN225']
+            
+            # Check if it's an index
+            for idx in indices:
+                if idx in symbol:
+                    # For indices: 1 point = 1 pip (minimum price movement)
+                    # Most indices move in 1.0 increments (points)
+                    return round(diff / 1.0, 1)
+            
+            # ---- ENERGY/COMMODITIES ----
+            # USOIL, UKOIL: Typically quoted to 2 decimal places, 1 pip = 0.01
+            if "OIL" in symbol:
+                return round(diff / 0.01, 1)
+            
+            # NATGAS: Typically quoted to 3 decimal places
+            if "GAS" in symbol:
+                return round(diff / 0.001, 1)
+            
+            # ---- CRYPTO ----
+            # Crypto: Typically quoted to 2 decimal places
+            if any(crypto in symbol for crypto in ['BTC', 'ETH', 'XRP', 'LTC', 'BCH']):
+                return round(diff / 1.00, 1)  # Crypto often moves in 1.00 increments
+            
+            # Default fallback for unknown instruments
+            self.logger.warning(f"⚠️ Unknown instrument type for pip calculation: {instrument}, using default 0.0001")
+            return round(diff / 0.0001, 1)
+            
         except Exception as e:
-            self.logger.error(f"❌ Pip calculation error: {e}")
+            self.logger.error(f"❌ Pip calculation error for {instrument}: {e}")
             return None
-
 
     def _clean_string_for_csv(self, text):
         """Clean string to avoid encoding issues in CSV"""
@@ -5910,100 +5938,206 @@ class HammerPatternScanner:
         return text.strip()
 
     def get_pip_value_per_micro_lot(self, instrument, current_price=None):
-        """Get pip value in USD for 1 micro lot (1000 units) of instrument"""
+        """
+        Get accurate pip value in USD for 1 micro lot (1000 units) of instrument
+        Based on actual contract specifications for OANDA
+        """
         try:
-            # Forex pairs
-            forex_usd_quote = ['EUR_USD', 'GBP_USD', 'AUD_USD', 'NZD_USD', 'USD_CAD', 'USD_CHF']
-            forex_jpy_quote = ['USD_JPY', 'EUR_JPY', 'GBP_JPY', 'AUD_JPY']
+            symbol = instrument.upper().replace("_", "")
             
-            # Indices - typically quoted in the native currency
-            indices_usd = ['NAS100_USD', 'SPX500_USD', 'US30', 'US500', 'USTEC']
-            indices_eur = ['DE30_EUR', 'EU50_EUR']
+            # ---- FOREX ----
+            # Forex standard: 1 standard lot = 100,000 units, 1 micro lot = 1,000 units
+            # For Forex, pip value = (0.0001 / exchange rate) * units
+            
+            # Forex with USD as quote currency (EUR/USD, GBP/USD, AUD/USD, NZD/USD)
+            # 1 pip = $0.10 per micro lot
+            usd_quote_pairs = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD']
+            if symbol in usd_quote_pairs:
+                return 0.10  # $0.10 per pip per micro lot
+            
+            # Forex with USD as base currency (USD/JPY, USD/CAD, USD/CHF)
+            if symbol.startswith('USD'):
+                # For USD/JPY: 1 pip = 0.01, pip value = 0.01 * 1000 / current_price
+                if symbol == 'USDJPY':
+                    if current_price:
+                        return round(0.01 * 1000 / current_price, 2)
+                    return 0.09  # Approx at 110.00 JPY/USD
+                
+                # For USD/CAD: 1 pip = 0.0001, pip value = 0.0001 * 1000 / USDCAD rate
+                if symbol == 'USDCAD':
+                    if current_price:
+                        return round(0.0001 * 1000 / current_price, 2)
+                    return 0.08  # Approx at 1.25 CAD/USD
+                
+                # For USD/CHF
+                if symbol == 'USDCHF':
+                    if current_price:
+                        return round(0.0001 * 1000 / current_price, 2)
+                    return 0.10  # Approx at 1.00 CHF/USD
+            
+            # Cross pairs (EUR/JPY, GBP/JPY, etc.)
+            # Need to convert through USD
+            # Formula: pip value = (0.01 * 1000) / USDJPY_rate (for JPY pairs)
+            jpy_crosses = ['EURJPY', 'GBPJPY', 'AUDJPY', 'NZDJPY', 'CADJPY', 'CHFJPY']
+            if symbol in jpy_crosses:
+                # For JPY crosses, we need USD/JPY rate
+                # This is simplified - in production you'd fetch the actual rate
+                return 0.09  # Approximate
+            
+            # EUR/GBP, EUR/AUD, etc.
+            if len(symbol) == 6 and symbol.isalpha() and symbol not in jpy_crosses:
+                # For other crosses, approximate as $0.10
+                return 0.10
+            
+            # ---- METALS ----
+            # Gold (XAU/USD): 1 standard lot = 100 ounces, 1 micro lot = 1 ounce
+            # 1 pip = 0.01, value = 0.01 * 1 = $0.01 per pip per micro lot
+            if symbol == 'XAUUSD':
+                return 0.01
+            
+            # Silver (XAG/USD): 1 standard lot = 5000 ounces, 1 micro lot = 50 ounces
+            # 1 pip = 0.001, value = 0.001 * 50 = $0.05 per pip per micro lot
+            if symbol == 'XAGUSD':
+                return 0.05
+            
+            # Gold in other currencies (XAU/EUR, XAU/JPY)
+            if 'XAU' in symbol and symbol != 'XAUUSD':
+                # Need conversion to USD
+                # Simplified approximation
+                return 0.01
+            
+            # ---- INDICES ----
+            # Indices: 1 point = $1.00 per standard contract
+            # For OANDA, indices CFD: 1 unit = 1 contract
+            indices_usd = ['NAS100', 'SPX500', 'US500', 'USTEC', 'US30']
+            indices_eur = ['DE30', 'EU50', 'FRA40']
             indices_gbp = ['UK100']
             indices_aud = ['AUS200']
             
-            # Metals
-            metals = ['XAU_USD', 'XAG_USD', 'XAU_JPY', 'XAU_EUR']
+            if any(idx in symbol for idx in indices_usd):
+                # US indices: 1 point = $1.00 per standard lot
+                # 1 micro lot = 0.01 standard lot = $0.01 per point
+                return 0.01
             
-            # Get instrument type
-            if instrument in forex_usd_quote:
-                # Forex with USD quote: 1 pip = $0.10 per micro lot
+            elif any(idx in symbol for idx in indices_eur):
+                # EUR indices: 1 point = €1.00 per standard lot
+                # Need EUR/USD conversion
+                eur_usd_rate = 1.10  # Approximate
+                return round(0.01 * eur_usd_rate, 2)  # ~$0.011
+            
+            elif any(idx in symbol for idx in indices_gbp):
+                # UK indices: 1 point = £1.00 per standard lot
+                gbp_usd_rate = 1.30  # Approximate
+                return round(0.01 * gbp_usd_rate, 2)  # ~$0.013
+            
+            elif any(idx in symbol for idx in indices_aud):
+                # AUS indices: 1 point = AUD 1.00 per standard lot
+                aud_usd_rate = 0.70  # Approximate
+                return round(0.01 * aud_usd_rate, 2)  # ~$0.007
+            
+            # ---- COMMODITIES ----
+            if 'OIL' in symbol:
+                # Oil: 1 pip = 0.01, 1 standard lot = 1000 barrels
+                # 1 micro lot = 10 barrels, value = 0.01 * 10 = $0.10 per pip
                 return 0.10
-            elif instrument in forex_jpy_quote:
-                # Forex with JPY quote: 1 pip = ~$0.09 per micro lot (approximate)
-                # Actual value depends on USD/JPY rate, but we'll use approximation
-                return 0.09
-            elif instrument in indices_usd:
-                # USD indices: 1 point = $1 per contract, micro lot = 0.01 contracts
-                return 0.01  # Approximate
-            elif instrument in indices_eur:
-                # EUR indices: 1 point = €1 per contract
-                # Need EUR/USD rate for conversion
-                if current_price:
-                    return 0.01 * current_price  # Very approximate
-                return 0.011  # Approximate at 1.10 EUR/USD
-            elif instrument == 'UK100':
-                # UK100: 1 point = £1 per contract
-                return 0.013  # Approximate at 1.30 GBP/USD
-            elif instrument == 'AUS200':
-                # AUS200: 1 point = AUD 1 per contract
-                return 0.007  # Approximate at 0.70 AUD/USD
-            elif 'XAU' in instrument:
-                # Gold: 1 pip (0.01) = $0.10 per micro lot for XAU_USD
-                if '_USD' in instrument:
-                    return 0.10
-                elif '_JPY' in instrument:
-                    return 0.09  # Approximate
-                elif '_EUR' in instrument:
-                    return 0.11  # Approximate
-            elif 'XAG' in instrument:
-                # Silver: 1 pip (0.001) = $0.05 per micro lot (approximate)
-                return 0.05
+            
+            if 'GAS' in symbol:
+                # Natural gas: 1 pip = 0.001, 1 standard lot = 10,000 MMBtu
+                # 1 micro lot = 100 MMBtu, value = 0.001 * 100 = $0.10 per pip
+                return 0.10
             
             # Default for unknown instruments
+            self.logger.warning(f"⚠️ Unknown instrument for pip value: {instrument}, using default $0.10")
             return 0.10
             
         except Exception as e:
-            self.logger.error(f"Error getting pip value: {str(e)}")
+            self.logger.error(f"❌ Error getting pip value for {instrument}: {str(e)}")
             return 0.10  # Safe default
     
-    def calculate_position_sizes(self, instrument, sl_distance_pips, entry_price=None):
-        """Calculate position sizes for $10 and $100 risk"""
+    def calculate_position_sizes(self, instrument, entry_price, sl_price, risk_amount=50.0):
+        """
+        Calculate position sizes for given risk amount (in USD)
+        Based on accurate pip value calculations
+        
+        Args:
+            instrument: Trading symbol (e.g., 'EUR_USD')
+            entry_price: Entry price
+            sl_price: Stop loss price
+            risk_amount: Risk amount in USD (default: $50)
+        
+        Returns:
+            position_size: Position size in units (NOT lots)
+            risk_per_pip: Risk per pip in USD
+        """
         try:
-            # Get pip value for this instrument
-            pip_value = self.get_pip_value_per_micro_lot(instrument, entry_price)
-            
-            if sl_distance_pips <= 0:
-                self.logger.warning(f"Invalid SL distance: {sl_distance_pips} pips")
+            # Safety checks
+            if entry_price <= 0 or sl_price <= 0:
+                self.logger.warning(f"Invalid prices for {instrument}: entry={entry_price}, sl={sl_price}")
                 return 0, 0
             
-            # Calculate risk per micro lot
-            risk_per_micro_lot = sl_distance_pips * pip_value
+            if risk_amount <= 0:
+                risk_amount = 50.0  # Default $50 risk
             
-            # Calculate lots for $10 and $100 risk
-            # Formula: Lots = Risk Amount / (SL Pips × Pip Value per Micro Lot)
-            risk_10_lots = 10.0 / risk_per_micro_lot if risk_per_micro_lot > 0 else 0
-            risk_100_lots = 100.0 / risk_per_micro_lot if risk_per_micro_lot > 0 else 0
+            # Calculate pip distance to stop loss
+            pip_distance = self.calculate_pips(instrument, entry_price, sl_price)
+            if pip_distance is None or pip_distance <= 0:
+                self.logger.warning(f"Invalid pip distance for {instrument}: {pip_distance}")
+                return 0, 0
             
-            # Round to 2 decimal places
-            risk_10_lots = round(risk_10_lots, 2)
-            risk_100_lots = round(risk_100_lots, 2)
+            # Get pip value per micro lot
+            pip_value_per_micro = self.get_pip_value_per_micro_lot(instrument, entry_price)
             
-            # Cap at reasonable maximum (100 micro lots = 0.1 standard lots)
-            risk_10_lots = min(risk_10_lots, 100.0)
-            risk_100_lots = min(risk_100_lots, 100.0)
+            # Calculate risk per pip for position sizing
+            # Formula: Risk per pip = Risk amount / Pip distance
+            risk_per_pip = risk_amount / pip_distance
             
+            # Calculate position size in units
+            # Formula: Position size (units) = Risk per pip / Pip value per unit
+            # For Forex: Standard lot = 100,000 units, Micro lot = 1,000 units
+            
+            # First, get pip value per unit (1 unit)
+            pip_value_per_unit = pip_value_per_micro / 1000.0  # Convert from micro lot (1000 units) to per unit
+            
+            # Calculate position size in units
+            if pip_value_per_unit > 0:
+                position_units = risk_per_pip / pip_value_per_unit
+            else:
+                self.logger.error(f"Zero pip value per unit for {instrument}")
+                return 0, 0
+            
+            # Convert to lots for logging (1 standard lot = 100,000 units)
+            standard_lots = position_units / 100000.0
+            micro_lots = position_units / 1000.0
+            
+            # Apply reasonable limits
+            # Maximum position size: 100 standard lots (10,000,000 units)
+            max_units = 10000000
+            if position_units > max_units:
+                self.logger.warning(f"Position size {position_units:.0f} units exceeds max, capping at {max_units}")
+                position_units = max_units
+            
+            # Minimum position size: 1000 units (1 micro lot)
+            min_units = 1000
+            if position_units < min_units:
+                self.logger.warning(f"Position size {position_units:.0f} units below min, using {min_units}")
+                position_units = min_units
+            
+            # Round to nearest 1000 units (micro lot increments)
+            position_units = round(position_units / 1000) * 1000
+            
+            # Log the calculation
             self.logger.info(f"📊 Position sizing for {instrument}:")
-            self.logger.info(f"   SL distance: {sl_distance_pips:.1f} pips")
-            self.logger.info(f"   Pip value: ${pip_value:.3f} per micro lot")
-            self.logger.info(f"   Risk per micro lot: ${risk_per_micro_lot:.2f}")
-            self.logger.info(f"   $10 risk: {risk_10_lots:.2f} micro lots")
-            self.logger.info(f"   $100 risk: {risk_100_lots:.2f} micro lots")
+            self.logger.info(f"   Entry: {entry_price:.5f}, SL: {sl_price:.5f}")
+            self.logger.info(f"   Pip distance: {pip_distance:.1f} pips")
+            self.logger.info(f"   Pip value per micro lot: ${pip_value_per_micro:.3f}")
+            self.logger.info(f"   Risk amount: ${risk_amount:.2f}")
+            self.logger.info(f"   Risk per pip: ${risk_per_pip:.3f}")
+            self.logger.info(f"   Position size: {position_units:.0f} units ({standard_lots:.3f} standard lots)")
             
-            return risk_10_lots, risk_100_lots
+            return position_units, risk_per_pip
             
         except Exception as e:
-            self.logger.error(f"Error calculating position sizes: {str(e)}")
+            self.logger.error(f"❌ Error calculating position size for {instrument}: {str(e)}", exc_info=True)
             return 0, 0
     
     def _get_crt_zones(self, trigger_data):
