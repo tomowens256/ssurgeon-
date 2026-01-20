@@ -4883,6 +4883,161 @@ class NewsCalendar:
         except Exception as e:
             self.logger.error(f"❌ Error clearing cache: {str(e)}")
 
+
+import threading
+import time
+from collections import OrderedDict
+from datetime import datetime, timedelta
+
+class CandleDataCache:
+    """
+    Thread-safe cache for candle data with TTL expiration
+    Prevents duplicate API calls from multiple threads
+    """
+    
+    def __init__(self, ttl_seconds=30, max_size=100):
+        """
+        Args:
+            ttl_seconds: Time-to-live for cache entries (default: 30 seconds)
+            max_size: Maximum number of cache entries (default: 100)
+        """
+        self.cache = OrderedDict()
+        self.ttl = ttl_seconds
+        self.max_size = max_size
+        self.lock = threading.RLock()  # Reentrant lock for thread safety
+        self.stats = {
+            'hits': 0,
+            'misses': 0,
+            'evictions': 0,
+            'total_requests': 0
+        }
+        
+    def _make_key(self, instrument, timeframe, count):
+        """Create a unique cache key"""
+        return f"{instrument}_{timeframe}_{count}"
+    
+    def _is_expired(self, entry):
+        """Check if cache entry has expired"""
+        if 'timestamp' not in entry:
+            return True
+        
+        age = time.time() - entry['timestamp']
+        return age > self.ttl
+    
+    def _cleanup(self):
+        """Remove expired entries and maintain max size"""
+        current_time = time.time()
+        
+        # Remove expired entries
+        expired_keys = []
+        for key, entry in self.cache.items():
+            if current_time - entry['timestamp'] > self.ttl:
+                expired_keys.append(key)
+        
+        for key in expired_keys:
+            del self.cache[key]
+            self.stats['evictions'] += 1
+        
+        # Trim to max size (LRU eviction)
+        while len(self.cache) > self.max_size:
+            # Remove oldest entry
+            self.cache.popitem(last=False)
+            self.stats['evictions'] += 1
+    
+    def get(self, instrument, timeframe, count):
+        """
+        Get cached candle data if available and not expired
+        
+        Returns:
+            DataFrame if found and valid, None otherwise
+        """
+        with self.lock:
+            self.stats['total_requests'] += 1
+            key = self._make_key(instrument, timeframe, count)
+            
+            if key in self.cache:
+                entry = self.cache[key]
+                
+                # Move to end (most recently used)
+                self.cache.move_to_end(key)
+                
+                if not self._is_expired(entry):
+                    self.stats['hits'] += 1
+                    # Log cache hit
+                    self._log_cache_hit(key, entry)
+                    return entry['data']
+                else:
+                    # Remove expired entry
+                    del self.cache[key]
+            
+            self.stats['misses'] += 1
+            return None
+    
+    def set(self, instrument, timeframe, count, data):
+        """
+        Store candle data in cache
+        """
+        with self.lock:
+            key = self._make_key(instrument, timeframe, count)
+            
+            # Create cache entry
+            entry = {
+                'timestamp': time.time(),
+                'data': data,
+                'instrument': instrument,
+                'timeframe': timeframe,
+                'count': count
+            }
+            
+            # Store in cache
+            self.cache[key] = entry
+            
+            # Move to end (most recently used)
+            self.cache.move_to_end(key)
+            
+            # Cleanup old entries
+            self._cleanup()
+            
+            # Log cache set
+            self._log_cache_set(key, entry)
+    
+    def _log_cache_hit(self, key, entry):
+        """Log cache hit (you can customize this)"""
+        age = time.time() - entry['timestamp']
+        # You can enable this for debugging:
+        # print(f"📦 Cache HIT: {key} (age: {age:.1f}s)")
+    
+    def _log_cache_set(self, key, entry):
+        """Log cache set (you can customize this)"""
+        # You can enable this for debugging:
+        # print(f"📦 Cache SET: {key}")
+    
+    def get_stats(self):
+        """Get cache statistics"""
+        with self.lock:
+            hit_rate = (self.stats['hits'] / self.stats['total_requests'] * 100) if self.stats['total_requests'] > 0 else 0
+            return {
+                **self.stats,
+                'hit_rate_percent': round(hit_rate, 2),
+                'current_size': len(self.cache),
+                'ttl_seconds': self.ttl
+            }
+    
+    def clear(self):
+        """Clear all cache entries"""
+        with self.lock:
+            self.cache.clear()
+            self.stats['hits'] = 0
+            self.stats['misses'] = 0
+            self.stats['evictions'] = 0
+            self.stats['total_requests'] = 0
+    
+    def __str__(self):
+        stats = self.get_stats()
+        return (f"CandleCache(Size: {stats['current_size']}/{self.max_size}, "
+                f"Hits: {stats['hits']}, Misses: {stats['misses']}, "
+                f"Hit Rate: {stats['hit_rate_percent']}%)")
+
 class TimeframeScanner:
     """Manages independent scanning for a specific timeframe"""
     
@@ -4907,12 +5062,18 @@ class TimeframeScanner:
             self.logger.info(f"🔍 Starting independent scan for {self.instrument} {self.timeframe}")
             
             while datetime.now(NY_TZ) < self.scan_end:
-                # Check for CRT invalidation
+                # Check for CRT invalidation - USE CACHED VERSION
                 if self.criteria == 'CRT+SMT':
                     crt_zone = self.zones[0] if self.zones else None
                     if crt_zone and 'invalidation_level' in crt_zone:
-                        df_current = fetch_candles(self.instrument, 'M1', count=2, 
-                                                  api_key=self.parent.credentials['oanda_api_key'])
+                        # Use force_fetch=True for real-time price check
+                        df_current = self.parent.cached_fetch_candles(
+                            self.instrument, 
+                            'M1', 
+                            count=2,
+                            force_fetch=True  # Real-time data
+                        )
+                        
                         if not df_current.empty:
                             current_price = df_current.iloc[-1]['close']
                             
@@ -4931,9 +5092,13 @@ class TimeframeScanner:
                 # Small buffer
                 time.sleep(1)
                 
-                # Fetch data
-                df = fetch_candles(self.instrument, self.timeframe, count=10, 
-                                 api_key=self.parent.credentials['oanda_api_key'])
+                # 🔥 USE CACHED DATA FOR CANDLE FETCHING 🔥
+                df = self.parent.cached_fetch_candles(
+                    self.instrument, 
+                    self.timeframe, 
+                    count=10,
+                    force_fetch=False  # Can use cache for historical data
+                )
                 
                 if df.empty or len(df) < 2:
                     time.sleep(1)
@@ -5019,6 +5184,13 @@ class HammerPatternScanner:
         self.data_cache = {}
         self.cache_expiry = {}  # Track when cache expires
         self.cache_duration = 45  # Cache for 60 seconds
+
+        # Add this instead:
+        self.candle_cache = CandleDataCache(
+            ttl_seconds=45,      # Cache for 45 seconds
+            max_size=2000         # Store up to 200 cache entries
+        )
+        self.logger.info(f"📦 Candle data cache initialized (TTL: 45s, Max: 2000 entries)")
                      
                      
         
@@ -5238,6 +5410,49 @@ class HammerPatternScanner:
                     
         except Exception as e:
             self.logger.error(f"❌ Failed to initialize CSV: {str(e)}")
+
+    def cached_fetch_candles(self, instrument, timeframe, count, force_fetch=False):
+        """
+        Fetch candles with caching support - used by ALL scanners
+        
+        Args:
+            force_fetch: If True, bypass cache and fetch fresh data (for real-time)
+        """
+        try:
+            # Generate cache key
+            cache_key = f"{instrument}_{timeframe}_{count}"
+            
+            # Skip cache if force_fetch is True (for real-time data like M1)
+            if not force_fetch:
+                cached_data = self.candle_cache.get(instrument, timeframe, count)
+                if cached_data is not None:
+                    # Log only occasionally to avoid spam
+                    if count % 10 == 0:  # Log every 10th cached request
+                        self.logger.debug(f"📦 Cache HIT: {instrument} {timeframe} count={count}")
+                    return cached_data
+            
+            # Cache miss or force_fetch - fetch from API
+            self.logger.debug(f"📡 Fetching FRESH: {instrument} {timeframe} count={count}")
+            fresh_data = fetch_candles(instrument, timeframe, count, 
+                                      api_key=self.credentials['oanda_api_key'])
+            
+            # Store in cache (even if empty, to prevent repeated failed calls)
+            if fresh_data is not None:
+                self.candle_cache.set(instrument, timeframe, count, fresh_data)
+                if force_fetch:
+                    self.logger.debug(f"📦 Cache SET (force): {instrument} {timeframe}")
+            else:
+                self.logger.warning(f"⚠️ No data returned for {instrument} {timeframe}")
+                # Still cache None for 10 seconds to prevent repeated failed calls
+                self.candle_cache.set(instrument, timeframe, count, pd.DataFrame(), 
+                                     ttl_override=10)
+            
+            return fresh_data
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error in cached_fetch_candles: {str(e)}")
+            # Return empty DataFrame instead of None to prevent crashes
+            return pd.DataFrame()
     
     def _generate_signal_id(self, trigger_data):
         """Create a unique signal ID for grouping multiple hammers"""
