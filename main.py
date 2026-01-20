@@ -5173,6 +5173,22 @@ class HammerPatternScanner:
         """Concurrent hammer pattern scanner with shared news calendar support"""
         
         self.credentials = credentials
+
+        # Use passed logger or create new one
+        if logger:
+            self.logger = logger
+        else:
+            # Create logger if not provided
+            import logging
+            self.logger = logging.getLogger('HammerScanner')
+            if not self.logger.handlers:
+                handler = logging.StreamHandler()
+                formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+                handler.setFormatter(formatter)
+                self.logger.addHandler(handler)
+                self.logger.setLevel(logging.INFO)
+        
+        self.logger.info("🔨 Initializing HammerPatternScanner...")
                      
         # Webhook configuration - set your values here
         self.webhook_url = "https://d4a270af4ba7.ngrok-free.app/webhook"
