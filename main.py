@@ -7687,8 +7687,8 @@ class HammerPatternScanner:
             self.logger.error(f"Error calculating candle position %: {str(e)}")
             return 50.0
 
-    def calculate_higher_tf_features_quick_fix(self, instrument, hammer_close_price, hammer_time, timeframe_data=None):
-        """Quick fix - just change timedelta to pd.Timedelta"""
+    def calculate_higher_tf_features(self, instrument, hammer_close_price, hammer_time, timeframe_data=None):
+        """Calculate higher timeframe features using pre-fetched data - FIXED VERSION"""
         try:
             features = {}
             higher_tfs = ['H4', 'H6', 'D', 'W']
@@ -7702,7 +7702,6 @@ class HammerPatternScanner:
                     df = fetch_candles(instrument, tf, count=100, 
                                       api_key=self.credentials['oanda_api_key'])
                 
-                
                 if df.empty:
                     self.logger.warning(f"⚠️ No {tf} data for {instrument}")
                     # Set default values for all features
@@ -7714,9 +7713,7 @@ class HammerPatternScanner:
                     continue
                 
                 # Convert hammer_time to match dataframe timezone
-                # First, make sure hammer_time is a datetime
                 if isinstance(hammer_time, str):
-                    from datetime import datetime
                     hammer_time = datetime.strptime(hammer_time, '%Y-%m-%d %H:%M:%S')
                 
                 # Ensure both are timezone aware
@@ -7734,17 +7731,16 @@ class HammerPatternScanner:
                     candle_open = candle['time']
                     
                     # Calculate candle close time based on timeframe
-                    # QUICK FIX: Change timedelta to pd.Timedelta
                     if tf == 'H4':
-                        candle_close = candle_open + pd.Timedelta(hours=4)
+                        candle_close = candle_open + timedelta(hours=4)
                     elif tf == 'H6':
-                        candle_close = candle_open + pd.Timedelta(hours=6)
+                        candle_close = candle_open + timedelta(hours=6)
                     elif tf == 'D':
-                        candle_close = candle_open + pd.Timedelta(days=1)
+                        candle_close = candle_open + timedelta(days=1)
                     elif tf == 'W':
-                        candle_close = candle_open + pd.Timedelta(weeks=1)
+                        candle_close = candle_open + timedelta(weeks=1)
                     else:
-                        candle_close = candle_open + pd.Timedelta(hours=4)  # default
+                        candle_close = candle_open + timedelta(hours=4)  # default
                     
                     if candle_open <= hammer_time < candle_close:
                         htf_candle = candle
