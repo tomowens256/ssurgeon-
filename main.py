@@ -7096,12 +7096,11 @@ class HammerPatternScanner:
         """Process a single hammer and record it to CSV - FIXED VERSION"""
         try:
             # Get current price for entry
-            current_df = fetch_candles(instrument, 'M1', count=2, api_key=self.credentials['oanda_api_key'])
+            current_df = fetch_candles(instrument, tf, count=1, api_key=self.credentials['oanda_api_key'])
             if current_df.empty:
                 self.logger.error(f"❌ Cannot get current price for {instrument}")
                 return False
-            
-            current_price = current_df.iloc[-1]['close']
+            current_price = current_df.iloc[-1]['open']
             current_time = datetime.now(NY_TZ)
             
             # Calculate signal latency
