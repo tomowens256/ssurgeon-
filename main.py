@@ -8910,7 +8910,7 @@ class HammerPatternScanner:
                     trade_data['open_tp_result'] = "-1"
                 
                 # Update for SL hit - RR = 0
-                trade_data['tp_level_hit'] = 0  # 0 RR for SL hit
+                trade_data['tp_level_hit'] = -1  # 0 RR for SL hit
                 trade_data['time_to_exit_seconds'] = int(time_seconds) if time_seconds else 0
                 trade_data['exit_time'] = hit_time.strftime('%Y-%m-%d %H:%M:%S')
             
