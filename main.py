@@ -6865,7 +6865,7 @@ class HammerPatternScanner:
     def _calculate_half_trend(self, df, amplitude=2, atr_period=100):
         try:
             import numpy as np
-            import pandas as pd  # <-- ADD THIS LINE
+            import pandas as pd  # ADD THIS LINE
             
             n = len(df)
             trend = np.zeros(n)
@@ -6886,7 +6886,7 @@ class HammerPatternScanner:
             high_low = df['high'] - df['low']
             high_close_prev = abs(df['high'] - df['close'].shift(1))
             low_close_prev = abs(df['low'] - df['close'].shift(1))
-            tr = pd.concat([high_low, high_close_prev, low_close_prev], axis=1).max(axis=1)  # BUG: pd not imported here!
+            tr = pd.concat([high_low, high_close_prev, low_close_prev], axis=1).max(axis=1)
             
             # Calculate ATR (SMA of TR)
             atr = tr.rolling(window=atr_period, min_periods=1).mean() / 2
