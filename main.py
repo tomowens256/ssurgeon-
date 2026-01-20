@@ -7241,7 +7241,24 @@ class HammerPatternScanner:
             candle_close_time = candle['time']
             if isinstance(candle_close_time, str):
                 candle_close_time = datetime.strptime(candle_close_time, '%Y-%m-%d %H:%M:%S')
-            signal_latency_seconds = (current_time - candle_close_time).total_seconds()
+            
+            # Calculate candle open time based on timeframe
+            # First, convert timeframe string to minutes
+            tf_to_minutes = {
+                'M1': 1, 'M5': 5, 'M15': 15, 'M30': 30,
+                'H1': 60
+            }
+            
+            if tf in tf_to_minutes:
+                candle_duration_minutes = tf_to_minutes[tf]
+                candle_open_time = candle_close_time - timedelta(minutes=candle_duration_minutes)
+            else:
+                # Default to 1 hour if timeframe not found
+                candle_open_time = candle_close_time - timedelta(hours=1)
+                self.logger.warning(f"⚠️ Unknown timeframe {tf}, using 1-hour duration for latency calculation")
+            
+            # Now calculate latency from OPEN time to now
+            signal_latency_seconds = (current_time - candle_open_time).total_seconds()
     
             # Get news context
             news_context = {}
@@ -7350,12 +7367,21 @@ class HammerPatternScanner:
                 self.logger.info(f"⏭️ Skipping webhook for {instrument} - No PSP (has_psp = {has_psp})")
             
     
-            # Calculate position sizes for risk management
-            risk_10_lots, risk_100_lots = self.calculate_position_sizes(
-                instrument, 
-                sl_distance_pips, 
-                current_price
+            # First calculate accurate position size for $50 risk
+            position_units, risk_per_pip = self.calculate_position_sizes(
+                instrument,
+                current_price,  # entry_price
+                sl_price,       # sl_price
+                50.0            # $50 risk
             )
+            
+            # Convert to lots for your CSV (if needed)
+            risk_10_lots = position_units / 1000.0  # Micro lots for $50 risk
+            risk_100_lots = risk_10_lots * 10       # Scale for $500 risk (10x)
+            
+            # Round for display
+            risk_10_lots = round(risk_10_lots, 2)
+            risk_100_lots = round(risk_100_lots, 2)
             
             # TP distances
             tp_distances = {}
