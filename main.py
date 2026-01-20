@@ -6441,8 +6441,8 @@ class HammerPatternScanner:
             self.logger.info(f"🔷 CRT Setup: {instrument} {direction} on {trigger_timeframe}")
             
             # For CRT, we use the previous candle of the CRT timeframe
-            df = fetch_candles(instrument, trigger_timeframe, count=5, 
-                              api_key=self.credentials['oanda_api_key'])
+            # Use cached version
+            df = self.cached_fetch_candles(instrument, trigger_timeframe, count=5, force_fetch=True)
             
             if df.empty or len(df) < 2:
                 self.logger.error(f"❌ No data for CRT {trigger_timeframe}")
@@ -6472,10 +6472,12 @@ class HammerPatternScanner:
                 # Bearish CRT: SL is above CRT candle high
                 sl_price = crt_candle['high']
                 
-                # 2. Check if price has already traded above SL (using latest candle)
+                # 2. Check if price has already traded above SL (using ONLY current candle)
+                # We only check the current/latest candle, NOT past candles
                 if latest_candle['high'] > sl_price:
-                    self.logger.warning(f"⚠️  Bearish CRT Invalidated: Price has already traded above SL")
-                    self.logger.info(f"   Latest candle high: {latest_candle['high']:.5f}, SL: {sl_price:.5f}")
+                    self.logger.warning(f"⚠️  Bearish CRT Invalidated: Current candle high exceeded SL")
+                    self.logger.info(f"   Current candle high: {latest_candle['high']:.5f}, SL: {sl_price:.5f}")
+                    self.logger.info(f"   Time of current candle: {latest_candle['time']}")
                     return {
                         'zones': [],
                         'sl_price': None,
@@ -6483,7 +6485,7 @@ class HammerPatternScanner:
                         'direction': direction,
                         'criteria': criteria,
                         'is_valid': False,
-                        'error': 'SL already breached (price traded above)'
+                        'error': 'SL breached by current candle'
                     }
                 
                 # 3. Calculate TP: Subtract range from CRT candle low
@@ -6500,10 +6502,12 @@ class HammerPatternScanner:
                 # Bullish CRT: SL is below CRT candle low
                 sl_price = crt_candle['low']
                 
-                # 2. Check if price has already traded below SL (using latest candle)
+                # 2. Check if price has already traded below SL (using ONLY current candle)
+                # We only check the current/latest candle, NOT past candles
                 if latest_candle['low'] < sl_price:
-                    self.logger.warning(f"⚠️  Bullish CRT Invalidated: Price has already traded below SL")
-                    self.logger.info(f"   Latest candle low: {latest_candle['low']:.5f}, SL: {sl_price:.5f}")
+                    self.logger.warning(f"⚠️  Bullish CRT Invalidated: Current candle low below SL")
+                    self.logger.info(f"   Current candle low: {latest_candle['low']:.5f}, SL: {sl_price:.5f}")
+                    self.logger.info(f"   Time of current candle: {latest_candle['time']}")
                     return {
                         'zones': [],
                         'sl_price': None,
@@ -6511,7 +6515,7 @@ class HammerPatternScanner:
                         'direction': direction,
                         'criteria': criteria,
                         'is_valid': False,
-                        'error': 'SL already breached (price traded below)'
+                        'error': 'SL breached by current candle'
                     }
                 
                 # 3. Calculate TP: Add range to CRT candle high
@@ -6524,40 +6528,7 @@ class HammerPatternScanner:
                 self.logger.info(f"   Candle Range: {candle_range:.5f}")
                 self.logger.info(f"   TP (CRT High + Range): {tp_price:.5f}")
             
-            # Additional validation: Check if SL is already breached by any candle in recent history
-            # (Looking at last 5 candles including the CRT candle itself)
-            candles_to_check = df.tail(5)
-            
-            if direction == 'bearish':
-                # Check if any candle high exceeds the SL
-                max_high_in_history = candles_to_check['high'].max()
-                if max_high_in_history > sl_price:
-                    self.logger.warning(f"⚠️  Bearish CRT Invalidated: Price history shows breach above SL")
-                    self.logger.info(f"   Max high in last 5 candles: {max_high_in_history:.5f}, SL: {sl_price:.5f}")
-                    return {
-                        'zones': [],
-                        'sl_price': None,
-                        'tp_price': None,
-                        'direction': direction,
-                        'criteria': criteria,
-                        'is_valid': False,
-                        'error': 'SL breached in recent history'
-                    }
-            else:  # bullish
-                # Check if any candle low is below the SL
-                min_low_in_history = candles_to_check['low'].min()
-                if min_low_in_history < sl_price:
-                    self.logger.warning(f"⚠️  Bullish CRT Invalidated: Price history shows breach below SL")
-                    self.logger.info(f"   Min low in last 5 candles: {min_low_in_history:.5f}, SL: {sl_price:.5f}")
-                    return {
-                        'zones': [],
-                        'sl_price': None,
-                        'tp_price': None,
-                        'direction': direction,
-                        'criteria': criteria,
-                        'is_valid': False,
-                        'error': 'SL breached in recent history'
-                    }
+            # ✅ REMOVED: The 5-candle history check - we only check the current candle
             
             # Calculate Fibonacci zones from SL to TP
             fib_zones = self._calculate_fibonacci_levels(sl_price, tp_price, direction)
