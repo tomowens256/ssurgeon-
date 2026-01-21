@@ -8679,7 +8679,7 @@ class HammerPatternScanner:
             self.logger.error(f"❌ Error starting TP monitoring: {str(e)}")
     
     def _monitor_tp_levels(self, trade_data):
-        """Monitor and record TP hits in background with BE tracking"""
+        """Monitor and record TP hits in background with PROPER BE tracking"""
         try:
             instrument = trade_data['instrument']
             direction = trade_data['direction'].lower()
@@ -8704,10 +8704,15 @@ class HammerPatternScanner:
     
             # Initialize BE tracking state for each TP
             be_tracking = {
-                i: {'state': 'waiting', 'be_triggered': False, 'outcome': 'none'}
+                i: {
+                    'state': 'waiting',  # waiting, tracking, completed
+                    'price_returned_to_entry': False,  # Did price come back to entry?
+                    'next_tp_hit': False,  # Was next TP hit?
+                    'sl_hit': False,  # Was SL hit?
+                    'outcome': 'pending'  # pending, hit, miss
+                }
                 for i in range(1, 11)
             }
-            be_tracking['open'] = {'state': 'waiting', 'be_triggered': False, 'outcome': 'none'}
             
             # Track which TPs have been hit
             hit_tps = set()
@@ -8717,8 +8722,8 @@ class HammerPatternScanner:
             check_interval = 1  # Check every 1 second
             
             while datetime.now(NY_TZ) - start_time < monitor_duration:
-                # Get current price
-                df = fetch_candles(instrument, 'M1', count=2, api_key=self.credentials['oanda_api_key'])
+                # Get current price - USE CACHED VERSION
+                df = self.cached_fetch_candles(instrument, 'M1', count=2, force_fetch=True)
                 if df.empty:
                     time.sleep(check_interval)
                     continue
@@ -8727,73 +8732,39 @@ class HammerPatternScanner:
                 current_time = datetime.now(NY_TZ)
                 
                 # Check SL hit
+                sl_hit = False
                 if direction == 'bearish' and current_price >= sl_price:
+                    sl_hit = True
                     self._record_tp_result(trade_data, 'SL', -1, current_time)
-                    
-                    # Set BE outcomes for all tracked TPs
-                    for tp_level in hit_tps:
-                        if tp_level != 'open':
-                            if be_tracking[tp_level]['state'] == 'tracking':
-                                # If SL hit without BE being triggered, BE would not have helped
-                                if not be_tracking[tp_level]['be_triggered']:
-                                    be_tracking[tp_level]['outcome'] = 'miss'
-                                    trade_data[f'if_BE_TP{tp_level}'] = 'miss'
-                                else:
-                                    # If BE was triggered and then SL hit, BE was helpful
-                                    be_tracking[tp_level]['outcome'] = 'hit'
-                                    trade_data[f'if_BE_TP{tp_level}'] = 'hit'
-                    
-                    if 'open' in hit_tps and be_tracking['open']['state'] == 'tracking':
-                        if not be_tracking['open']['be_triggered']:
-                            be_tracking['open']['outcome'] = 'none'
-                            trade_data['if_BE_open_TP'] = 'none'
-                        else:
-                            be_tracking['open']['outcome'] = 'hit'
-                            trade_data['if_BE_open_TP'] = 'hit'
-                    
-                    self._update_trade_in_csv(trade_data)
-                    break
-                    
                 elif direction == 'bullish' and current_price <= sl_price:
+                    sl_hit = True
                     self._record_tp_result(trade_data, 'SL', -1, current_time)
-                    
-                    # Set BE outcomes for all tracked TPs
+                
+                if sl_hit:
+                    # When SL is hit, check all TPs that were tracking
                     for tp_level in hit_tps:
-                        if tp_level != 'open':
-                            if be_tracking[tp_level]['state'] == 'tracking':
-                                if not be_tracking[tp_level]['be_triggered']:
-                                    be_tracking[tp_level]['outcome'] = 'miss'
-                                    trade_data[f'if_BE_TP{tp_level}'] = 'miss'
-                                else:
-                                    be_tracking[tp_level]['outcome'] = 'hit'
-                                    trade_data[f'if_BE_TP{tp_level}'] = 'hit'
-                    
-                    if 'open' in hit_tps and be_tracking['open']['state'] == 'tracking':
-                        if not be_tracking['open']['be_triggered']:
-                            be_tracking['open']['outcome'] = 'none'
-                            trade_data['if_BE_open_TP'] = 'none'
-                        else:
-                            be_tracking['open']['outcome'] = 'hit'
-                            trade_data['if_BE_open_TP'] = 'hit'
+                        if be_tracking[tp_level]['state'] == 'tracking':
+                            # RULE: If SL hit after TP, it's ALWAYS a HIT for BE
+                            be_tracking[tp_level]['outcome'] = 'hit'
+                            be_tracking[tp_level]['sl_hit'] = True
+                            trade_data[f'if_BE_TP{tp_level}'] = 'hit'
                     
                     self._update_trade_in_csv(trade_data)
                     break
                 
-                # Check regular TPs
+                # Check regular TPs (1-10)
                 for i in range(1, 11):
                     tp_result_key = f'tp_1_{i}_result'
                     
-                    if trade_data.get(tp_result_key) == '':  # Not recorded yet
+                    # If TP not recorded yet and gets hit
+                    if trade_data.get(tp_result_key) == '':
+                        tp_hit = False
                         if direction == 'bearish' and current_price <= tp_prices[i]:
-                            time_seconds = (current_time - start_time).total_seconds()
-                            self._record_tp_result(trade_data, f'TP_{i}', i, current_time, time_seconds)
-                            
-                            # Start BE tracking for this TP
-                            if i not in hit_tps:
-                                hit_tps.add(i)
-                                be_tracking[i]['state'] = 'tracking'
-                                
+                            tp_hit = True
                         elif direction == 'bullish' and current_price >= tp_prices[i]:
+                            tp_hit = True
+                        
+                        if tp_hit:
                             time_seconds = (current_time - start_time).total_seconds()
                             self._record_tp_result(trade_data, f'TP_{i}', i, current_time, time_seconds)
                             
@@ -8801,93 +8772,75 @@ class HammerPatternScanner:
                             if i not in hit_tps:
                                 hit_tps.add(i)
                                 be_tracking[i]['state'] = 'tracking'
+                                be_tracking[i]['price_returned_to_entry'] = False
+                                be_tracking[i]['next_tp_hit'] = False
                 
                 # Check open TP
                 if open_tp_price and trade_data.get('open_tp_result') == '':
+                    open_tp_hit = False
                     if direction == 'bearish' and current_price <= open_tp_price:
-                        time_seconds = (current_time - start_time).total_seconds()
-                        self._record_tp_result(trade_data, 'OPEN_TP', trade_data.get('open_tp_rr', 0), current_time, time_seconds)
-                        
-                        # Start BE tracking for open TP
-                        if 'open' not in hit_tps:
-                            hit_tps.add('open')
-                            be_tracking['open']['state'] = 'tracking'
-                            
+                        open_tp_hit = True
                     elif direction == 'bullish' and current_price >= open_tp_price:
+                        open_tp_hit = True
+                    
+                    if open_tp_hit:
                         time_seconds = (current_time - start_time).total_seconds()
-                        self._record_tp_result(trade_data, 'OPEN_TP', trade_data.get('open_tp_rr', 0), current_time, time_seconds)
-                        
-                        # Start BE tracking for open TP
-                        if 'open' not in hit_tps:
-                            hit_tps.add('open')
-                            be_tracking['open']['state'] = 'tracking'
+                        self._record_tp_result(trade_data, 'OPEN_TP', 
+                                              trade_data.get('open_tp_rr', 0), 
+                                              current_time, time_seconds)
                 
                 # Update BE tracking for each hit TP
                 for tp_level in list(hit_tps):
-                    if tp_level == 'open':
-                        continue  # Handle open TP separately
+                    if be_tracking[tp_level]['state'] != 'tracking':
+                        continue
                     
-                    if be_tracking[tp_level]['state'] == 'tracking' and be_tracking[tp_level]['outcome'] == 'none':
-                        # Check if price returned to entry (within tolerance)
-                        entry_tolerance = 0.0001
-                        if abs(current_price - entry_price) <= entry_tolerance:
-                            be_tracking[tp_level]['be_triggered'] = True
-                        
-                        # Check outcomes based on current price
-                        if tp_level < 10:  # For TP1 to TP9
-                            next_tp_price = tp_prices[tp_level + 1]
-                            
-                            if direction == 'bearish':
-                                if current_price <= next_tp_price:  # Next TP hit
-                                    if be_tracking[tp_level]['be_triggered']:
-                                        be_tracking[tp_level]['outcome'] = 'miss'
-                                        trade_data[f'if_BE_TP{tp_level}'] = 'miss'
-                                    else:
-                                        be_tracking[tp_level]['outcome'] = 'hit'
-                                        trade_data[f'if_BE_TP{tp_level}'] = 'hit'
-                                    self._update_trade_in_csv(trade_data)
-                                    
-                            else:  # bullish
-                                if current_price >= next_tp_price:  # Next TP hit
-                                    if be_tracking[tp_level]['be_triggered']:
-                                        be_tracking[tp_level]['outcome'] = 'miss'
-                                        trade_data[f'if_BE_TP{tp_level}'] = 'miss'
-                                    else:
-                                        be_tracking[tp_level]['outcome'] = 'hit'
-                                        trade_data[f'if_BE_TP{tp_level}'] = 'hit'
-                                    self._update_trade_in_csv(trade_data)
-                        
-                        else:  # For TP10, check open TP
-                            if open_tp_price:
-                                if direction == 'bearish' and current_price <= open_tp_price:
-                                    if be_tracking[tp_level]['be_triggered']:
-                                        be_tracking[tp_level]['outcome'] = 'miss'
-                                        trade_data[f'if_BE_TP{tp_level}'] = 'miss'
-                                    else:
-                                        be_tracking[tp_level]['outcome'] = 'hit'
-                                        trade_data[f'if_BE_TP{tp_level}'] = 'hit'
-                                    self._update_trade_in_csv(trade_data)
-                                    
-                                elif direction == 'bullish' and current_price >= open_tp_price:
-                                    if be_tracking[tp_level]['be_triggered']:
-                                        be_tracking[tp_level]['outcome'] = 'miss'
-                                        trade_data[f'if_BE_TP{tp_level}'] = 'miss'
-                                    else:
-                                        be_tracking[tp_level]['outcome'] = 'hit'
-                                        trade_data[f'if_BE_TP{tp_level}'] = 'hit'
-                                    self._update_trade_in_csv(trade_data)
-                
-                # Update BE tracking for open TP
-                if 'open' in hit_tps and be_tracking['open']['state'] == 'tracking' and be_tracking['open']['outcome'] == 'none':
-                    # For open TP, we only track if price returns to entry and then SL
-                    entry_tolerance = 0.0001
+                    # Skip if already determined
+                    if be_tracking[tp_level]['outcome'] != 'pending':
+                        continue
+                    
+                    # 1. Check if price returned to entry (within tolerance)
+                    entry_tolerance = 0.0001  # Adjust based on instrument
                     if abs(current_price - entry_price) <= entry_tolerance:
-                        be_tracking['open']['be_triggered'] = True
-                    # Note: Open TP outcome is only set when SL is hit (handled above)
+                        be_tracking[tp_level]['price_returned_to_entry'] = True
+                    
+                    # 2. Check if next TP is hit (if not the last TP)
+                    next_tp_hit = False
+                    if tp_level < 10:  # There's a next TP
+                        next_tp_result_key = f'tp_1_{tp_level + 1}_result'
+                        if trade_data.get(next_tp_result_key) != '':
+                            next_tp_hit = True
+                    else:  # For TP10, check if open TP is hit
+                        if open_tp_price and trade_data.get('open_tp_result') != '':
+                            next_tp_hit = True
+                    
+                    if next_tp_hit:
+                        be_tracking[tp_level]['next_tp_hit'] = True
+                        
+                        # Determine outcome based on rules
+                        if be_tracking[tp_level]['price_returned_to_entry']:
+                            # Price returned to entry before next TP → MISS
+                            be_tracking[tp_level]['outcome'] = 'miss'
+                            trade_data[f'if_BE_TP{tp_level}'] = 'miss'
+                        else:
+                            # Price went directly to next TP without returning to entry → HIT
+                            be_tracking[tp_level]['outcome'] = 'hit'
+                            trade_data[f'if_BE_TP{tp_level}'] = 'hit'
+                        
+                        # Update CSV
+                        self._update_trade_in_csv(trade_data)
+                        # Mark as completed
+                        be_tracking[tp_level]['state'] = 'completed'
                 
                 time.sleep(check_interval)
             
+            # Final check for any TPs still pending at the end of monitoring
+            for tp_level in hit_tps:
+                if be_tracking[tp_level]['state'] == 'tracking' and be_tracking[tp_level]['outcome'] == 'pending':
+                    # If monitoring ended without next TP or SL, consider it incomplete
+                    trade_data[f'if_BE_TP{tp_level}'] = 'incomplete'
+            
             self.logger.info(f"📊 TP monitoring completed for {trade_data['trade_id']}")
+            self.logger.info(f"   BE Results: {[f'TP{i}:{be_tracking[i].get('outcome', 'N/A')}' for i in hit_tps]}")
             
         except Exception as e:
             self.logger.error(f"❌ Error in TP monitoring: {str(e)}")
