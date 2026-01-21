@@ -2451,11 +2451,53 @@ class RealTimeFeatureBox:
 
     
     
-    def _is_feature_expired(self, feature):
-        """Check if feature is expired based on its expiration time"""
+    def _is_feature_expired(self, feature, current_price=None):
+        """Check if feature is expired based on expiration time OR SMT swing violation"""
         current_time = datetime.now(NY_TZ)
         
-        # For SMT features, also check if formation time is too old based on cycless
+        # Check if feature has SMT data
+        smt_data = feature.get('smt_data', {}) if isinstance(feature, dict) else {}
+        
+        # If it's an SMT feature, check for swing violation
+        if smt_data or feature.get('type') == 'smt':
+            direction = smt_data.get('direction') or feature.get('direction')
+            swings = smt_data.get('swings', feature.get('swings', {}))
+            
+            # Check for swing violation if we have current price
+            if current_price is not None and direction and swings:
+                if direction == 'bearish':
+                    # Find the HIGHEST HIGH of all bearish swing highs
+                    highest_swing_high = None
+                    for swing_key, swing_info in swings.items():
+                        if isinstance(swing_info, dict):
+                            # For bearish SMT, we look at swing highs
+                            swing_high = swing_info.get('high')
+                            if swing_high is not None:
+                                if highest_swing_high is None or swing_high > highest_swing_high:
+                                    highest_swing_high = swing_high
+                    
+                    # If current price goes ABOVE the highest swing high, SMT is violated
+                    if highest_swing_high is not None and current_price > highest_swing_high:
+                        self.logger.info(f"❌ SMT Bearish swing violation: Price {current_price:.5f} > Swing High {highest_swing_high:.5f}")
+                        return True
+                    
+                elif direction == 'bullish':
+                    # Find the LOWEST LOW of all bullish swing lows
+                    lowest_swing_low = None
+                    for swing_key, swing_info in swings.items():
+                        if isinstance(swing_info, dict):
+                            # For bullish SMT, we look at swing lows
+                            swing_low = swing_info.get('low')
+                            if swing_low is not None:
+                                if lowest_swing_low is None or swing_low < lowest_swing_low:
+                                    lowest_swing_low = swing_low
+                    
+                    # If current price goes BELOW the lowest swing low, SMT is violated
+                    if lowest_swing_low is not None and current_price < lowest_swing_low:
+                        self.logger.info(f"❌ SMT Bullish swing violation: Price {current_price:.5f} < Swing Low {lowest_swing_low:.5f}")
+                        return True
+        
+        # For SMT features, also check if formation time is too old based on cycles
         if feature.get('type') == 'smt':
             cycle = feature.get('cycle', 'daily')
             formation_time = feature.get('formation_time')
@@ -2466,11 +2508,13 @@ class RealTimeFeatureBox:
                 max_age = self.smt_cycle_expiration.get(cycle, 1200)  # Default 20 hours
                 
                 if age_minutes > max_age:
+                    self.logger.info(f"⏰ SMT expired due to age: {age_minutes:.0f} min > {max_age} min max age")
                     return True
         
         # Check general expiration time
         expiration = feature.get('expiration')
         if expiration and current_time > expiration:
+            self.logger.info(f"⏰ Feature expired: {current_time} > {expiration}")
             return True
         
         return False
