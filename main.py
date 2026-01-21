@@ -8927,14 +8927,26 @@ class HammerPatternScanner:
                 if trade_data.get('open_tp_result') == '':
                     trade_data['open_tp_result'] = "-1"
                 
-                # Update for SL hit - RR = 0
-                trade_data['tp_level_hit'] = -1  # 0 RR for SL hit
+                # ✅ CRITICAL FIX: Only set -1 if NO TP was hit yet
+                # Check if ANY TP was hit
+                tp_was_hit = False
+                for i in range(1, 11):
+                    if trade_data.get(f'tp_1_{i}_result', '').startswith('+'):
+                        tp_was_hit = True
+                        break
+                
+                # Also check open TP
+                if not tp_was_hit and trade_data.get('open_tp_result', '').startswith('+'):
+                    tp_was_hit = True
+                
+                # Only set tp_level_hit to -1 if NO TP was hit
+                if not tp_was_hit:
+                    trade_data['tp_level_hit'] = -1
+                # If TP was hit, tp_level_hit already has the max TP value
+                # (set in TP block), so DON'T overwrite it!
+                
                 trade_data['time_to_exit_seconds'] = int(time_seconds) if time_seconds else 0
                 trade_data['exit_time'] = hit_time.strftime('%Y-%m-%d %H:%M:%S')
-            
-            # Update CSV
-            self._update_trade_in_csv(trade_data)
-            self.logger.info(f"📊 {tp_type} hit: RR {trade_data['tp_level_hit']}, time {time_seconds}s")
             
         except Exception as e:
             self.logger.error(f"❌ Error recording TP result: {str(e)}")
