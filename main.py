@@ -4000,6 +4000,9 @@ class SupplyDemandDetector:
         
         if len(closed_data) < 10:
             return []
+
+        # Add this right after your length check
+        closed_data = closed_data.iloc[:-4] if len(closed_data) > 4 else closed_data
         
         zones = []
         
