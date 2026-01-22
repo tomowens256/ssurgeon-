@@ -8807,24 +8807,44 @@ class HammerPatternScanner:
             monitor_duration = timedelta(hours=24)  # Monitor for 24 hours
             check_interval = 1  # Check every 1 second
             
+            # Initialize last candle check to avoid repetitive checks on same candle
+            last_candle_time = None
+            
             while datetime.now(NY_TZ) - start_time < monitor_duration:
-                # Get current price - USE CACHED VERSION
+                # Get current candle - USE CACHED VERSION
                 df = self.cached_fetch_candles(instrument, 'M1', count=2, force_fetch=True)
                 if df.empty:
                     time.sleep(check_interval)
                     continue
                 
-                current_price = df.iloc[-1]['close']
-                current_time = datetime.now(NY_TZ)
+                current_candle = df.iloc[-1]
+                current_time = current_candle['time']
                 
-                # Check SL hit
+                # Skip if we already processed this candle
+                if last_candle_time and current_time == last_candle_time:
+                    time.sleep(check_interval)
+                    continue
+                
+                last_candle_time = current_time
+                
+                # Get candle OHLC data
+                candle_open = current_candle['open']
+                candle_high = current_candle['high']
+                candle_low = current_candle['low']
+                candle_close = current_candle['close']
+                
+                # CRITICAL FIX: Check SL hit using candle HIGH/LOW, not just close
                 sl_hit = False
-                if direction == 'bearish' and current_price >= sl_price:
-                    sl_hit = True
-                    self._record_tp_result(trade_data, 'SL', -1, current_time)
-                elif direction == 'bullish' and current_price <= sl_price:
-                    sl_hit = True
-                    self._record_tp_result(trade_data, 'SL', -1, current_time)
+                if direction == 'bearish':
+                    # For bearish trade, SL is above entry. Check if candle HIGH touched SL
+                    if candle_high >= sl_price:
+                        sl_hit = True
+                        self._record_tp_result(trade_data, 'SL', -1, current_time)
+                elif direction == 'bullish':
+                    # For bullish trade, SL is below entry. Check if candle LOW touched SL
+                    if candle_low <= sl_price:
+                        sl_hit = True
+                        self._record_tp_result(trade_data, 'SL', -1, current_time)
                 
                 if sl_hit:
                     # When SL is hit, check all TPs that were tracking
@@ -8836,19 +8856,24 @@ class HammerPatternScanner:
                             trade_data[f'if_BE_TP{tp_level}'] = 'hit'
                     
                     self._update_trade_in_csv(trade_data)
+                    self.logger.info(f"🛑 SL HIT for trade {trade_data['trade_id']} at {current_time}")
                     break
                 
-                # Check regular TPs (1-10)
+                # Check regular TPs (1-10) - Also use candle extremes for TP checks
                 for i in range(1, 11):
                     tp_result_key = f'tp_1_{i}_result'
                     
                     # If TP not recorded yet and gets hit
                     if trade_data.get(tp_result_key) == '':
                         tp_hit = False
-                        if direction == 'bearish' and current_price <= tp_prices[i]:
-                            tp_hit = True
-                        elif direction == 'bullish' and current_price >= tp_prices[i]:
-                            tp_hit = True
+                        if direction == 'bearish':
+                            # For bearish, TP is below. Check if candle LOW touched TP
+                            if candle_low <= tp_prices[i]:
+                                tp_hit = True
+                        elif direction == 'bullish':
+                            # For bullish, TP is above. Check if candle HIGH touched TP
+                            if candle_high >= tp_prices[i]:
+                                tp_hit = True
                         
                         if tp_hit:
                             time_seconds = (current_time - start_time).total_seconds()
@@ -8864,9 +8889,9 @@ class HammerPatternScanner:
                 # Check open TP
                 if open_tp_price and trade_data.get('open_tp_result') == '':
                     open_tp_hit = False
-                    if direction == 'bearish' and current_price <= open_tp_price:
+                    if direction == 'bearish' and candle_low <= open_tp_price:
                         open_tp_hit = True
-                    elif direction == 'bullish' and current_price >= open_tp_price:
+                    elif direction == 'bullish' and candle_high >= open_tp_price:
                         open_tp_hit = True
                     
                     if open_tp_hit:
@@ -8886,7 +8911,9 @@ class HammerPatternScanner:
                     
                     # 1. Check if price returned to entry (within tolerance)
                     entry_tolerance = 0.0001  # Adjust based on instrument
-                    if abs(current_price - entry_price) <= entry_tolerance:
+                    # Check if entry is within candle range
+                    if (candle_low <= entry_price <= candle_high) or \
+                       abs(candle_close - entry_price) <= entry_tolerance:
                         be_tracking[tp_level]['price_returned_to_entry'] = True
                     
                     # 2. Check if next TP is hit (if not the last TP)
@@ -8930,6 +8957,8 @@ class HammerPatternScanner:
             
         except Exception as e:
             self.logger.error(f"❌ Error in TP monitoring: {str(e)}")
+            import traceback
+            self.logger.error(f"❌ Traceback: {traceback.format_exc()}")
     
     def _record_tp_result(self, trade_data, tp_type, result_value, hit_time, time_seconds=None):
         """Record TP result to CSV with RR values"""
