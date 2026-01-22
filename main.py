@@ -7593,6 +7593,13 @@ class HammerPatternScanner:
                                signal_data, signal_id, trigger_data):
         """Process a single hammer and record it to CSV - FIXED VERSION"""
         try:
+            # Extract signal data EARLY (needed for webhook criteria)
+            fvg_idea = signal_data.get('fvg_idea', {})
+            smt_data = signal_data.get('smt_data', {})
+            zone = signal_data.get('zone', {})
+            crt_signal = signal_data.get('crt_signal', {})
+            has_psp = signal_data.get('has_psp', False)
+            
             # Get current price for entry
             current_df = fetch_candles(instrument, tf, count=1, api_key=self.credentials['oanda_api_key'])
             if current_df.empty:
@@ -7666,7 +7673,6 @@ class HammerPatternScanner:
             # Extract news data safely
             safe_news_data = self._get_safe_news_data(news_context, instrument)
             
-            
             # Calculate price levels
             hammer_high = candle['high']
             hammer_low = candle['low']
@@ -7686,51 +7692,122 @@ class HammerPatternScanner:
                 # NEW: Calculate TP3 for webhook (1:3 RR)
                 tp_1_2_price = current_price + (2.2 * (current_price - sl_price))
             
-            # Calculate pips
-            sl_distance_pips = abs(current_price - sl_price) * pip_multiplier
+            # ============================================
+            # 🎯 PLAYBOOK CONFIGURATION (From Your Analysis)
+            # ============================================
+            # Define the proven setups from your analysis table.
+            # Only signals matching these EXACT conditions will trigger a webhook.
+            PROVEN_SETUPS = {
+                # (setup_type, trigger_timeframe, smt_cycle, time_bin): Best_TP
+                ('FVG', 'M15', '90min', '21-00'): 4,
+                ('FVG', 'H4', 'weekly', '06-09'): 2,
+                ('SD', 'H1', 'weekly', '12-15'): 2,
+                ('CRT', 'H4', 'daily', '00-03'): 2,
+                ('SD', 'M15', '90min', '06-09'): 3,
+                # Note: FVG M15 90min 15-18 has a low win rate (16.7%).
+                # Include only if you want to trade it despite the risk.
+                # ('FVG', 'M15', '90min', '15-18'): 10,
+            }
             
-            # Check if we have PSP
-            has_psp = signal_data.get('has_psp', False)
+            # ============================================
+            # 🧠 HELPER: Get Current 3-Hour Time Bin
+            # ============================================
+            def get_current_time_bin(current_time):
+                """Convert current datetime to 3-hour bin string (e.g., '06-09')."""
+                hour = current_time.hour
+                bin_start = (hour // 3) * 3
+                bin_end = (bin_start + 3) % 24
+                return f"{bin_start:02d}-{bin_end:02d}"
+            
+            # ============================================
+            # 🎯 CHECK IF SIGNAL MATCHES PROVEN PLAYBOOK
+            # ============================================
+            # Determine the setup type from the criteria
+            setup_type = None
+            if 'FVG' in criteria:
+                setup_type = 'FVG'
+            elif 'SD' in criteria:
+                setup_type = 'SD'
+            elif 'CRT' in criteria:
+                setup_type = 'CRT'
+            else:
+                setup_type = 'UNKNOWN'
+            
+            # Get the trigger timeframe and SMT cycle from your signal data
+            trigger_tf = trigger_data.get('trigger_timeframe', '')  # e.g., 'M15', 'H1'
+            smt_cycle = smt_data.get('cycle', '')                   # e.g., '90min', 'daily'
+            current_time_bin = get_current_time_bin(current_time)   # e.g., '06-09'
+            
+            # Create the lookup key
+            playbook_key = (setup_type, trigger_tf, smt_cycle, current_time_bin)
             
             # ============================================
             # 🚀 GENERATE TRADE ID FOR WEBHOOK
             # ============================================
-            # Generate trade ID BEFORE webhook to ensure it's available
             trade_id = self._generate_trade_id(instrument, tf)
             
             # ============================================
-            # 🚀 WEBHOOK SIGNAL - ONLY IF has_psp == 1
+            # 🚀 WEBHOOK SIGNAL - ONLY IF MATCHES PROVEN PLAYBOOK
             # ============================================
             webhook_sent = False
-            if has_psp:
-                # Send webhook ONLY if we have PSP
+            proven_best_tp = None
+            
+            # CALCULATE ALL TP PRICES for the tp_price_map (1 to 10)
+            tp_prices = {}
+            for i in range(1, 11):
+                if direction == 'bearish':
+                    tp_prices[i] = current_price - (i * (sl_price - current_price))
+                else:  # bullish
+                    tp_prices[i] = current_price + (i * (current_price - sl_price))
+            
+            if playbook_key in PROVEN_SETUPS:
+                # ✅ This signal matches a proven, profitable setup!
+                proven_best_tp = PROVEN_SETUPS[playbook_key]
+                
+                # Dynamically select the TP price based on the playbook's Best TP.
+                # This replaces the fixed 'tp_1_2_price'.
+                tp_price_map = {
+                    1: tp_prices[1], 2: tp_prices[2], 3: tp_prices[3],
+                    4: tp_prices[4], 5: tp_prices[5], 6: tp_prices[6],
+                    7: tp_prices[7], 8: tp_prices[8], 9: tp_prices[9],
+                    10: tp_prices[10]
+                }
+                best_tp_price = tp_price_map.get(proven_best_tp, tp_prices[2])  # Default fallback to 1:2
+                
                 risk_usd = 50.0  # Default $50 risk
                 
-                # Use tp_1_3_price for webhook (1:3 RR)
                 success = self.send_webhook_signal(
                     instrument=instrument,
                     direction=direction,
                     entry_price=current_price,
                     sl_price=sl_price,
-                    tp_price=tp_1_2_price,  # Using TP3 (1:3 RR) instead of TP4
+                    tp_price=best_tp_price,  # 🔥 Uses the DYNAMIC Best TP from analysis!
                     signal_id=signal_id,
-                    trade_id=trade_id,  # ✅ NOW trade_id IS DEFINED
+                    trade_id=trade_id,
                     timeframe=tf,
                     criteria=criteria,
-                    risk_usd=risk_usd
+                    risk_usd=risk_usd,
+                    # Optional: Pass the matched playbook rule for logging
+                    playbook_rule=f"{setup_type}-{trigger_tf}-{smt_cycle}-{current_time_bin}"
                 )
                 
                 if success:
-                    self.logger.info(f"✅ Webhook dispatched for {instrument} at TP3 (1:2 RR)")
-                    self.logger.info(f"   TP3 Price: {tp_1_2_price:.5f}")
+                    self.logger.info(f"✅ PROVEN SETUP! Webhook dispatched for {instrument}")
+                    self.logger.info(f"   Playbook Match: {playbook_key}")
+                    self.logger.info(f"   Using Best TP{proven_best_tp} at price: {best_tp_price:.5f}")
                     self.logger.info(f"   Trade ID: {trade_id}")
                     webhook_sent = True
                 else:
                     self.logger.warning(f"⚠️ Webhook failed for {instrument} (trade will still be logged)")
             else:
-                self.logger.info(f"⏭️ Skipping webhook for {instrument} - No PSP (has_psp = {has_psp})")
+                # ⏭️ Signal does NOT match a proven setup. Suppress webhook.
+                self.logger.info(f"⏭️ Skipping webhook - Not a proven setup.")
+                self.logger.debug(f"   Signal Details: Type={setup_type}, TrigTF={trigger_tf}, Cycle={smt_cycle}, Bin={current_time_bin}")
+                self.logger.debug(f"   This signal will be logged but NOT traded automatically.")
             
-    
+            # Calculate SL distance in pips (needed for position sizing and TP distances)
+            sl_distance_pips = abs(current_price - sl_price) * pip_multiplier
+            
             # First calculate accurate position size for $50 risk
             position_units, risk_per_pip = self.calculate_position_sizes(
                 instrument,
@@ -7752,12 +7829,6 @@ class HammerPatternScanner:
             for i in range(1, 11):
                 tp_distance_pips = sl_distance_pips * i
                 tp_distances[f'tp_1_{i}_distance'] = round(tp_distance_pips, 1)
-            
-            # Extract signal data
-            fvg_idea = signal_data.get('fvg_idea', {})
-            smt_data = signal_data.get('smt_data', {})
-            zone = signal_data.get('zone', {})
-            crt_signal = signal_data.get('crt_signal', {})
             
             # Get basic indicators
             df = fetch_candles(instrument, tf, count=150, api_key=self.credentials['oanda_api_key'])
@@ -7822,7 +7893,7 @@ class HammerPatternScanner:
                 instrument, candle['time'], timeframe_data
             )
             
-            # NOW create trade_data dictionary
+            # NOW create trade_data dictionary with ALL TP prices from tp_prices
             trade_data = {
                 'timestamp': current_time.strftime('%Y-%m-%d %H:%M:%S'),
                 'signal_id': signal_id,
@@ -7833,7 +7904,16 @@ class HammerPatternScanner:
                 'entry_time': current_time.strftime('%Y-%m-%d %H:%M:%S'),
                 'entry_price': round(current_price, 5),
                 'sl_price': round(sl_price, 5),
-                'tp_1_4_price': round(tp_1_4_price, 5),
+                'tp_1_1_price': round(tp_prices[1], 5),
+                'tp_1_2_price': round(tp_prices[2], 5),
+                'tp_1_3_price': round(tp_prices[3], 5),
+                'tp_1_4_price': round(tp_prices[4], 5),
+                'tp_1_5_price': round(tp_prices[5], 5),
+                'tp_1_6_price': round(tp_prices[6], 5),
+                'tp_1_7_price': round(tp_prices[7], 5),
+                'tp_1_8_price': round(tp_prices[8], 5),
+                'tp_1_9_price': round(tp_prices[9], 5),
+                'tp_1_10_price': round(tp_prices[10], 5),
                 'open_tp_price': round(open_tp_price, 5) if open_tp_price else '',
                 'sl_distance_pips': round(sl_distance_pips, 1),
                 'risk_10_lots': risk_10_lots,
