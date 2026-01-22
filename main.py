@@ -274,26 +274,24 @@ def send_telegram(message, token=None, chat_id=None):
     return False
 
 
-MAX_RETRIES = 3  # Reduced from 5 for faster recovery
 
+MAX_RETRIES = 3
 
 def fetch_candles(instrument, timeframe, count=100, api_key=None, since=None):
-    """Fetch candles from OANDA API with 502 error protection."""
+    """Fetch candles from OANDA API - SILENT on 502 errors."""
     
     if not api_key:
-        logger.error("Oanda API key missing")
         return pd.DataFrame()
     
     try:
         api = API(access_token=api_key, environment="practice")
-        logging.getLogger('oandapyV20.oandapyV20').setLevel(logging.WARNING)
-    except Exception as e:
-        logger.error(f"Oanda API initialization failed: {str(e)}")
+        logging.getLogger('oandapyV20.oandapyV20').setLevel(logging.ERROR)  # Only show errors
+    except Exception:
         return pd.DataFrame()
     
     params = {
         "granularity": timeframe,
-        "count": count,
+        "count": min(count, 500),  # Cap at 500 to avoid heavy requests
         "price": "M",
         "alignmentTimezone": "America/New_York",
         "includeCurrent": True
@@ -301,18 +299,15 @@ def fetch_candles(instrument, timeframe, count=100, api_key=None, since=None):
     if since:
         params["from"] = since.strftime('%Y-%m-%dT%H:%M:%S')
     
-    for attempt in range(1, MAX_RETRIES + 1):
+    for attempt in range(MAX_RETRIES):
         try:
             request = instruments.InstrumentsCandles(instrument=instrument, params=params)
             response = api.request(request)
             
             candles = response.get('candles', [])
             if not candles:
-                if attempt == MAX_RETRIES:
-                    logger.warning(f"No candles for {instrument}")
                 continue
             
-            # Parse data
             data = []
             for candle in candles:
                 price_data = candle.get('mid', {})
@@ -334,12 +329,10 @@ def fetch_candles(instrument, timeframe, count=100, api_key=None, since=None):
                         'complete': is_complete,
                         'is_current': not is_complete
                     })
-                except Exception as e:
-                    continue  # Skip bad candles
+                except Exception:
+                    continue
             
             if not data:
-                if attempt == MAX_RETRIES:
-                    logger.warning(f"No valid candles after parsing for {instrument}")
                 continue
             
             df = pd.DataFrame(data).drop_duplicates(subset=['time'], keep='last')
@@ -350,40 +343,31 @@ def fetch_candles(instrument, timeframe, count=100, api_key=None, since=None):
             
             return df
             
-        except V20Error as e:
-            error_code = getattr(e, 'code', None)
-            
-            # Handle 502 errors (Bad Gateway)
-            if error_code == 502:
-                wait_time = 2  # Short wait for 502
-                logger.warning(f"[{instrument}] 502 Bad Gateway (attempt {attempt}/{MAX_RETRIES}) - waiting {wait_time}s")
-                time.sleep(wait_time)
-                continue
-            
-            # Handle 429 errors (Rate Limit)
-            elif error_code == 429:
-                wait_time = min(30, 5 * (2 ** (attempt - 1)))  # Cap at 30s
-                logger.warning(f"[{instrument}] Rate limited (attempt {attempt}/{MAX_RETRIES}) - waiting {wait_time}s")
-                time.sleep(wait_time)
-                continue
-            
-            # Handle other API errors (400, 401, 404, 500, etc.)
-            else:
-                logger.error(f"[{instrument}] API Error {error_code}: {str(e)[:100]}")
-                break  # Don't retry other errors
-        
         except Exception as e:
-            # Handle any non-API exceptions
-            error_msg = str(e)
-            if "502" in error_msg or "Bad Gateway" in error_msg:
-                logger.warning(f"[{instrument}] Generic 502 error (attempt {attempt}/{MAX_RETRIES})")
+            # SILENT HANDLING FOR 502 - NO LOGGING AT ALL
+            error_str = str(e)
+            
+            # Check for 502 without logging the huge message
+            if '502' in error_str or 'Bad Gateway' in error_str:
+                # SILENT retry after 2 seconds
                 time.sleep(2)
                 continue
+                
+            # Rate limit (429) - log briefly
+            elif '429' in error_str or 'rate' in error_str.lower():
+                wait_time = min(30, 5 * (2 ** attempt))
+                logger.debug(f"[{instrument}] Rate limit, waiting {wait_time}s")
+                time.sleep(wait_time)
+                continue
+                
+            # Other errors - minimal log
             else:
-                logger.error(f"[{instrument}] Unexpected error: {error_msg[:100]}")
+                # Extract only status code if available
+                code = getattr(e, 'code', 'No code')
+                logger.debug(f"[{instrument}] Error {code}")
                 break
     
-    # Return empty DataFrame if all retries fail
+    # Return empty DataFrame on failure
     return pd.DataFrame()
 
 # ========================
