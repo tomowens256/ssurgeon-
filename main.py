@@ -1056,7 +1056,7 @@ class RobustCRTDetector:
         self.feature_box = None
     
     def calculate_crt_current_candle(self, df, asset1_data, asset2_data, timeframe):
-        """Calculate CRT on current candle AND check for PSP on same timeframe"""
+        """Calculate CRT on current candle with PSP check if available"""
         if df is None or not isinstance(df, pd.DataFrame) or df.empty or len(df) < 3:
             return None
         
@@ -1079,69 +1079,112 @@ class RobustCRTDetector:
         c3 = current_candle
         
         try:
-            # REMOVED: c2_range and c2_mid since we're not using them
-            # c2_range = float(c2['high']) - float(c2['low'])
-            # c2_mid = float(c2['low']) + 0.5 * c2_range
+            # Calculate ranges and midpoints
+            c1_range = float(c1['high']) - float(c1['low'])
+            c1_mid = float(c1['low']) + 0.5 * c1_range
             
-            # FIXED: Simple conditions without the commented-out part
+            c2_range = float(c2['high']) - float(c2['low'])
+            c2_low_30 = float(c2['low']) + 0.3 * c2_range  # Low 30% (for bullish)
+            c2_top_30 = float(c2['low']) + 0.7 * c2_range  # Top 30% (for bearish)
+            
+            current_open = float(c3['open'])
+            c2_close = float(c2['close'])
+            
+            # Bullish CRT conditions
             buy_crt = (float(c2['low']) < float(c1['low']) and 
                       float(c2['close']) > float(c1['low']))
             
-            # FIXED: Simple conditions without the commented-out part
+            # ADDED: c2 cannot close above c1's 50% level
+            if buy_crt:
+                buy_crt = buy_crt and (c2_close <= c1_mid)
+                
+                # ADDED: Current open must be above low 30% of c2
+                buy_crt = buy_crt and (current_open > c2_low_30)
+            
+            # Bearish CRT conditions
             sell_crt = (float(c2['high']) > float(c1['high']) and 
                        float(c2['close']) < float(c1['high']))
             
+            # ADDED: c2 cannot close below c1's 50% level
+            if sell_crt:
+                sell_crt = sell_crt and (c2_close >= c1_mid)
+                
+                # ADDED: Current open must be below top 30% of c2
+                sell_crt = sell_crt and (current_open < c2_top_30)
+            
             if buy_crt or sell_crt:
                 direction = 'bullish' if buy_crt else 'bearish'
+                threshold_used = 'low_30%' if direction == 'bullish' else 'top_30%'
                 
-                # CHECK FOR PSP ON SAME TIMEFRAME
-                psp_signal = self._detect_psp_for_crt(asset1_data, asset2_data, timeframe, current_candle['time'])
-                
-                # Get corresponding candles for both assets to check TPD
-                c1_asset1 = c1  # Already have from CRT calculation
-                c1_asset2 = None  # We need to find the corresponding c1 for asset2
-                c3_asset1 = c3  # Current candle for asset1
-                c3_asset2 = None  # Current candle for asset2
-                
-                # Find the corresponding c1 for asset2 (same time as c1_asset1)
-                if not asset2_data.empty:
-                    c1_asset2 = asset2_data[asset2_data['time'] == c1_asset1['time']]
-                    if not c1_asset2.empty:
-                        c1_asset2 = c1_asset2.iloc[0]
-                    
-                    # Get current candle for asset2
-                    c3_asset2_candidate = asset2_data[asset2_data['is_current'] == True]
-                    if not c3_asset2_candidate.empty:
-                        c3_asset2 = c3_asset2_candidate.iloc[0]
-                
-                # Check TPD conditions if we have PSP and both c1 candles
+                # TRY to check for PSP, but if method doesn't exist, skip it
+                psp_signal = False
                 is_tpd = False
-                if psp_signal and c1_asset2 is not None and c3_asset2 is not None:
-                    is_tpd = self._check_tpd_conditions(
-                        asset1_data, asset2_data, 
-                        c1_asset1, c1_asset2, 
-                        c3_asset1, c3_asset2, 
-                        direction
-                    )
+                try:
+                    # Try to call the PSP detection method
+                    psp_signal = self._detect_psp_for_crt(asset1_data, asset2_data, timeframe, current_candle['time'])
+                    
+                    # If we got PSP, then check for TPD
+                    if psp_signal:
+                        # Get corresponding candles for both assets to check TPD
+                        c1_asset1 = c1
+                        c1_asset2 = None
+                        c3_asset1 = c3
+                        c3_asset2 = None
+                        
+                        # Find the corresponding c1 for asset2 (same time as c1_asset1)
+                        if not asset2_data.empty:
+                            c1_asset2 = asset2_data[asset2_data['time'] == c1_asset1['time']]
+                            if not c1_asset2.empty:
+                                c1_asset2 = c1_asset2.iloc[0]
+                            
+                            # Get current candle for asset2
+                            c3_asset2_candidate = asset2_data[asset2_data['is_current'] == True]
+                            if not c3_asset2_candidate.empty:
+                                c3_asset2 = c3_asset2_candidate.iloc[0]
+                        
+                        # Check TPD conditions if we have PSP and both c1 candles
+                        if psp_signal and c1_asset2 is not None and c3_asset2 is not None:
+                            # Check if _check_tpd_conditions method exists
+                            if hasattr(self, '_check_tpd_conditions'):
+                                is_tpd = self._check_tpd_conditions(
+                                    asset1_data, asset2_data, 
+                                    c1_asset1, c1_asset2, 
+                                    c3_asset1, c3_asset2, 
+                                    direction
+                                )
+                except AttributeError:
+                    # Method doesn't exist, just continue without PSP/TPD
+                    logger.debug("PSP/TPD detection not available, skipping")
                 
                 logger.info(f"🔷 {direction.upper()} CRT DETECTED: {timeframe} candle at {c3['time'].strftime('%H:%M')}")
-                logger.info(f"   PSP: {'✅' if psp_signal else '❌'}, TPD: {'✅' if is_tpd else '❌'}")
+                logger.info(f"   PSP: {'✅' if psp_signal else '❌'}, TPD: {'✅' if is_tpd else '❌'}, Threshold: {threshold_used}")
                 
-                # Create and return CRT signal with TPD flag
-                return {
+                # Create and return CRT signal
+                signal_data = {
                     'direction': direction, 
                     'timestamp': c3['time'],
                     'timeframe': timeframe,
                     'signal_key': f"CRT_{timeframe}_{c3['time'].strftime('%m%d_%H%M')}_{direction}",
-                    'psp_signal': psp_signal,  # Include PSP if found
-                    'is_tpd': is_tpd,  # Flag indicating TPD setup
-                    'tpd_details': {
+                    'psp_signal': psp_signal,
+                    'is_tpd': is_tpd,
+                    'threshold_used': threshold_used,
+                    'c2_close_vs_c1_mid': 'above' if c2_close > c1_mid else 'below' if c2_close < c1_mid else 'at',
+                }
+                
+                # Add TPD details only if TPD is detected
+                if is_tpd and 'c1_asset2' in locals() and 'c3_asset2' in locals():
+                    signal_data['tpd_details'] = {
                         'asset1_c1_close': float(c1_asset1['close']) if 'close' in c1_asset1 else None,
                         'asset2_c1_close': float(c1_asset2['close']) if c1_asset2 and 'close' in c1_asset2 else None,
                         'asset1_c3_open': float(c3_asset1['open']),
                         'asset2_c3_open': float(c3_asset2['open']) if c3_asset2 else None,
-                    } if is_tpd else None
-                }
+                        'c1_mid': c1_mid,
+                        'c2_close': c2_close,
+                        'c2_low_30': c2_low_30 if direction == 'bullish' else None,
+                        'c2_top_30': c2_top_30 if direction == 'bearish' else None,
+                    }
+                
+                return signal_data
                 
         except (ValueError, TypeError) as e:
             logger.error(f"Error in CRT calculation: {e}")
