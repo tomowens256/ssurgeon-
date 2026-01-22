@@ -2474,6 +2474,8 @@ class RealTimeFeatureBox:
                 if direction == 'bearish':
                     # Find the HIGHEST HIGH of all bearish swing highs
                     highest_swing_high = None
+                    highest_swing_time = None
+                    
                     for swing_key, swing_info in swings.items():
                         if isinstance(swing_info, dict):
                             # For bearish SMT, we look at swing highs
@@ -2481,27 +2483,61 @@ class RealTimeFeatureBox:
                             if swing_high is not None:
                                 if highest_swing_high is None or swing_high > highest_swing_high:
                                     highest_swing_high = swing_high
+                                    highest_swing_time = swing_info.get('time')
                     
-                    # If current price goes ABOVE the highest swing high, SMT is violated
-                    if highest_swing_high is not None and current_price > highest_swing_high:
-                        self.logger.info(f"❌ SMT Bearish swing violation: Price {current_price:.5f} > Swing High {highest_swing_high:.5f}")
-                        return True
-                    
-                elif direction == 'bullish':
-                    # Find the LOWEST LOW of all bullish swing lows
-                    lowest_swing_low = None
-                    for swing_key, swing_info in swings.items():
-                        if isinstance(swing_info, dict):
-                            # For bullish SMT, we look at swing lows
-                            swing_low = swing_info.get('low')
-                            if swing_low is not None:
-                                if lowest_swing_low is None or swing_low < lowest_swing_low:
-                                    lowest_swing_low = swing_low
-                    
-                    # If current price goes BELOW the lowest swing low, SMT is violated
-                    if lowest_swing_low is not None and current_price < lowest_swing_low:
-                        self.logger.info(f"❌ SMT Bullish swing violation: Price {current_price:.5f} < Swing Low {lowest_swing_low:.5f}")
-                        return True
+                    # NEW LOGIC: Track extreme price since highest swing formation
+                    if highest_swing_time:
+                        # Get or initialize the tracked extreme high
+                        tracked_extreme_high = feature.get('tracked_extreme_high', highest_swing_high)
+                        
+                        # Update if current price is higher than tracked extreme
+                        if current_price > tracked_extreme_high:
+                            feature['tracked_extreme_high'] = current_price
+                            tracked_extreme_high = current_price
+                        
+                        # If current price goes ABOVE the highest swing high, SMT is violated
+                        if current_price > highest_swing_high:
+                            self.logger.info(f"❌ SMT Bearish swing violation: Price {current_price:.5f} > Swing High {highest_swing_high:.5f}")
+                            return True
+                        
+                        # NEW: If tracked extreme has gone above highest swing high, SMT is violated
+                        if tracked_extreme_high > highest_swing_high:
+                            self.logger.info(f"❌ SMT Bearish violation: Extreme price {tracked_extreme_high:.5f} > Swing High {highest_swing_high:.5f}")
+                            return True
+                        
+                    elif direction == 'bullish':
+                        # Find the LOWEST LOW of all bullish swing lows
+                        lowest_swing_low = None
+                        lowest_swing_time = None
+                        
+                        for swing_key, swing_info in swings.items():
+                            if isinstance(swing_info, dict):
+                                # For bullish SMT, we look at swing lows
+                                swing_low = swing_info.get('low')
+                                if swing_low is not None:
+                                    if lowest_swing_low is None or swing_low < lowest_swing_low:
+                                        lowest_swing_low = swing_low
+                                        lowest_swing_time = swing_info.get('time')
+                        
+                        # NEW LOGIC: Track extreme price since lowest swing formation
+                        if lowest_swing_time:
+                            # Get or initialize the tracked extreme low
+                            tracked_extreme_low = feature.get('tracked_extreme_low', lowest_swing_low)
+                            
+                            # Update if current price is lower than tracked extreme
+                            if current_price < tracked_extreme_low:
+                                feature['tracked_extreme_low'] = current_price
+                                tracked_extreme_low = current_price
+                            
+                            # If current price goes BELOW the lowest swing low, SMT is violated
+                            if current_price < lowest_swing_low:
+                                self.logger.info(f"❌ SMT Bullish swing violation: Price {current_price:.5f} < Swing Low {lowest_swing_low:.5f}")
+                                return True
+                            
+                            # NEW: If tracked extreme has gone below lowest swing low, SMT is violated
+                            if tracked_extreme_low < lowest_swing_low:
+                                self.logger.info(f"❌ SMT Bullish violation: Extreme price {tracked_extreme_low:.5f} < Swing Low {lowest_swing_low:.5f}")
+                                return True
         
         # For SMT features, also check if formation time is too old based on cycles
         if feature.get('type') == 'smt':
