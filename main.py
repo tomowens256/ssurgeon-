@@ -1452,7 +1452,7 @@ class UltimateSMTDetector:
     def _compare_quarters_with_3_candle_tolerance(self, asset1_prev, asset1_curr, asset2_prev, asset2_curr, cycle_type, prev_q, curr_q):
         """Compare quarters with debug info"""
         try:
-            # Strict chronology check
+            # Strict chronology checkss
             if not asset1_prev.empty and not asset1_curr.empty:
                 prev_end = asset1_prev['time'].max()
                 curr_start = asset1_curr['time'].min()
