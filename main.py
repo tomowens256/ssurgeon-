@@ -8888,89 +8888,170 @@ class HammerPatternScanner:
             self.logger.error(f"❌ Error starting TP monitoring: {str(e)}")
     
     def _monitor_tp_levels(self, trade_data):
-        """Monitor and record TP hits in background with PROPER BE tracking"""
+        """Monitor and record TP hits in background with PROPER BE tracking
+        
+        Args:
+            trade_data (dict): Dictionary containing trade information including:
+                - instrument: Trading instrument (e.g., 'EURUSD')
+                - direction: Trade direction ('bullish' or 'bearish')
+                - entry_price: Entry price of the trade
+                - sl_price: Stop loss price
+                - tp_1_{i}_distance: Distance in pips for each TP level (1-10)
+                - open_tp_price: Optional open TP price
+                - trade_id: Unique trade identifier
+        
+        This function monitors a trade for 24 hours, checking for:
+        1. Stop loss hits (immediate exit)
+        2. Take profit hits (TP1-TP10)
+        3. Open TP hits (if specified)
+        4. Break-even tracking for each TP hit
+        """
         try:
+            # Extract basic trade information
             instrument = trade_data['instrument']
             direction = trade_data['direction'].lower()
             entry_price = trade_data['entry_price']
             sl_price = trade_data['sl_price']
             
-            # Calculate TP prices
+            # Calculate TP prices for levels 1-10 based on pip distance
             tp_prices = {}
             for i in range(1, 11):
+                # Get TP distance in pips from trade data
                 distance_pips = trade_data.get(f'tp_1_{i}_distance', 0)
+                
+                # Determine pip multiplier: 100 for JPY pairs, 10000 for others
                 pip_multiplier = 100 if 'JPY' in instrument else 10000
                 
+                # Calculate TP price based on direction
                 if direction == 'bearish':
+                    # For bearish trades, TP is below entry
                     tp_price = entry_price - (distance_pips / pip_multiplier)
                 else:
+                    # For bullish trades, TP is above entry
                     tp_price = entry_price + (distance_pips / pip_multiplier)
                 
                 tp_prices[i] = tp_price
             
-            # Open TP price
+            # Get optional open TP price (for trailing or flexible TP)
             open_tp_price = trade_data.get('open_tp_price')
     
-            # Initialize BE tracking state for each TP
+            # Initialize break-even tracking for each TP level (1-10)
             be_tracking = {
                 i: {
-                    'state': 'waiting',  # waiting, tracking, completed
-                    'price_returned_to_entry': False,  # Did price come back to entry?
-                    'next_tp_hit': False,  # Was next TP hit?
-                    'sl_hit': False,  # Was SL hit?
-                    'outcome': 'pending'  # pending, hit, miss
+                    'state': 'waiting',           # waiting, tracking, completed
+                    'price_returned_to_entry': False,  # Did price return to entry after TP hit?
+                    'next_tp_hit': False,         # Was the next TP level hit?
+                    'sl_hit': False,              # Was SL hit after this TP?
+                    'outcome': 'pending'          # pending, hit, miss, incomplete
                 }
                 for i in range(1, 11)
             }
             
-            # Track which TPs have been hit
+            # Track which TP levels have been hit
             hit_tps = set()
             
+            # Set monitoring parameters
             start_time = datetime.now(NY_TZ)
             monitor_duration = timedelta(hours=24)  # Monitor for 24 hours
             check_interval = 1  # Check every 1 second
             
-            # Initialize last candle check to avoid repetitive checks on same candle
+            # Variable to avoid processing the same candle multiple times
             last_candle_time = None
             
+            # ============================================================================
+            # CRITICAL FIX: Check if SL was hit on the entry candle BEFORE monitoring
+            # This prevents trades that hit SL immediately from being counted as wins
+            # ============================================================================
+            
+            # Fetch recent candles to check for SL on entry candle
+            df_entry_check = self.cached_fetch_candles(instrument, 'M1', count=2, force_fetch=True)
+            
+            # Check both current and previous candle (in case entry was at candle close)
+            if not df_entry_check.empty and len(df_entry_check) >= 1:
+                # Prepare candles to check (up to 2 most recent)
+                candles_to_check = []
+                if len(df_entry_check) >= 2:
+                    candles_to_check = [df_entry_check.iloc[-1], df_entry_check.iloc[-2]]
+                else:
+                    candles_to_check = [df_entry_check.iloc[-1]]
+                
+                # Check each candle for SL hit
+                for entry_candle in candles_to_check:
+                    candle_high = entry_candle['high']
+                    candle_low = entry_candle['low']
+                    
+                    # Check if SL was hit on this candle
+                    sl_hit_on_entry = False
+                    
+                    if direction == 'bearish':
+                        # For bearish trade, SL is above entry
+                        # If candle high reaches or exceeds SL, trade is stopped out
+                        if candle_high >= sl_price:
+                            sl_hit_on_entry = True
+                            
+                    elif direction == 'bullish':
+                        # For bullish trade, SL is below entry
+                        # If candle low reaches or goes below SL, trade is stopped out
+                        if candle_low <= sl_price:
+                            sl_hit_on_entry = True
+                    
+                    # If SL was hit on entry candle, record loss and exit immediately
+                    if sl_hit_on_entry:
+                        self._record_tp_result(trade_data, 'SL', -1, start_time)
+                        self._update_trade_in_csv(trade_data)
+                        self.logger.info(f"🛑 SL HIT ON ENTRY CANDLE for trade {trade_data['trade_id']} at {start_time}")
+                        return  # Stop monitoring - trade is already closed at loss
+            
+            # ============================================================================
+            # MAIN MONITORING LOOP: Monitor trade for 24 hours
+            # ============================================================================
+            
             while datetime.now(NY_TZ) - start_time < monitor_duration:
-                # Get current candle - USE CACHED VERSION
+                # Get current M1 candle data
                 df = self.cached_fetch_candles(instrument, 'M1', count=2, force_fetch=True)
                 if df.empty:
                     time.sleep(check_interval)
                     continue
                 
+                # Get the latest candle
                 current_candle = df.iloc[-1]
                 current_time = current_candle['time']
                 
-                # Skip if we already processed this candle
+                # Skip if we've already processed this candle (avoid duplicate work)
                 if last_candle_time and current_time == last_candle_time:
                     time.sleep(check_interval)
                     continue
                 
+                # Update last processed candle time
                 last_candle_time = current_time
                 
-                # Get candle OHLC data
+                # Extract OHLC data from current candle
                 candle_open = current_candle['open']
                 candle_high = current_candle['high']
                 candle_low = current_candle['low']
                 candle_close = current_candle['close']
                 
-                # CRITICAL FIX: Check SL hit using candle HIGH/LOW, not just close
+                # ========================================================================
+                # CHECK 1: STOP LOSS HIT
+                # Using candle extremes (high/low) for accurate SL detection
+                # ========================================================================
+                
                 sl_hit = False
                 if direction == 'bearish':
-                    # For bearish trade, SL is above entry. Check if candle HIGH touched SL
+                    # For bearish trade, check if price went up to SL
                     if candle_high >= sl_price:
                         sl_hit = True
                         self._record_tp_result(trade_data, 'SL', -1, current_time)
+                        
                 elif direction == 'bullish':
-                    # For bullish trade, SL is below entry. Check if candle LOW touched SL
+                    # For bullish trade, check if price went down to SL
                     if candle_low <= sl_price:
                         sl_hit = True
                         self._record_tp_result(trade_data, 'SL', -1, current_time)
                 
+                # If SL hit, process BE tracking and exit monitoring
                 if sl_hit:
-                    # When SL is hit, check all TPs that were tracking
+                    # Check all TPs that were in tracking mode
                     for tp_level in hit_tps:
                         if be_tracking[tp_level]['state'] == 'tracking':
                             # RULE: If SL hit after TP, it's ALWAYS a HIT for BE
@@ -8978,40 +9059,52 @@ class HammerPatternScanner:
                             be_tracking[tp_level]['sl_hit'] = True
                             trade_data[f'if_BE_TP{tp_level}'] = 'hit'
                     
+                    # Update CSV with results
                     self._update_trade_in_csv(trade_data)
                     self.logger.info(f"🛑 SL HIT for trade {trade_data['trade_id']} at {current_time}")
-                    break
+                    break  # Exit monitoring loop
                 
-                # Check regular TPs (1-10) - Also use candle extremes for TP checks
+                # ========================================================================
+                # CHECK 2: REGULAR TP LEVELS (1-10)
+                # Using candle extremes for accurate TP detection
+                # ========================================================================
+                
                 for i in range(1, 11):
                     tp_result_key = f'tp_1_{i}_result'
                     
-                    # If TP not recorded yet and gets hit
+                    # Only check if this TP hasn't been recorded yet
                     if trade_data.get(tp_result_key) == '':
                         tp_hit = False
+                        
                         if direction == 'bearish':
-                            # For bearish, TP is below. Check if candle LOW touched TP
+                            # For bearish, TP is below entry - check if candle low touched TP
                             if candle_low <= tp_prices[i]:
                                 tp_hit = True
                         elif direction == 'bullish':
-                            # For bullish, TP is above. Check if candle HIGH touched TP
+                            # For bullish, TP is above entry - check if candle high touched TP
                             if candle_high >= tp_prices[i]:
                                 tp_hit = True
                         
+                        # If TP hit, record it and start BE tracking
                         if tp_hit:
                             time_seconds = (current_time - start_time).total_seconds()
                             self._record_tp_result(trade_data, f'TP_{i}', i, current_time, time_seconds)
                             
-                            # Start BE tracking for this TP
+                            # Start BE tracking for this TP level
                             if i not in hit_tps:
                                 hit_tps.add(i)
                                 be_tracking[i]['state'] = 'tracking'
                                 be_tracking[i]['price_returned_to_entry'] = False
                                 be_tracking[i]['next_tp_hit'] = False
                 
-                # Check open TP
+                # ========================================================================
+                # CHECK 3: OPEN TP (if specified)
+                # Optional flexible TP level
+                # ========================================================================
+                
                 if open_tp_price and trade_data.get('open_tp_result') == '':
                     open_tp_hit = False
+                    
                     if direction == 'bearish' and candle_low <= open_tp_price:
                         open_tp_hit = True
                     elif direction == 'bullish' and candle_high >= open_tp_price:
@@ -9023,25 +9116,30 @@ class HammerPatternScanner:
                                               trade_data.get('open_tp_rr', 0), 
                                               current_time, time_seconds)
                 
-                # Update BE tracking for each hit TP
+                # ========================================================================
+                # UPDATE BREAK-EVEN TRACKING FOR EACH HIT TP
+                # ========================================================================
+                
                 for tp_level in list(hit_tps):
+                    # Skip TPs not in tracking mode or already completed
                     if be_tracking[tp_level]['state'] != 'tracking':
                         continue
-                    
-                    # Skip if already determined
                     if be_tracking[tp_level]['outcome'] != 'pending':
                         continue
                     
-                    # 1. Check if price returned to entry (within tolerance)
-                    entry_tolerance = 0.0001  # Adjust based on instrument
-                    # Check if entry is within candle range
+                    # RULE 1: Check if price returned to entry (within tolerance)
+                    entry_tolerance = 0.0001  # Adjust based on instrument precision
+                    
+                    # Check if entry price is within current candle range
+                    # OR if closing price is very close to entry
                     if (candle_low <= entry_price <= candle_high) or \
                        abs(candle_close - entry_price) <= entry_tolerance:
                         be_tracking[tp_level]['price_returned_to_entry'] = True
                     
-                    # 2. Check if next TP is hit (if not the last TP)
+                    # RULE 2: Check if next TP is hit
                     next_tp_hit = False
-                    if tp_level < 10:  # There's a next TP
+                    
+                    if tp_level < 10:  # There's a next TP (1-9)
                         next_tp_result_key = f'tp_1_{tp_level + 1}_result'
                         if trade_data.get(next_tp_result_key) != '':
                             next_tp_hit = True
@@ -9049,32 +9147,38 @@ class HammerPatternScanner:
                         if open_tp_price and trade_data.get('open_tp_result') != '':
                             next_tp_hit = True
                     
+                    # If next TP hit, determine BE outcome
                     if next_tp_hit:
                         be_tracking[tp_level]['next_tp_hit'] = True
                         
-                        # Determine outcome based on rules
+                        # DETERMINE OUTCOME:
                         if be_tracking[tp_level]['price_returned_to_entry']:
                             # Price returned to entry before next TP → MISS
                             be_tracking[tp_level]['outcome'] = 'miss'
                             trade_data[f'if_BE_TP{tp_level}'] = 'miss'
                         else:
-                            # Price went directly to next TP without returning to entry → HIT
+                            # Price went directly to next TP → HIT
                             be_tracking[tp_level]['outcome'] = 'hit'
                             trade_data[f'if_BE_TP{tp_level}'] = 'hit'
                         
-                        # Update CSV
+                        # Update CSV and mark as completed
                         self._update_trade_in_csv(trade_data)
-                        # Mark as completed
                         be_tracking[tp_level]['state'] = 'completed'
                 
+                # Wait before next check
                 time.sleep(check_interval)
             
-            # Final check for any TPs still pending at the end of monitoring
+            # ============================================================================
+            # POST-MONITORING CLEANUP
+            # Handle TPs still in tracking mode when monitoring ends
+            # ============================================================================
+            
             for tp_level in hit_tps:
                 if be_tracking[tp_level]['state'] == 'tracking' and be_tracking[tp_level]['outcome'] == 'pending':
-                    # If monitoring ended without next TP or SL, consider it incomplete
+                    # Monitoring ended without next TP or SL → mark as incomplete
                     trade_data[f'if_BE_TP{tp_level}'] = 'incomplete'
             
+            # Log final results
             self.logger.info(f"📊 TP monitoring completed for {trade_data['trade_id']}")
             self.logger.info(f"   BE Results: {[f'TP{i}:{be_tracking[i].get('outcome', 'N/A')}' for i in hit_tps]}")
             
