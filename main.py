@@ -7706,29 +7706,28 @@ class HammerPatternScanner:
                 input_row['entry_time_bin_3h'] = time_bin
                 input_df = pd.DataFrame([input_row])
                 
-                # 3. Process and Predict
-                processed_row = self.processor.train.new(input_df)
+                # 3. Process and Predict (FIXED NAMES BELOW)
+                processed_row = self.ai_processor.train.new(input_df) # Changed from self.processor
                 processed_row.process()
-                node_id = self.model.apply(processed_row.xs)[0]
+                node_id = self.ai_model.apply(processed_row.xs)[0]   # Changed from self.model
                 self.logger.info(f"🤖 AI Analysis: Signal assigned to Node {node_id}")
             
                 # 4. NODE-SPECIFIC TP ASSIGNMENT
-                # Mapping: {NodeID: TP_Multiplier}
                 node_tp_map = {
                     23: 10,
                     26: 4,
                     21: 4,
                     14: 2
                 }
-
+            
                 # 5. The Sniper Decision
                 if node_id in node_tp_map:
                     target_tp_level = node_tp_map[node_id]
                     best_tp_price = tp_prices[target_tp_level]
                     
                     self.logger.info(f"🎯 SNIPER confirmed: Node {node_id}. Target TP level: {target_tp_level}")
-
-                    # 6. CALL WEBHOOK (Matches your existing parameters exactly)
+            
+                    # 6. CALL WEBHOOK
                     webhook_sent = self.send_webhook_signal(
                         instrument=instrument,
                         direction=direction,
@@ -7739,7 +7738,7 @@ class HammerPatternScanner:
                         trade_id=trade_id,
                         timeframe=tf,
                         criteria=criteria,
-                        risk_usd=50.0  # Or whatever your default is
+                        risk_usd=50.0
                     )
                 else:
                     self.logger.info(f"⏭️ AI Skip: Node {node_id} is not in sniper list.")
