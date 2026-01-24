@@ -5343,9 +5343,13 @@ class HammerPatternScanner:
         self.logger.info(f"📦 Candle data cache initialized (TTL: 45s, Max: 2000 entries)")
 
         import joblib
-        self.model = joblib.load('/content/drive/My Drive/Trading_AI_Data10/sniper_tree_sniper_tree_20260124.pkl')
-        self.processor = joblib.load('/content/drive/My Drive/Trading_AI_Data10/data_processor.pkl')
-        self.sniper_nodes = [23, 26, 21,14] 
+        try:
+            self.ai_model = joblib.load('/content/drive/My Drive/Trading_AI_Data10/sniper_tree_sniper_tree_20260124.pkl')
+            self.ai_processor = joblib.load('/content/drive/My Drive/Trading_AI_Data10/data_processor.pkl')
+            self.sniper_nodes = [23, 26, 21, 14]
+            self.logger.info("✅ AI Sniper Brain & Data Processor loaded successfully from Drive.")
+        except Exception as e:
+            self.logger.error(f"❌ CRITICAL: Failed to load AI models: {e}")
                      
                      
         
