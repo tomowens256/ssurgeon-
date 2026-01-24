@@ -7690,8 +7690,9 @@ class HammerPatternScanner:
 
             # --- START AI BLOCK ---
             webhook_sent = 0
+            node_id = 0
             try:
-                # 1. Engineering the Time Bin (Matches Training Cell)
+                # 1. Engineering the Time Bin
                 hour = current_time.hour
                 bin_start = (hour // 3) * 3
                 time_bin = f"{bin_start:02d}-{(bin_start + 3) % 24:02d}"
@@ -7699,29 +7700,45 @@ class HammerPatternScanner:
                 # 2. Prepare AI Input Row
                 input_row = trade_data.copy()
                 input_row['entry_time_bin_3h'] = time_bin
-                # Ensure all cat_names/cont_names from training are in this DF
                 input_df = pd.DataFrame([input_row])
                 
-                # 3. Process through Fastai Tabular Object
-                # Note: self.processor is the 'to' object from your joblib.load
+                # 3. Process and Predict
                 processed_row = self.processor.train.new(input_df)
                 processed_row.process()
-                
-                # 4. Apply the Tree Model
                 node_id = self.model.apply(processed_row.xs)[0]
                 self.logger.info(f"🤖 AI Analysis: Signal assigned to Node {node_id}")
             
+                # 4. NODE-SPECIFIC TP ASSIGNMENT
+                # Mapping: {NodeID: TP_Multiplier}
+                node_tp_map = {
+                    23: 10,
+                    26: 4,
+                    21: 4,
+                    14: 2
+                }
+
                 # 5. The Sniper Decision
-                if node_id in [23, 26, 21, 14]:
-                    self.logger.info(f"🎯 SNIPER SCOPE: Node {node_id} confirmed. Triggering Webhook.")
-                    # Determine Best TP for this specific node
-                    target_tp_level = 10 if node_id == 23 else 4 # Example logic
+                if node_id in node_tp_map:
+                    target_tp_level = node_tp_map[node_id]
                     best_tp_price = tp_prices[target_tp_level]
                     
-                    # Call your webhook function
-                    webhook_sent = self.send_webhook_signal(instrument, direction, current_price, sl_price, best_tp_price, node_id)
+                    self.logger.info(f"🎯 SNIPER confirmed: Node {node_id}. Target TP level: {target_tp_level}")
+
+                    # 6. CALL WEBHOOK (Matches your existing parameters exactly)
+                    webhook_sent = self.send_webhook_signal(
+                        instrument=instrument,
+                        direction=direction,
+                        entry_price=current_price,
+                        sl_price=sl_price,
+                        tp_price=best_tp_price,
+                        signal_id=signal_id,
+                        trade_id=trade_id,
+                        timeframe=tf,
+                        criteria=criteria,
+                        risk_usd=50.0  # Or whatever your default is
+                    )
                 else:
-                    self.logger.info(f"⏭️ AI Skip: Node {node_id} is not a high-probability sniper node.")
+                    self.logger.info(f"⏭️ AI Skip: Node {node_id} is not in sniper list.")
             
             except Exception as ai_err:
                 self.logger.error(f"⚠️ AI Block failed: {ai_err}")
