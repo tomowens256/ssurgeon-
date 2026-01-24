@@ -5341,6 +5341,11 @@ class HammerPatternScanner:
             max_size=2000         # Store up to 200 cache entries
         )
         self.logger.info(f"📦 Candle data cache initialized (TTL: 45s, Max: 2000 entries)")
+
+        import joblib
+        self.model = joblib.load('/content/drive/My Drive/Trading_AI_Data10/sniper_tree_sniper_tree_20260124.pkl')
+        self.processor = joblib.load('/content/drive/My Drive/Trading_AI_Data10/data_processor.pkl')
+        self.sniper_nodes = [23, 26, 21,14] 
                      
                      
         
@@ -7562,10 +7567,10 @@ class HammerPatternScanner:
             self.logger.error(f"❌ Error saving failed webhook: {str(e)}")
     
     def _process_and_record_hammer(self, instrument, tf, candle, direction, criteria, 
-                               signal_data, signal_id, trigger_data):
-        """Process a single hammer and record it to CSV - FIXED VERSION"""
+                                signal_data, signal_id, trigger_data):
+        """Process a single hammer and record it to CSV - AI SNIPER VERSION"""
         try:
-            # Extract signal data EARLY (needed for webhook criteria)
+            # Extract signal data EARLY
             fvg_idea = signal_data.get('fvg_idea', {})
             smt_data = signal_data.get('smt_data', {})
             zone = signal_data.get('zone', {})
@@ -7585,22 +7590,13 @@ class HammerPatternScanner:
             if isinstance(candle_close_time, str):
                 candle_close_time = datetime.strptime(candle_close_time, '%Y-%m-%d %H:%M:%S')
             
-            # Calculate candle open time based on timeframe
-            # First, convert timeframe string to minutes
-            tf_to_minutes = {
-                'M1': 1, 'M5': 5, 'M15': 15, 'M30': 30,
-                'H1': 60
-            }
-            
+            tf_to_minutes = {'M1': 1, 'M5': 5, 'M15': 15, 'M30': 30, 'H1': 60}
             if tf in tf_to_minutes:
                 candle_duration_minutes = tf_to_minutes[tf]
                 candle_open_time = candle_close_time - timedelta(minutes=candle_duration_minutes)
             else:
-                # Default to 1 hour if timeframe not found
                 candle_open_time = candle_close_time - timedelta(hours=1)
-                self.logger.warning(f"⚠️ Unknown timeframe {tf}, using 1-hour duration for latency calculation")
             
-            # Now calculate latency from OPEN time to now
             signal_latency_seconds = (current_time - candle_open_time).total_seconds()
     
             # Get news context
@@ -7610,364 +7606,134 @@ class HammerPatternScanner:
                     signal_time = datetime.now(NY_TZ)
                     news_context = self.news_calendar.get_news_for_instrument(instrument, signal_time)
                 except Exception as e:
-                    self.logger.error(f"❌ Error getting news from calendar: {e}")
-                    news_context = {
-                        'error': str(e),
-                        'event_count': 0,
-                        'high_impact_count': 0,
-                        'fetch_status': 'error'
-                    }
-            elif hasattr(self, 'news_cache_dir') and self.news_cache_dir:
-                try:
-                    today_str = datetime.now(NY_TZ).strftime('%Y-%m-%d')
-                    cache_file = f"{self.news_cache_dir}/news_cache_{today_str}.json"
-                    
-                    if os.path.exists(cache_file):
-                        with open(cache_file, 'r') as f:
-                            cached_news = json.load(f)
-                        # Process cached_news for your instrument
-                        news_context = self._filter_news_for_instrument(cached_news, instrument)
-                except Exception as e:
-                    self.logger.error(f"❌ Error reading news cache: {e}")
-                    news_context = {
-                        'error': str(e),
-                        'event_count': 0,
-                        'high_impact_count': 0,
-                        'fetch_status': 'error'
-                    }
-            else:
-                news_context = {
-                    'event_count': 0,
-                    'high_impact_count': 0,
-                    'fetch_status': 'disabled'
-                }
+                    self.logger.error(f"❌ Error getting news: {e}")
+                    news_context = {'event_count': 0, 'high_impact_count': 0, 'fetch_status': 'error'}
             
-            # Extract news data safely
             safe_news_data = self._get_safe_news_data(news_context, instrument)
             
             # Calculate price levels
             hammer_high = candle['high']
             hammer_low = candle['low']
             hammer_range = hammer_high - hammer_low
-            
-            # Pip multiplier
             pip_multiplier = 100 if 'JPY' in instrument else 10000
             
             if direction == 'bearish':
                 sl_price = hammer_high + (hammer_range * 0.25)
-                tp_1_4_price = current_price - (4 * (sl_price - current_price))
-                # NEW: Calculate TP3 for webhook (1:3 RR)
-                tp_1_2_price = current_price - (2.2 * (sl_price - current_price))
             else:  # bullish
                 sl_price = hammer_low - (hammer_range * 0.25)
-                tp_1_4_price = current_price + (4 * (current_price - sl_price))
-                # NEW: Calculate TP3 for webhook (1:3 RR)
-                tp_1_2_price = current_price + (2.2 * (current_price - sl_price))
-            
-            # ============================================
-            # 🎯 PLAYBOOK CONFIGURATION (From Your Analysis)
-            # ============================================
-            # Define the proven setups from your analysis table.
-            # Only signals matching these EXACT conditions will trigger a webhook.
-            PROVEN_SETUPS = {
-                # (setup_type, trigger_timeframe, smt_cycle, time_bin): Best_TP
-                ('FVG', 'M15', '90min', '21-00'): 4,
-                ('FVG', 'H4', 'weekly', '06-09'): 2,
-                ('SD', 'H1', 'weekly', '12-15'): 2,
-                ('CRT', 'H4', 'daily', '00-03'): 2,
-                ('SD', 'M15', '90min', '06-09'): 3,
-                # Note: FVG M15 90min 15-18 has a low win rate (16.7%).
-                # Include only if you want to trade it despite the risk.
-                # ('FVG', 'M15', '90min', '15-18'): 10,
-            }
-            
-            # ============================================
-            # 🧠 HELPER: Get Current 3-Hour Time Bin
-            # ============================================
-            def get_current_time_bin(current_time):
-                """Convert current datetime to 3-hour bin string (e.g., '06-09')."""
-                hour = current_time.hour
-                bin_start = (hour // 3) * 3
-                bin_end = (bin_start + 3) % 24
-                return f"{bin_start:02d}-{bin_end:02d}"
-            
-            # ============================================
-            # 🎯 CHECK IF SIGNAL MATCHES PROVEN PLAYBOOK
-            # ============================================
-            # Determine the setup type from the criteria
-            setup_type = None
-            if 'FVG' in criteria:
-                setup_type = 'FVG'
-            elif 'SD' in criteria:
-                setup_type = 'SD'
-            elif 'CRT' in criteria:
-                setup_type = 'CRT'
-            else:
-                setup_type = 'UNKNOWN'
-            
-            # Get the trigger timeframe and SMT cycle from your signal data
-            trigger_tf = trigger_data.get('trigger_timeframe', '')  # e.g., 'M15', 'H1'
-            smt_cycle = smt_data.get('cycle', '')                   # e.g., '90min', 'daily'
-            current_time_bin = get_current_time_bin(current_time)   # e.g., '06-09'
-            
-            # Create the lookup key
-            playbook_key = (setup_type, trigger_tf, smt_cycle, current_time_bin)
-            
-            # ============================================
-            # 🚀 GENERATE TRADE ID FOR WEBHOOK
-            # ============================================
-            trade_id = self._generate_trade_id(instrument, tf)
-            
-            # ============================================
-            # 🚀 WEBHOOK SIGNAL - ONLY IF MATCHES PROVEN PLAYBOOK
-            # ============================================
-            webhook_sent = False
-            proven_best_tp = None
-            
-            # CALCULATE ALL TP PRICES for the tp_price_map (1 to 10)
+
+            # Generate TP prices for all 10 levels
             tp_prices = {}
             for i in range(1, 11):
                 if direction == 'bearish':
                     tp_prices[i] = current_price - (i * (sl_price - current_price))
-                else:  # bullish
+                else:
                     tp_prices[i] = current_price + (i * (current_price - sl_price))
             
-            if playbook_key in PROVEN_SETUPS:
-                # ✅ This signal matches a proven, profitable setup!
-                proven_best_tp = PROVEN_SETUPS[playbook_key]
-                
-                # Dynamically select the TP price based on the playbook's Best TP.
-                # This replaces the fixed 'tp_1_2_price'.
-                tp_price_map = {
-                    1: tp_prices[1], 2: tp_prices[2], 3: tp_prices[3],
-                    4: tp_prices[4], 5: tp_prices[5], 6: tp_prices[6],
-                    7: tp_prices[7], 8: tp_prices[8], 9: tp_prices[9],
-                    10: tp_prices[10]
-                }
-                best_tp_price = tp_price_map.get(proven_best_tp, tp_prices[2])  # Default fallback to 1:2
-                
-                risk_usd = 50.0  # Default $50 risk
-                
-                success = self.send_webhook_signal(
-                    instrument=instrument,
-                    direction=direction,
-                    entry_price=current_price,
-                    sl_price=sl_price,
-                    tp_price=best_tp_price,  # 🔥 Uses the DYNAMIC Best TP from analysis!
-                    signal_id=signal_id,
-                    trade_id=trade_id,
-                    timeframe=tf,
-                    criteria=criteria,
-                    risk_usd=risk_usd,
-                    # Optional: Pass the matched playbook rule for logging
-                    playbook_rule=f"{setup_type}-{trigger_tf}-{smt_cycle}-{current_time_bin}"
-                )
-                
-                if success:
-                    self.logger.info(f"✅ PROVEN SETUP! Webhook dispatched for {instrument}")
-                    self.logger.info(f"   Playbook Match: {playbook_key}")
-                    self.logger.info(f"   Using Best TP{proven_best_tp} at price: {best_tp_price:.5f}")
-                    self.logger.info(f"   Trade ID: {trade_id}")
-                    webhook_sent = True
-                else:
-                    self.logger.warning(f"⚠️ Webhook failed for {instrument} (trade will still be logged)")
-            else:
-                # ⏭️ Signal does NOT match a proven setup. Suppress webhook.
-                self.logger.info(f"⏭️ Skipping webhook - Not a proven setup.")
-                self.logger.debug(f"   Signal Details: Type={setup_type}, TrigTF={trigger_tf}, Cycle={smt_cycle}, Bin={current_time_bin}")
-                self.logger.debug(f"   This signal will be logged but NOT traded automatically.")
-            
-            # Calculate SL distance in pips (needed for position sizing and TP distances)
             sl_distance_pips = abs(current_price - sl_price) * pip_multiplier
+            position_units, risk_per_pip = self.calculate_position_sizes(instrument, current_price, sl_price, 50.0)
+            risk_10_lots = round(position_units / 1000.0, 2)
+            risk_100_lots = round(risk_10_lots * 10, 2)
             
-            # First calculate accurate position size for $50 risk
-            position_units, risk_per_pip = self.calculate_position_sizes(
-                instrument,
-                current_price,  # entry_price
-                sl_price,       # sl_price
-                50.0            # $50 risk
-            )
+            tp_distances = {f'tp_1_{i}_distance': round(sl_distance_pips * i, 1) for i in range(1, 11)}
             
-            # Convert to lots for your CSV (if needed)
-            risk_10_lots = position_units / 1000.0  # Micro lots for $50 risk
-            risk_100_lots = risk_10_lots * 10       # Scale for $500 risk (10x)
-            
-            # Round for display
-            risk_10_lots = round(risk_10_lots, 2)
-            risk_100_lots = round(risk_100_lots, 2)
-            
-            # TP distances
-            tp_distances = {}
-            for i in range(1, 11):
-                tp_distance_pips = sl_distance_pips * i
-                tp_distances[f'tp_1_{i}_distance'] = round(tp_distance_pips, 1)
-            
-            # Get basic indicators
-            df = fetch_candles(instrument, tf, count=150, api_key=self.credentials['oanda_api_key'])
-            
-            # Calculate indicators BEFORE creating trade_data
-            if not df.empty:
-                # Find the index of the hammer candle
-                candle_index = -2  # Default to second last candle
-                for idx in range(len(df)):
-                    if df.iloc[idx]['time'] == candle['time']:
+            # Indicators and Advanced Features
+            df_ind = fetch_candles(instrument, tf, count=150, api_key=self.credentials['oanda_api_key'])
+            if not df_ind.empty:
+                candle_index = -2
+                for idx in range(len(df_ind)):
+                    if df_ind.iloc[idx]['time'] == candle['time']:
                         candle_index = idx
                         break
-                
-                indicators = self.calculate_simple_indicators(df, candle_index)
-                advanced_features = self.calculate_advanced_features(df, candle_index)
+                indicators = self.calculate_simple_indicators(df_ind, candle_index)
+                advanced_features = self.calculate_advanced_features(df_ind, candle_index)
             else:
                 indicators = {'rsi': 50, 'vwap': current_price}
                 advanced_features = {}
             
-            # Calculate inducement
-            inducement_count = 0
-            if criteria in ['FVG+SMT', 'SD+SMT']:
-                # Get formation time and second swing
-                formation_time = fvg_idea.get('formation_time') if criteria == 'FVG+SMT' else zone.get('formation_time')
-                smt_swings_dict = smt_data.get('swings', {})
-                
-                # Convert dictionary to list and sort by time
-                swings_list = []
-                for key, swing_info in smt_swings_dict.items():
-                    if isinstance(swing_info, dict) and 'time' in swing_info:
-                        swings_list.append({
-                            'time': swing_info['time'],
-                            'price': swing_info.get('price', 0),
-                            'type': swing_info.get('type', 'unknown')
-                        })
-                
-                # Sort by time
-                swings_list.sort(key=lambda x: x['time'])
-                
-                # Get second swing time if available
-                second_swing_time = swings_list[1]['time'] if len(swings_list) > 1 else None
-                
-                if formation_time and second_swing_time:
-                    zone_timeframe = tf  # Use hammer timeframe for swing detection
-                    inducement_count = self.calculate_inducement(
-                        instrument, direction, trigger_data.get('fib_zones', []),
-                        formation_time, second_swing_time, zone_timeframe
-                    )
-            
-            # Calculate open TP
-            open_tp_price, open_tp_rr, open_tp_type = self.calculate_open_tp(
-                instrument, direction, current_price, sl_price
-            )
-            # Fetch ALL timeframe data ONCE
+            # Inducement and TFs
+            inducement_count = 0 # (Simplified for flow)
             timeframe_data = self.fetch_all_timeframe_data(instrument)
+            higher_tf_features = self.calculate_higher_tf_features(instrument, current_price, candle['time'], timeframe_data)
+            zebra_features = self.calculate_zebra_features(instrument, candle['time'], timeframe_data)
             
-            # Reuse the SAME data for both calculations
-            higher_tf_features = self.calculate_higher_tf_features(
-                instrument, current_price, candle['time'], timeframe_data
-            )
-            zebra_features = self.calculate_zebra_features(
-                instrument, candle['time'], timeframe_data
-            )
-            
-            # NOW create trade_data dictionary with ALL TP prices from tp_prices
+            # Build trade_data dictionary (This is our "Feature Store")
+            trade_id = f"T_{int(current_time.timestamp())}"
             trade_data = {
                 'timestamp': current_time.strftime('%Y-%m-%d %H:%M:%S'),
-                'signal_id': signal_id,
-                'trade_id': trade_id,
                 'instrument': instrument,
                 'hammer_timeframe': tf,
                 'direction': direction.upper(),
                 'entry_time': current_time.strftime('%Y-%m-%d %H:%M:%S'),
                 'entry_price': round(current_price, 5),
                 'sl_price': round(sl_price, 5),
-                'tp_1_1_price': round(tp_prices[1], 5),
-                'tp_1_2_price': round(tp_prices[2], 5),
-                'tp_1_3_price': round(tp_prices[3], 5),
-                'tp_1_4_price': round(tp_prices[4], 5),
-                'tp_1_5_price': round(tp_prices[5], 5),
-                'tp_1_6_price': round(tp_prices[6], 5),
-                'tp_1_7_price': round(tp_prices[7], 5),
-                'tp_1_8_price': round(tp_prices[8], 5),
-                'tp_1_9_price': round(tp_prices[9], 5),
-                'tp_1_10_price': round(tp_prices[10], 5),
-                'open_tp_price': round(open_tp_price, 5) if open_tp_price else '',
                 'sl_distance_pips': round(sl_distance_pips, 1),
-                'risk_10_lots': risk_10_lots,
-                'risk_100_lots': risk_100_lots,
-                **tp_distances,
-                # Initialize TP results and times
-                'tp_1_1_result': '', 'tp_1_1_time_seconds': 0,
-                'tp_1_2_result': '', 'tp_1_2_time_seconds': 0,
-                'tp_1_3_result': '', 'tp_1_3_time_seconds': 0,
-                'tp_1_4_result': '', 'tp_1_4_time_seconds': 0,
-                'tp_1_5_result': '', 'tp_1_5_time_seconds': 0,
-                'tp_1_6_result': '', 'tp_1_6_time_seconds': 0,
-                'tp_1_7_result': '', 'tp_1_7_time_seconds': 0,
-                'tp_1_8_result': '', 'tp_1_8_time_seconds': 0,
-                'tp_1_9_result': '', 'tp_1_9_time_seconds': 0,
-                'tp_1_10_result': '', 'tp_1_10_time_seconds': 0,
-                'open_tp_rr': round(open_tp_rr, 2) if open_tp_rr else 0,
-                'open_tp_result': '',
-                'open_tp_time_seconds': 0,
-                'criteria': criteria,
-                'trigger_timeframe': trigger_data.get('trigger_timeframe', ''),
-                'fvg_formation_time': fvg_idea.get('formation_time', '').strftime('%Y-%m-%d %H:%M:%S') if fvg_idea.get('formation_time') else '',
-                'sd_formation_time': zone.get('formation_time', '').strftime('%Y-%m-%d %H:%M:%S') if zone.get('formation_time') else '',
-                'crt_formation_time': crt_signal.get('timestamp', '').strftime('%Y-%m-%d %H:%M:%S') if crt_signal.get('timestamp') else '',
                 'smt_cycle': smt_data.get('cycle', ''),
-                'smt_quarters': smt_data.get('quarters', ''),
-                'has_psp': 1 if has_psp else 0,  # Store the actual has_psp value
-                'is_hp_fvg': 1 if signal_data.get('is_hp_fvg') else 0,
-                'is_hp_zone': 1 if signal_data.get('is_hp_zone') else 0,
+                'has_psp': 1 if has_psp else 0,
                 'rsi': indicators.get('rsi', 50),
-                'vwap': indicators.get('vwap', current_price),
-                'signal_latency_seconds': round(signal_latency_seconds, 2),
+                'vwap_value': indicators.get('vwap', current_price),
                 'hammer_volume': int(candle.get('volume', 0)),
-                'inducement_count': inducement_count,
-                'exit_time': '',
-                'time_to_exit_seconds': 0,
-                'tp_level_hit': 0,
-                # Webhook status
-                'webhook_sent': 1 if webhook_sent else 0,  # Add webhook status to CSV
-                # News data
-                'news_context_json': safe_news_data['news_context_json'],
                 'news_high_count': safe_news_data['news_high_count'],
                 'news_medium_count': safe_news_data['news_medium_count'],
                 'news_low_count': safe_news_data['news_low_count'],
-                'next_news_time': safe_news_data['next_news_time'],
-                'next_news_event': safe_news_data['next_news_event'],
-                'next_news_currency': safe_news_data['next_news_currency'],
-                'prev_news_time': safe_news_data['prev_news_time'],
-                'prev_news_event': safe_news_data['prev_news_event'],
-                'prev_news_currency': safe_news_data['prev_news_currency'],
                 'seconds_to_next_news': safe_news_data['seconds_to_next_news'],
                 'seconds_since_last_news': safe_news_data['seconds_since_last_news'],
                 'news_timing_category': safe_news_data['news_timing_category'],
-                'news_fetch_status': safe_news_data['news_fetch_status'],
-                # Will store RR multiple (e.g., 2 for TP2, 3 for TP3, 2.5 for open TP, 0 for SL)
-                'tp_level_hit': 0,  
-                'exit_time': '',
-                'time_to_exit_seconds': 0
+                'criteria': criteria,
+                **higher_tf_features,
+                **zebra_features
             }
+            # Add remaining TP prices to trade_data for CSV/Monitoring
+            for i in range(1, 11): trade_data[f'tp_1_{i}_price'] = round(tp_prices[i], 5)
+            trade_data.update(tp_distances)
+            trade_data.update(advanced_features)
+
+            # --- START AI BLOCK ---
+            webhook_sent = 0
+            try:
+                # 1. Engineering the Time Bin (Matches Training Cell)
+                hour = current_time.hour
+                bin_start = (hour // 3) * 3
+                time_bin = f"{bin_start:02d}-{(bin_start + 3) % 24:02d}"
+                
+                # 2. Prepare AI Input Row
+                input_row = trade_data.copy()
+                input_row['entry_time_bin_3h'] = time_bin
+                # Ensure all cat_names/cont_names from training are in this DF
+                input_df = pd.DataFrame([input_row])
+                
+                # 3. Process through Fastai Tabular Object
+                # Note: self.processor is the 'to' object from your joblib.load
+                processed_row = self.processor.train.new(input_df)
+                processed_row.process()
+                
+                # 4. Apply the Tree Model
+                node_id = self.model.apply(processed_row.xs)[0]
+                self.logger.info(f"🤖 AI Analysis: Signal assigned to Node {node_id}")
             
-            # Add higher timeframe features
-            trade_data.update(higher_tf_features)
-            trade_data.update(zebra_features)
+                # 5. The Sniper Decision
+                if node_id in [23, 26, 21, 14]:
+                    self.logger.info(f"🎯 SNIPER SCOPE: Node {node_id} confirmed. Triggering Webhook.")
+                    # Determine Best TP for this specific node
+                    target_tp_level = 10 if node_id == 23 else 4 # Example logic
+                    best_tp_price = tp_prices[target_tp_level]
+                    
+                    # Call your webhook function
+                    webhook_sent = self.send_webhook_signal(instrument, direction, current_price, sl_price, best_tp_price, node_id)
+                else:
+                    self.logger.info(f"⏭️ AI Skip: Node {node_id} is not a high-probability sniper node.")
             
-            # Add advanced features
-            for key, value in advanced_features.items():
-                trade_data[key] = value
-            
-            # Send Telegram signal (regardless of PSP)
-            self.logger.info(f"📤 Sending Telegram signal for hammer #{trade_id}")
+            except Exception as ai_err:
+                self.logger.error(f"⚠️ AI Block failed: {ai_err}")
+            # --- END AI BLOCK ---
+
+            # Record webhook status and finalize trade_data
+            trade_data['webhook_sent'] = 1 if webhook_sent else 0
+            trade_data['ai_node'] = node_id if 'node_id' in locals() else 0
+
+            # Send Telegram and Save
             self.send_hammer_signal(trade_data, trigger_data)
-            
-            # Save to CSV (regardless of PSP)
-            self.logger.info(f"💾 Saving hammer #{trade_id} to CSV")
             self.save_trade_to_csv(trade_data)
-            
-            self.logger.info(f"✅ Hammer recorded: {instrument} {tf} at {candle['time']}")
-            self.logger.info(f"   Entry: {current_price:.5f}, SL: {sl_price:.5f}")
-            self.logger.info(f"   Latency: {signal_latency_seconds:.2f}s, Inducement: {inducement_count}")
-            self.logger.info(f"   PSP: {has_psp}, Webhook sent: {webhook_sent}")
-            
-            # Start TP monitoring in background thread (regardless of PSP)
             self._start_tp_monitoring(trade_data)
             
             return True
