@@ -289,7 +289,107 @@ def send_telegram(message, token=None, chat_id=None):
     logger.error(f"Failed to send Telegram message after {MAX_RETRIES} attempts")
     return False
 
-
+def fetch_candles(instrument, timeframe, count=100, api_key=None, since=None, use_cache=True):
+    """Fetch candles from OANDA API - with global caching support"""
+    
+    if not api_key:
+        return pd.DataFrame()
+    
+    # Check cache first (if enabled)
+    if use_cache:
+        cached_data = GLOBAL_CACHE.get(instrument, timeframe, count)
+        if cached_data is not None:
+            # Filter by 'since' if provided
+            if since is not None and not cached_data.empty:
+                filtered = cached_data[cached_data['time'] > since]
+                if not filtered.empty:
+                    return filtered
+            else:
+                return cached_data
+    
+    try:
+        api = API(access_token=api_key, environment="practice")
+        logging.getLogger('oandapyV20.oandapyV20').setLevel(logging.ERROR)
+    except Exception:
+        return pd.DataFrame()
+    
+    params = {
+        "granularity": timeframe,
+        "count": min(count, 500),
+        "price": "M",
+        "alignmentTimezone": "America/New_York",
+        "includeCurrent": True
+    }
+    if since:
+        params["from"] = since.strftime('%Y-%m-%dT%H:%M:%S')
+    
+    for attempt in range(MAX_RETRIES):
+        try:
+            request = instruments.InstrumentsCandles(instrument=instrument, params=params)
+            response = api.request(request)
+            
+            candles = response.get('candles', [])
+            if not candles:
+                continue
+            
+            data = []
+            for candle in candles:
+                price_data = candle.get('mid', {})
+                if not price_data:
+                    continue
+                
+                try:
+                    raw_time = candle['time']
+                    parsed_time = pd.to_datetime(raw_time, utc=True).tz_convert(NY_TZ)
+                    is_complete = candle.get('complete', False)
+                    
+                    data.append({
+                        'time': parsed_time,
+                        'open': float(price_data['o']),
+                        'high': float(price_data['h']),
+                        'low': float(price_data['l']),
+                        'close': float(price_data['c']),
+                        'volume': int(candle.get('volume', 0)),
+                        'complete': is_complete,
+                        'is_current': not is_complete
+                    })
+                except Exception:
+                    continue
+            
+            if not data:
+                continue
+            
+            df = pd.DataFrame(data).drop_duplicates(subset=['time'], keep='last')
+            df = df.sort_values('time').reset_index(drop=True)
+            
+            if since:
+                df = df[df['time'] > since]
+            
+            # Store in global cache
+            if use_cache:
+                GLOBAL_CACHE.set(instrument, timeframe, count, df)
+            
+            return df
+            
+        except Exception as e:
+            error_str = str(e)
+            
+            if '502' in error_str or 'Bad Gateway' in error_str:
+                time.sleep(2)
+                continue
+                
+            elif '429' in error_str or 'rate' in error_str.lower():
+                wait_time = min(30, 5 * (2 ** attempt))
+                logger.debug(f"[{instrument}] Rate limit, waiting {wait_time}s")
+                time.sleep(wait_time)
+                continue
+                
+            else:
+                code = getattr(e, 'code', 'No code')
+                logger.debug(f"[{instrument}] Error {code}")
+                break
+    
+    return pd.DataFrame()
 
 
 # ========================
@@ -450,107 +550,7 @@ class GlobalCandleCache:
 # Create global instance
 GLOBAL_CACHE = GlobalCandleCache()
 
-def fetch_candles(instrument, timeframe, count=100, api_key=None, since=None, use_cache=True):
-    """Fetch candles from OANDA API - with global caching support"""
-    
-    if not api_key:
-        return pd.DataFrame()
-    
-    # Check cache first (if enabled)
-    if use_cache:
-        cached_data = GLOBAL_CACHE.get(instrument, timeframe, count)
-        if cached_data is not None:
-            # Filter by 'since' if provided
-            if since is not None and not cached_data.empty:
-                filtered = cached_data[cached_data['time'] > since]
-                if not filtered.empty:
-                    return filtered
-            else:
-                return cached_data
-    
-    try:
-        api = API(access_token=api_key, environment="practice")
-        logging.getLogger('oandapyV20.oandapyV20').setLevel(logging.ERROR)
-    except Exception:
-        return pd.DataFrame()
-    
-    params = {
-        "granularity": timeframe,
-        "count": min(count, 500),
-        "price": "M",
-        "alignmentTimezone": "America/New_York",
-        "includeCurrent": True
-    }
-    if since:
-        params["from"] = since.strftime('%Y-%m-%dT%H:%M:%S')
-    
-    for attempt in range(MAX_RETRIES):
-        try:
-            request = instruments.InstrumentsCandles(instrument=instrument, params=params)
-            response = api.request(request)
-            
-            candles = response.get('candles', [])
-            if not candles:
-                continue
-            
-            data = []
-            for candle in candles:
-                price_data = candle.get('mid', {})
-                if not price_data:
-                    continue
-                
-                try:
-                    raw_time = candle['time']
-                    parsed_time = pd.to_datetime(raw_time, utc=True).tz_convert(NY_TZ)
-                    is_complete = candle.get('complete', False)
-                    
-                    data.append({
-                        'time': parsed_time,
-                        'open': float(price_data['o']),
-                        'high': float(price_data['h']),
-                        'low': float(price_data['l']),
-                        'close': float(price_data['c']),
-                        'volume': int(candle.get('volume', 0)),
-                        'complete': is_complete,
-                        'is_current': not is_complete
-                    })
-                except Exception:
-                    continue
-            
-            if not data:
-                continue
-            
-            df = pd.DataFrame(data).drop_duplicates(subset=['time'], keep='last')
-            df = df.sort_values('time').reset_index(drop=True)
-            
-            if since:
-                df = df[df['time'] > since]
-            
-            # Store in global cache
-            if use_cache:
-                GLOBAL_CACHE.set(instrument, timeframe, count, df)
-            
-            return df
-            
-        except Exception as e:
-            error_str = str(e)
-            
-            if '502' in error_str or 'Bad Gateway' in error_str:
-                time.sleep(2)
-                continue
-                
-            elif '429' in error_str or 'rate' in error_str.lower():
-                wait_time = min(30, 5 * (2 ** attempt))
-                logger.debug(f"[{instrument}] Rate limit, waiting {wait_time}s")
-                time.sleep(wait_time)
-                continue
-                
-            else:
-                code = getattr(e, 'code', 'No code')
-                logger.debug(f"[{instrument}] Error {code}")
-                break
-    
-    return pd.DataFrame()
+
 
 # ================================
 # ENHANCED TIMING MANAGER
