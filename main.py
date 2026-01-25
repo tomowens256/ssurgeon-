@@ -8834,7 +8834,7 @@ class HammerPatternScanner:
         if not os.path.exists(self.csv_file_path):
             self.logger.warning("No CSV found to reconcile.")
             return
-
+    
         try:
             # Read CSV and ensure we handle empty strings correctly
             df_csv = pd.read_csv(self.csv_file_path).fillna('')
@@ -8842,47 +8842,58 @@ class HammerPatternScanner:
             # Identify "Orphan" trades (missing result or missing TP1)
             mask = (df_csv['tp_1_1_result'] == '') | (df_csv['tp_level_hit'] == '')
             orphaned_trades = df_csv[mask]
-
+    
             if orphaned_trades.empty:
                 self.logger.info("✅ All trades are fully documented. No recovery needed.")
                 return
-
+    
             self.logger.info(f"Found {len(orphaned_trades)} orphans. Processing...")
-
+    
             for index, row in orphaned_trades.iterrows():
                 trade_data = row.to_dict()
                 
                 # 1. FORMAT INSTRUMENT (e.g., EURUSD -> EUR_USD)
                 raw_inst = str(trade_data['instrument'])
                 instrument = raw_inst if "_" in raw_inst else f"{raw_inst[:3]}_{raw_inst[3:]}"
-                trade_data['instrument'] = instrument # Sync back to dict
+                trade_data['instrument'] = instrument
                 
                 # 2. FORMAT DIRECTION
-                direction = str(trade_data['direction']).upper() # 'BULLISH' or 'BEARISH'
+                direction = str(trade_data['direction']).upper()
                 
-                entry_time = pd.to_datetime(trade_data['entry_time'])
+                # FIX: Handle invalid/missing entry_time
+                entry_time_str = trade_data.get('entry_time', '')
+                if not entry_time_str:
+                    self.logger.warning(f"⚠️ Missing entry_time for {trade_data['trade_id']}. Skipping.")
+                    continue
+    
+                try:
+                    entry_time = pd.to_datetime(entry_time_str)
+                except Exception as e:
+                    self.logger.error(f"❌ Invalid entry_time format: {entry_time_str}. Error: {str(e)}. Skipping.")
+                    continue
+    
                 self.logger.info(f"🔄 Recovering {trade_data['trade_id']} | {instrument} | {direction}")
-
-                # 3. FETCH 5M HISTORY
-                hist_df = self.cached_fetch_candles(instrument, '5M', count=5000, force_fetch=True)
+    
+                # 3. FETCH M5 HISTORY (FIXED: Use 'M5' not '5M')
+                hist_df = self.cached_fetch_candles(instrument, 'M5', count=5000, force_fetch=True)
                 if hist_df.empty:
                     self.logger.error(f"Could not fetch history for {instrument}. Skipping.")
                     continue
-
+    
                 # Filter history to start from the entry candle
                 hist_df['time'] = pd.to_datetime(hist_df['time'])
                 playback_data = hist_df[hist_df['time'] >= entry_time]
-
+    
                 # 4. SIMULATION CONSTANTS
                 tp_prices = self._calculate_tp_prices_for_recovery(trade_data)
                 sl_price = float(trade_data['sl_price'])
                 trade_is_alive = True
-
+    
                 # 5. THE RAPID PLAYBACK LOOP
                 for _, candle in playback_data.iterrows():
                     c_high, c_low = candle['high'], candle['low']
                     c_time = candle['time']
-
+    
                     # Check SL Hit
                     if (direction == 'BULLISH' and c_low <= sl_price) or \
                        (direction == 'BEARISH' and c_high >= sl_price):
@@ -8909,7 +8920,7 @@ class HammerPatternScanner:
                     if trade_data.get('tp_1_10_result') != '':
                         trade_is_alive = False
                         break
-
+    
                 # 6. UPDATING THE CONTRACT
                 if not trade_is_alive:
                     self.logger.info(f"🏁 Finished: {trade_data['trade_id']} closed during simulation.")
@@ -8919,9 +8930,9 @@ class HammerPatternScanner:
                     self.logger.info(f"🏃 Still Active: {trade_data['trade_id']} resuming live monitoring.")
                     self._update_trade_in_csv(trade_data) 
                     self._start_tp_monitoring(trade_data)
-
+    
             self.logger.info("✅ Recovery Complete.")
-
+    
         except Exception as e:
             self.logger.error(f"❌ Recovery Error: {str(e)}", exc_info=True)
 
