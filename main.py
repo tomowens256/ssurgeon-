@@ -9635,7 +9635,7 @@ class UltimateTradingSystem:
         if self.news_calendar:
             self.hammer_scanner.start()
             # Fix the past before starting the future
-            self.reconcile_and_resume_trades()
+            self.hammer_scanner.reconcile_and_resume_trades()
             
         
     def get_sleep_time(self):
