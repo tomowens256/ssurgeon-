@@ -9390,6 +9390,8 @@ class UltimateTradingSystem:
         # Start the hammer scanner if we have a news calendar
         if self.news_calendar:
             self.hammer_scanner.start()
+            # Fix the past before starting the future
+            self.reconcile_and_resume_trades()
             
             # --- UPDATED ZEBRA THREADS ---
             # We don't pass direction here anymore; the thread will detect it dynamically
