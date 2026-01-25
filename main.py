@@ -115,6 +115,12 @@ CYCLE_HIERARCHY = {
     '90min': 1
 }
 
+ZEBRA_INSTRUMENTS = {
+    'XAU_USD': ['M1', 'M3', 'M5', 'M15'],
+    'EUR_USD': ['M1', 'M3', 'M5', 'M15'],
+    # ... other instruments for Zebra only
+}
+
 NY_TZ = pytz.timezone('America/New_York')  # UTC-4 (or UTC-5 during standard time)
 BASE_INTERVAL = 60
 MIN_INTERVAL = 10
