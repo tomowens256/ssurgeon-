@@ -5726,7 +5726,7 @@ class HammerPatternScanner:
 
     def cached_fetch_candles(self, instrument, timeframe, count, force_fetch=False):
         """
-        Fetch candles with caching support - used by ALL scanners
+        Fetch candles with GLOBAL caching support - used by ALL scanners
         
         Args:
             force_fetch: If True, bypass cache and fetch fresh data (for real-time)
@@ -5740,23 +5740,26 @@ class HammerPatternScanner:
                 cached_data = self.candle_cache.get(instrument, timeframe, count)
                 if cached_data is not None:
                     # Log only occasionally to avoid spam
-                    if count % 10 == 0:  # Log every 10th cached request
-                        self.logger.debug(f"📦 Cache HIT: {instrument} {timeframe} count={count}")
+                    if random.random() < 0.05:  # Log only 5% of cache hits
+                        self.logger.debug(f"📦 Global Cache HIT: {instrument} {timeframe} count={count}")
                     return cached_data
             
             # Cache miss or force_fetch - fetch from API
             self.logger.debug(f"📡 Fetching FRESH: {instrument} {timeframe} count={count}")
+            
+            # Use the enhanced fetch_candles with caching
             fresh_data = fetch_candles(instrument, timeframe, count, 
-                                      api_key=self.credentials['oanda_api_key'])
+                                      api_key=self.credentials['oanda_api_key'],
+                                      use_cache=True)  # Enable cache
             
             # Store in cache (even if empty, to prevent repeated failed calls)
-            if fresh_data is not None:
+            if fresh_data is not None and not fresh_data.empty:
                 self.candle_cache.set(instrument, timeframe, count, fresh_data)
                 if force_fetch:
-                    self.logger.debug(f"📦 Cache SET (force): {instrument} {timeframe}")
+                    self.logger.debug(f"📦 Global Cache SET (force): {instrument} {timeframe}")
             else:
                 self.logger.warning(f"⚠️ No data returned for {instrument} {timeframe}")
-                # Still cache None for 10 seconds to prevent repeated failed calls
+                # Still cache empty DataFrame for 10 seconds to prevent repeated failed calls
                 self.candle_cache.set(instrument, timeframe, count, pd.DataFrame(), 
                                      ttl_override=10)
             
@@ -5764,7 +5767,6 @@ class HammerPatternScanner:
             
         except Exception as e:
             self.logger.error(f"❌ Error in cached_fetch_candles: {str(e)}")
-            # Return empty DataFrame instead of None to prevent crashes
             return pd.DataFrame()
     
     def _generate_signal_id(self, trigger_data):
