@@ -9238,24 +9238,25 @@ class UltimateTradingSystem:
         logger.info(f"🔨 Hammer Pattern Scanner initialized for {pair_group}")
         
         
+      
         # Start the hammer scanner if we have a news calendar
         if self.news_calendar:
             self.hammer_scanner.start()
             
-            # --- START ZEBRA THREADS HERE ---
+            # --- UPDATED ZEBRA THREADS ---
+            # We don't pass direction here anymore; the thread will detect it dynamically
             zebra_timeframes = ['M1', 'M3', 'M5', 'M15']
             for tf in zebra_timeframes:
-                # We start a thread for each TF using the hammer_scanner's logic
-                # We assume instrument is the first one in your list for scanning
                 for inst in self.instruments:
                     import threading
+                    # We pass None or remove the direction arg if your function handles it
                     t = threading.Thread(
                         target=self.hammer_scanner.run_zebra_scan, 
-                        args=(tf, inst, "bullish", {}, f"Z_{tf}", {}),
+                        args=(tf, inst, f"Z_{tf}"), # Only pass TF, Inst, and ID
                         daemon=True
                     )
                     t.start()
-                    self.logger.info(f"🦓 Zebra Thread launched for {inst} on {tf}")
+                    self.logger.info(f"🦓 Zebra Thread (Dynamic Direction) launched for {inst} on {tf}")
         
     def get_sleep_time(self):
         """Use smart timing instead of fixed intervals"""
