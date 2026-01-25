@@ -5301,6 +5301,74 @@ class TimeframeScanner:
             self.logger.error(f"❌ Error in {self.timeframe} scanner: {str(e)}")
             return 0
 
+
+
+class ZebraScanner:
+    def __init__(self, parent_scanner, instrument, tf, direction, signal_data, signal_id, trigger_data):
+        self.parent = parent_scanner
+        self.instrument = instrument
+        self.timeframe = tf
+        self.direction = direction
+        self.signal_data = signal_data
+        self.signal_id = signal_id
+        self.trigger_data = trigger_data
+        self.logger = parent_scanner.logger
+        self.scanned_candles = set()
+
+    def run(self):
+        self.logger.info(f"🦓 Starting Zebra Scan for {self.instrument} {self.timeframe}")
+        
+        while self.parent.running:
+            # 1. Sync with candle open (Using your existing buffer logic)
+            if not self.parent.wait_for_candle_open(self.timeframe):
+                time.sleep(1)
+                continue
+
+            # 2. Get FRESH cached data
+            df = self.parent.cached_fetch_candles(
+                self.instrument, self.timeframe, count=50, force_fetch=True
+            )
+            
+            if df.empty: continue
+            
+            current_candle = df.iloc[-1]
+            candle_key = f"zebra_{self.timeframe}_{current_candle['time']}"
+            
+            if candle_key in self.scanned_candles:
+                time.sleep(1)
+                continue
+
+            # 3. Check for Zebra Signal
+            # Assuming get_recent_zebra_signal is a helper function you have
+            is_zebra = get_recent_zebra_signal(df) 
+            
+            if is_zebra:
+                self.logger.info(f"✅ ZEBRA SIGNAL FOUND on {self.timeframe}!")
+                
+                # Calculate SL using our 3-candle pivot function
+                sl_price = find_swing_level(df, self.direction)
+                entry_price = current_candle['open']
+                
+                # 4. Pass to the existing "Process and Record" function
+                # We override criteria to 'zebra' and pass our calculated SL/Entry
+                success = self.parent._process_and_record_hammer(
+                    instrument=self.instrument,
+                    tf=self.timeframe,
+                    candle=current_candle,
+                    direction=self.direction,
+                    criteria='zebra', # <--- This differentiates it in the CSV
+                    signal_data=self.signal_data,
+                    signal_id=self.signal_id,
+                    trigger_data=self.trigger_data,
+                    override_entry=entry_price, # Ensure your function accepts these
+                    override_sl=sl_price
+                )
+                
+                if success:
+                    self.scanned_candles.add(candle_key)
+            
+            time.sleep(2) # Prevent CPU spinning
+
 class HammerPatternScanner:
     def __init__(self, credentials, csv_base_path='/content/drive/MyDrive/hammer_trades', 
                  logger=None, news_calendar=None):  # ADD news_calendar parameter
