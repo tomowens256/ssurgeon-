@@ -5151,8 +5151,10 @@ class CandleDataCache:
         if 'timestamp' not in entry:
             return True
         
+        # Use entry-specific TTL if available, otherwise use instance TTL
+        entry_ttl = entry.get('ttl', self.ttl)
         age = time.time() - entry['timestamp']
-        return age > self.ttl
+        return age > entry_ttl
     
     def _cleanup(self):
         """Remove expired entries and maintain max size"""
@@ -5161,7 +5163,7 @@ class CandleDataCache:
         # Remove expired entries
         expired_keys = []
         for key, entry in self.cache.items():
-            if current_time - entry['timestamp'] > self.ttl:
+            if self._is_expired(entry):
                 expired_keys.append(key)
         
         for key in expired_keys:
@@ -5203,20 +5205,28 @@ class CandleDataCache:
             self.stats['misses'] += 1
             return None
     
-    def set(self, instrument, timeframe, count, data):
+    def set(self, instrument, timeframe, count, data, ttl_override=None):  # ✅ ADD ttl_override parameter
         """
         Store candle data in cache
+        
+        Args:
+            instrument: Trading instrument
+            timeframe: Timeframe
+            count: Number of candles
+            data: DataFrame with candle data
+            ttl_override: Optional TTL override in seconds
         """
         with self.lock:
             key = self._make_key(instrument, timeframe, count)
             
-            # Create cache entry
+            # Create cache entry with optional TTL override
             entry = {
                 'timestamp': time.time(),
                 'data': data,
                 'instrument': instrument,
                 'timeframe': timeframe,
-                'count': count
+                'count': count,
+                'ttl': ttl_override if ttl_override is not None else self.ttl  # ✅ Store entry-specific TTL
             }
             
             # Store in cache
@@ -5234,13 +5244,15 @@ class CandleDataCache:
     def _log_cache_hit(self, key, entry):
         """Log cache hit (you can customize this)"""
         age = time.time() - entry['timestamp']
+        entry_ttl = entry.get('ttl', self.ttl)
         # You can enable this for debugging:
-        # print(f"📦 Cache HIT: {key} (age: {age:.1f}s)")
+        # print(f"📦 Cache HIT: {key} (age: {age:.1f}s, ttl: {entry_ttl}s)")
     
     def _log_cache_set(self, key, entry):
         """Log cache set (you can customize this)"""
+        entry_ttl = entry.get('ttl', self.ttl)
         # You can enable this for debugging:
-        # print(f"📦 Cache SET: {key}")
+        # print(f"📦 Cache SET: {key} (ttl: {entry_ttl}s)")
     
     def get_stats(self):
         """Get cache statistics"""
