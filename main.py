@@ -7650,55 +7650,72 @@ class HammerPatternScanner:
                     return mid['high']
         return None
 
-    def run_zebra_scan(self, tf, instrument, direction_placeholder, signal_data, signal_id, trigger_data):
-        """Threaded Zebra scanner"""
+    def run_zebra_scan(self, tf, instrument, signal_id_prefix):
+        """
+        Threaded Zebra scanner: 150 candles, Current Candle Check Only.
+        """
+        self.logger.info(f"🦓 Zebra Scanner Active: {instrument} {tf}")
         scanned_candles = set()
         
         while self.running:
-            # Sync to candle open to prevent API spam
+            # 1. Wait for a new candle or a fresh tick
             self.wait_for_candle_open(tf)
             
-            # Fetch fresh data from cache
-            df = self.cached_fetch_candles(instrument, tf, count=50, force_fetch=True)
-            if df.empty: continue
+            # 2. Fetch 150 candles as requested
+            df = self.cached_fetch_candles(instrument, tf, count=150, force_fetch=True)
+            if df.empty:
+                time.sleep(1)
+                continue
             
+            # 3. Identify the Live Candle
             current_candle = df.iloc[-1]
-            if current_candle['time'] in scanned_candles:
+            current_candle_time = current_candle['time']
+            
+            # Skip if we already recorded a Zebra for THIS specific candle time
+            if current_candle_time in scanned_candles:
                 time.sleep(1)
                 continue
 
-            # Detect Zebra and get the actual direction
-            # We assume your get_recent_zebra_signal returns (True, 'bullish') or (False, None)
-            is_zebra, detected_dir = get_recent_zebra_signal(df) 
+            # 4. TRIGGER CHECK: Is the signal on the CURRENT candle?
+            # We pass the full 150-candle DF to your signal function
+            is_zebra, detected_dir = self.get_recent_zebra_signal(df) 
             
-            if is_zebra:
-                # 1. Find the 3-candle pivot SL
+            if is_zebra and detected_dir:
+                # IMPORTANT: We only proceed if the signal is 'Live'
+                self.logger.info(f"✅ ZEBRA DETECTED on Current Candle: {tf} {detected_dir}")
+                
+                # 5. Calculate SL (3-candle pivot) and Entry (Open of current)
                 sl = self.find_3_candle_pivot(df, detected_dir)
                 entry = current_candle['open']
                 
                 if sl:
-                    # 2. HUGE SL FILTER (The 'past 5 candles' logic you requested)
+                    # 6. HUGE SL FILTER (Past 5 candles deviation)
+                    # We check if SL distance is more than 2.5x the average range
                     recent_ranges = (df['high'].iloc[-6:-1] - df['low'].iloc[-6:-1]).mean()
                     if abs(entry - sl) > (recent_ranges * 2.5):
-                        self.logger.warning(f"⏭️ Zebra Skip: SL too large for {tf}")
-                        scanned_candles.add(current_candle['time'])
+                        self.logger.warning(f"⏭️ Zebra Skip: SL too large ({tf})")
+                        scanned_candles.add(current_candle_time)
                         continue
 
-                    # 3. RECORD SIGNAL (Passes to the universal journaler)
+                    # 7. RECORD AND JOURNAL
+                    # This passes to our 'Universal' process function
                     self._process_and_record_hammer(
                         instrument=instrument,
                         tf=tf,
                         candle=current_candle,
                         direction=detected_dir,
                         criteria='zebra',
-                        signal_data=signal_data,
-                        signal_id=f"ZEB_{int(time.time())}",
-                        trigger_data=trigger_data,
+                        signal_data={}, # Zebra doesn't use hammer signal_data
+                        signal_id=f"ZEB_{tf}_{int(time.time())}",
+                        trigger_data={},
                         zebra_entry=entry,
                         zebra_sl=sl
                     )
-                    scanned_candles.add(current_candle['time'])
+                    
+                    # Mark this candle as 'Done' so we don't double-entry
+                    scanned_candles.add(current_candle_time)
             
+            # Small sleep to prevent CPU redlining
             time.sleep(1)
     
     def _process_and_record_hammer(self, instrument, tf, candle, direction, criteria, 
