@@ -8768,8 +8768,8 @@ class HammerPatternScanner:
     #     return True
     def reconcile_and_resume_trades(self):
         """
-        Scans CSV for incomplete trades, simulates history using 5M candles,
-        and resumes live monitoring for those still active.
+        Final Version: Handles OANDA instrument naming, BULLISH/BEARISH direction,
+        and executes rapid history simulation before handing off to live threads.
         """
         self.logger.info("🕵️ Starting Historical Simulation & Recovery...")
         import pandas as pd
@@ -8780,80 +8780,91 @@ class HammerPatternScanner:
             return
 
         try:
+            # Read CSV and ensure we handle empty strings correctly
             df_csv = pd.read_csv(self.csv_file_path).fillna('')
-            # Find rows where TP1 is missing OR result is empty
+            
+            # Identify "Orphan" trades (missing result or missing TP1)
             mask = (df_csv['tp_1_1_result'] == '') | (df_csv['tp_level_hit'] == '')
             orphaned_trades = df_csv[mask]
 
             if orphaned_trades.empty:
-                self.logger.info("✅ All trades are fully documented.")
+                self.logger.info("✅ All trades are fully documented. No recovery needed.")
                 return
+
+            self.logger.info(f"Found {len(orphaned_trades)} orphans. Processing...")
 
             for index, row in orphaned_trades.iterrows():
                 trade_data = row.to_dict()
-                instrument = trade_data['instrument']
-                entry_time = pd.to_datetime(trade_data['entry_time'])
                 
-                self.logger.info(f"🔄 Simulating gap for {trade_data['trade_id']} ({instrument})")
+                # 1. FORMAT INSTRUMENT (e.g., EURUSD -> EUR_USD)
+                raw_inst = str(trade_data['instrument'])
+                instrument = raw_inst if "_" in raw_inst else f"{raw_inst[:3]}_{raw_inst[3:]}"
+                trade_data['instrument'] = instrument # Sync back to dict
+                
+                # 2. FORMAT DIRECTION
+                direction = str(trade_data['direction']).upper() # 'BULLISH' or 'BEARISH'
+                
+                entry_time = pd.to_datetime(trade_data['entry_time'])
+                self.logger.info(f"🔄 Recovering {trade_data['trade_id']} | {instrument} | {direction}")
 
-                # 1. Fetch 5M history (max 5000 candles covers ~17 days)
-                hist_df = self.cached_fetch_candles(instrument, 'M5', count=5000, force_fetch=True)
-                if hist_df.empty: continue
+                # 3. FETCH 5M HISTORY
+                hist_df = self.cached_fetch_candles(instrument, '5M', count=5000, force_fetch=True)
+                if hist_df.empty:
+                    self.logger.error(f"Could not fetch history for {instrument}. Skipping.")
+                    continue
 
-                # Filter history to start from the entry candle forward
+                # Filter history to start from the entry candle
                 hist_df['time'] = pd.to_datetime(hist_df['time'])
                 playback_data = hist_df[hist_df['time'] >= entry_time]
 
-                # 2. RUN SIMULATION (Playback)
-                trade_is_alive = True
-                last_hit_time = entry_time
-                
-                # Pre-calculate TP prices for simulation (same logic as your monitor)
+                # 4. SIMULATION CONSTANTS
                 tp_prices = self._calculate_tp_prices_for_recovery(trade_data)
                 sl_price = float(trade_data['sl_price'])
-                direction = trade_data['direction'].lower()
+                trade_is_alive = True
 
+                # 5. THE RAPID PLAYBACK LOOP
                 for _, candle in playback_data.iterrows():
                     c_high, c_low = candle['high'], candle['low']
                     c_time = candle['time']
 
-                    # Check SL First (Conservative)
-                    if (direction == 'bullish' and c_low <= sl_price) or \
-                       (direction == 'bearish' and c_high >= sl_price):
+                    # Check SL Hit
+                    if (direction == 'BULLISH' and c_low <= sl_price) or \
+                       (direction == 'BEARISH' and c_high >= sl_price):
                         self._record_tp_result(trade_data, 'SL', -1, c_time)
                         trade_is_alive = False
                         break
                     
-                    # Check TPs (1 to 10)
+                    # Check TP Hits (1 to 10)
                     for i in range(1, 11):
                         tp_key = f'tp_1_{i}_result'
-                        if trade_data.get(tp_key) == '' or trade_data.get(tp_key) == '-1':
+                        # Only check if this TP hasn't been hit yet
+                        if trade_data.get(tp_key) == '':
                             tp_hit = False
-                            if direction == 'bullish' and c_high >= tp_prices[i]:
+                            if direction == 'BULLISH' and c_high >= tp_prices[i]:
                                 tp_hit = True
-                            elif direction == 'bearish' and c_low <= tp_prices[i]:
+                            elif direction == 'BEARISH' and c_low <= tp_prices[i]:
                                 tp_hit = True
                             
                             if tp_hit:
-                                # Update trade_data in memory
                                 time_diff = (c_time - entry_time).total_seconds()
                                 self._record_tp_result(trade_data, f'TP_{i}', i, c_time, time_diff)
                     
-                    # If all 10 TPs hit, trade is done
+                    # Exit loop if all 10 TPs are done
                     if trade_data.get('tp_1_10_result') != '':
                         trade_is_alive = False
                         break
 
-                # 3. DECISION: Update CSV or Start Thread
+                # 6. UPDATING THE CONTRACT
                 if not trade_is_alive:
-                    self.logger.info(f"🏁 Trade {trade_data['trade_id']} finished during gap. Updating CSV.")
+                    self.logger.info(f"🏁 Finished: {trade_data['trade_id']} closed during simulation.")
                     self._update_trade_in_csv(trade_data)
                 else:
-                    # HANDOFF: Resume the contract
-                    self.logger.info(f"🏃 Trade {trade_data['trade_id']} still alive. Launching monitor thread.")
-                    # Ensure CSV is updated with what we found so far
+                    # Trade is still active! Update CSV with current progress then resume thread
+                    self.logger.info(f"🏃 Still Active: {trade_data['trade_id']} resuming live monitoring.")
                     self._update_trade_in_csv(trade_data) 
                     self._start_tp_monitoring(trade_data)
+
+            self.logger.info("✅ Recovery Complete.")
 
         except Exception as e:
             self.logger.error(f"❌ Recovery Error: {str(e)}", exc_info=True)
