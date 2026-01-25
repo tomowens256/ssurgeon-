@@ -8766,7 +8766,113 @@ class HammerPatternScanner:
         
     #     self.logger.info("🔨 Hammer Pattern Scanner started")
     #     return True
-    
+    def reconcile_and_resume_trades(self):
+        """
+        Scans CSV for incomplete trades, simulates history using 5M candles,
+        and resumes live monitoring for those still active.
+        """
+        self.logger.info("🕵️ Starting Historical Simulation & Recovery...")
+        import pandas as pd
+        from datetime import datetime
+        
+        if not os.path.exists(self.csv_file_path):
+            self.logger.warning("No CSV found to reconcile.")
+            return
+
+        try:
+            df_csv = pd.read_csv(self.csv_file_path).fillna('')
+            # Find rows where TP1 is missing OR result is empty
+            mask = (df_csv['tp_1_1_result'] == '') | (df_csv['tp_level_hit'] == '')
+            orphaned_trades = df_csv[mask]
+
+            if orphaned_trades.empty:
+                self.logger.info("✅ All trades are fully documented.")
+                return
+
+            for index, row in orphaned_trades.iterrows():
+                trade_data = row.to_dict()
+                instrument = trade_data['instrument']
+                entry_time = pd.to_datetime(trade_data['entry_time'])
+                
+                self.logger.info(f"🔄 Simulating gap for {trade_data['trade_id']} ({instrument})")
+
+                # 1. Fetch 5M history (max 5000 candles covers ~17 days)
+                hist_df = self.cached_fetch_candles(instrument, 'M5', count=5000, force_fetch=True)
+                if hist_df.empty: continue
+
+                # Filter history to start from the entry candle forward
+                hist_df['time'] = pd.to_datetime(hist_df['time'])
+                playback_data = hist_df[hist_df['time'] >= entry_time]
+
+                # 2. RUN SIMULATION (Playback)
+                trade_is_alive = True
+                last_hit_time = entry_time
+                
+                # Pre-calculate TP prices for simulation (same logic as your monitor)
+                tp_prices = self._calculate_tp_prices_for_recovery(trade_data)
+                sl_price = float(trade_data['sl_price'])
+                direction = trade_data['direction'].lower()
+
+                for _, candle in playback_data.iterrows():
+                    c_high, c_low = candle['high'], candle['low']
+                    c_time = candle['time']
+
+                    # Check SL First (Conservative)
+                    if (direction == 'bullish' and c_low <= sl_price) or \
+                       (direction == 'bearish' and c_high >= sl_price):
+                        self._record_tp_result(trade_data, 'SL', -1, c_time)
+                        trade_is_alive = False
+                        break
+                    
+                    # Check TPs (1 to 10)
+                    for i in range(1, 11):
+                        tp_key = f'tp_1_{i}_result'
+                        if trade_data.get(tp_key) == '' or trade_data.get(tp_key) == '-1':
+                            tp_hit = False
+                            if direction == 'bullish' and c_high >= tp_prices[i]:
+                                tp_hit = True
+                            elif direction == 'bearish' and c_low <= tp_prices[i]:
+                                tp_hit = True
+                            
+                            if tp_hit:
+                                # Update trade_data in memory
+                                time_diff = (c_time - entry_time).total_seconds()
+                                self._record_tp_result(trade_data, f'TP_{i}', i, c_time, time_diff)
+                    
+                    # If all 10 TPs hit, trade is done
+                    if trade_data.get('tp_1_10_result') != '':
+                        trade_is_alive = False
+                        break
+
+                # 3. DECISION: Update CSV or Start Thread
+                if not trade_is_alive:
+                    self.logger.info(f"🏁 Trade {trade_data['trade_id']} finished during gap. Updating CSV.")
+                    self._update_trade_in_csv(trade_data)
+                else:
+                    # HANDOFF: Resume the contract
+                    self.logger.info(f"🏃 Trade {trade_data['trade_id']} still alive. Launching monitor thread.")
+                    # Ensure CSV is updated with what we found so far
+                    self._update_trade_in_csv(trade_data) 
+                    self._start_tp_monitoring(trade_data)
+
+        except Exception as e:
+            self.logger.error(f"❌ Recovery Error: {str(e)}", exc_info=True)
+
+    def _calculate_tp_prices_for_recovery(self, trade_data):
+        """Helper to get TP prices without redundant code"""
+        tp_prices = {}
+        instrument = trade_data['instrument']
+        entry_price = float(trade_data['entry_price'])
+        direction = trade_data['direction'].lower()
+        pip_multiplier = 100 if 'JPY' in instrument else 10000
+        
+        for i in range(1, 11):
+            dist = float(trade_data.get(f'tp_1_{i}_distance', 0))
+            if direction == 'bearish':
+                tp_prices[i] = entry_price - (dist / pip_multiplier)
+            else:
+                tp_prices[i] = entry_price + (dist / pip_multiplier)
+        return tp_prices
     def stop(self):
         """Stop the scanner"""
         self.running = False
