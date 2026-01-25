@@ -115,10 +115,20 @@ CYCLE_HIERARCHY = {
     '90min': 1
 }
 
+# ================================
+# ZEBRA SCANNING INSTRUMENTS
+# ================================
+
 ZEBRA_INSTRUMENTS = {
+    # Format: 'INSTRUMENT': [LIST_OF_TIMEFRAMES]
     'XAU_USD': ['M1', 'M3', 'M5', 'M15'],
     'EUR_USD': ['M1', 'M3', 'M5', 'M15'],
-    # ... other instruments for Zebra only
+    'GBP_USD': ['M1', 'M3', 'M5', 'M15'],
+    'USD_JPY': ['M1', 'M3', 'M5', 'M15'],
+    'NAS100_USD': ['M1', 'M3', 'M5', 'M15'],
+    'DE30_EUR': ['M1', 'M3', 'M5', 'M15'],
+    'XAG_USD': ['M1', 'M3', 'M5', 'M15']
+    # Add more instruments as needed
 }
 
 NY_TZ = pytz.timezone('America/New_York')  # UTC-4 (or UTC-5 during standard time)
