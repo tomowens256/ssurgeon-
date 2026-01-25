@@ -12794,7 +12794,39 @@ async def main():
     else:
         logger.warning("⚠️ RapidAPI key missing. News features disabled.")
     
-    # === PASS THE CALENDAR TO MANAGER ===
+    # ============================================
+    # CREATE CREDENTIALS DICTIONARY
+    # ============================================
+    credentials = {
+        'telegram_token': telegram_token,
+        'telegram_chat_id': telegram_chat_id,
+        'oanda_api_key': api_key
+    }
+    
+    # ============================================
+    # START ZEBRA MANAGER (INDEPENDENT)
+    # ============================================
+    logger.info("🦓 Initializing Zebra Manager...")
+    zebra_manager = None
+    
+    try:
+        zebra_manager = ZebraManager(
+            credentials=credentials,
+            news_calendar=news_calendar,
+            instruments_dict=ZEBRA_INSTRUMENTS,
+            logger=logger
+        )
+        
+        # Start all Zebra scanners
+        zebra_manager.start()
+        logger.info("✅ Zebra Manager started successfully")
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to start Zebra Manager: {str(e)}")
+    
+    # ============================================
+    # START ULTIMATE TRADING MANAGER (HAMMER SCANNER)
+    # ============================================
     try:
         # Initialize the manager with the shared news calendar
         manager = UltimateTradingManager(
@@ -12803,13 +12835,6 @@ async def main():
             telegram_chat_id, 
             news_calendar=news_calendar  # PASS THE SHARED CALENDAR
         )
-        # In main() function:
-        zebra_manager = ZebraManager(
-            credentials={...},
-            news_calendar=news_calendar,
-            instruments=ZEBRA_INSTRUMENTS
-        )
-        zebra_manager.start()  # Starts all Zebra threads
         
         # Make sure all hammer scanners are started
         logger.info("🔨 Starting all hammer scanners...")
@@ -12826,22 +12851,40 @@ async def main():
         
     except KeyboardInterrupt:
         logger.info("🛑 System stopped by user")
+        
+        # Stop Zebra Manager if it exists
+        if zebra_manager:
+            zebra_manager.stop()
+            logger.info("🛑 Zebra Manager stopped")
+        
         # Stop all hammer scanners
-        for pair_group, system in manager.trading_systems.items():
-            if hasattr(system, 'hammer_scanner'):
-                system.hammer_scanner.stop()
-                logger.info(f"🛑 Hammer scanner stopped for {pair_group}")
+        if 'manager' in locals():
+            for pair_group, system in manager.trading_systems.items():
+                if hasattr(system, 'hammer_scanner'):
+                    system.hammer_scanner.stop()
+                    logger.info(f"🛑 Hammer scanner stopped for {pair_group}")
+                    
     except Exception as e:
         logger.error(f"💥 Fatal error: {str(e)}")
         import traceback
         logger.error(traceback.format_exc())
+        
+        # Try to stop Zebra Manager on error
+        if zebra_manager:
+            try:
+                zebra_manager.stop()
+            except:
+                pass
+        
         # Try to stop hammer scanners on error
-        for pair_group, system in manager.trading_systems.items():
-            if hasattr(system, 'hammer_scanner'):
-                try:
-                    system.hammer_scanner.stop()
-                except:
-                    pass
+        if 'manager' in locals():
+            for pair_group, system in manager.trading_systems.items():
+                if hasattr(system, 'hammer_scanner'):
+                    try:
+                        system.hammer_scanner.stop()
+                    except:
+                        pass
+        
         sys.exit(1)
 
 if __name__ == "__main__":
