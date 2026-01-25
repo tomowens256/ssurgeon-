@@ -8858,30 +8858,37 @@ class HammerPatternScanner:
                 trade_data['instrument'] = instrument
                 
                 # 2. FORMAT DIRECTION
-                direction = str(trade_data['direction']).upper()
+                direction = str(trade_data['direction']).upper() # 'BULLISH' or 'BEARISH'
                 
-                # FIX: Handle invalid/missing entry_time
+                # CRITICAL FIX: Handle entry_time with proper timezone
                 entry_time_str = trade_data.get('entry_time', '')
                 if not entry_time_str:
                     self.logger.warning(f"⚠️ Missing entry_time for {trade_data['trade_id']}. Skipping.")
                     continue
     
                 try:
+                    # Convert to datetime and ensure NY timezone
                     entry_time = pd.to_datetime(entry_time_str)
+                    # If naive, localize to NY_TZ. If already has timezone, convert to NY_TZ
+                    if entry_time.tz is None:
+                        entry_time = entry_time.tz_localize(NY_TZ)
+                    else:
+                        entry_time = entry_time.tz_convert(NY_TZ)
                 except Exception as e:
                     self.logger.error(f"❌ Invalid entry_time format: {entry_time_str}. Error: {str(e)}. Skipping.")
                     continue
     
                 self.logger.info(f"🔄 Recovering {trade_data['trade_id']} | {instrument} | {direction}")
     
-                # 3. FETCH M5 HISTORY (FIXED: Use 'M5' not '5M')
+                # 3. FETCH M5 HISTORY (CRITICAL FIX: 'M5' not '5M')
                 hist_df = self.cached_fetch_candles(instrument, 'M5', count=5000, force_fetch=True)
                 if hist_df.empty:
                     self.logger.error(f"Could not fetch history for {instrument}. Skipping.")
                     continue
     
                 # Filter history to start from the entry candle
-                hist_df['time'] = pd.to_datetime(hist_df['time'])
+                # hist_df['time'] is already timezone-aware from fetch_candles
+                # Ensure both are timezone-aware for comparison
                 playback_data = hist_df[hist_df['time'] >= entry_time]
     
                 # 4. SIMULATION CONSTANTS
@@ -8942,19 +8949,28 @@ class HammerPatternScanner:
         instrument = trade_data['instrument']
         entry_price = float(trade_data['entry_price'])
         direction = trade_data['direction'].lower()
-        pip_multiplier = 100 if 'JPY' in instrument else 10000
+        
+        # Use correct pip multiplier
+        if 'JPY' in instrument:
+            pip_multiplier = 100
+        elif 'XAU' in instrument or 'XAG' in instrument:
+            pip_multiplier = 100  # Gold and Silver
+        else:
+            pip_multiplier = 10000
         
         for i in range(1, 11):
+            # Get TP distance in pips from trade data
             dist = float(trade_data.get(f'tp_1_{i}_distance', 0))
+            
+            # Calculate TP price based on direction
             if direction == 'bearish':
+                # For bearish: TP is below entry
                 tp_prices[i] = entry_price - (dist / pip_multiplier)
             else:
+                # For bullish: TP is above entry
                 tp_prices[i] = entry_price + (dist / pip_multiplier)
+        
         return tp_prices
-    def stop(self):
-        """Stop the scanner"""
-        self.running = False
-        self.logger.info("🔨 Hammer Pattern Scanner stopped")
 
     def _start_tp_monitoring(self, trade_data):
         """Start monitoring TPs in background thread"""
@@ -9273,6 +9289,10 @@ class HammerPatternScanner:
     def _record_tp_result(self, trade_data, tp_type, result_value, hit_time, time_seconds=None):
         """Record TP result to CSV with RR values"""
         try:
+            # Ensure hit_time is timezone-aware
+            if hasattr(hit_time, 'tz') and hit_time.tz is None:
+                hit_time = hit_time.tz_localize(NY_TZ)
+            
             # Update trade_data
             if tp_type.startswith('TP_'):
                 tp_num = int(tp_type.split('_')[1])
@@ -9283,7 +9303,7 @@ class HammerPatternScanner:
                 # Update highest RR achieved (TP number = RR multiple)
                 current_highest_rr = trade_data.get('tp_level_hit', 0)
                 if tp_num > current_highest_rr:
-                    trade_data['tp_level_hit'] = tp_num  # This is the RR multiple
+                    trade_data['tp_level_hit'] = tp_num
                     trade_data['time_to_exit_seconds'] = int(time_seconds) if time_seconds else 0
                     trade_data['exit_time'] = hit_time.strftime('%Y-%m-%d %H:%M:%S')
                     
@@ -9293,10 +9313,9 @@ class HammerPatternScanner:
                     trade_data['open_tp_time_seconds'] = int(time_seconds)
                 
                 # For open TP, we store the RR value from open_tp_rr
-                # Only update if no fixed TP was hit (tp_level_hit == 0)
                 if trade_data.get('tp_level_hit', 0) == 0:
                     open_tp_rr = trade_data.get('open_tp_rr', 0)
-                    trade_data['tp_level_hit'] = open_tp_rr  # Store the RR value
+                    trade_data['tp_level_hit'] = open_tp_rr
                     trade_data['time_to_exit_seconds'] = int(time_seconds) if time_seconds else 0
                     trade_data['exit_time'] = hit_time.strftime('%Y-%m-%d %H:%M:%S')
                     
@@ -9309,22 +9328,18 @@ class HammerPatternScanner:
                     trade_data['open_tp_result'] = "-1"
                 
                 # ✅ CRITICAL FIX: Only set -1 if NO TP was hit yet
-                # Check if ANY TP was hit
                 tp_was_hit = False
                 for i in range(1, 11):
                     if trade_data.get(f'tp_1_{i}_result', '').startswith('+'):
                         tp_was_hit = True
                         break
                 
-                # Also check open TP
                 if not tp_was_hit and trade_data.get('open_tp_result', '').startswith('+'):
                     tp_was_hit = True
                 
                 # Only set tp_level_hit to -1 if NO TP was hit
                 if not tp_was_hit:
                     trade_data['tp_level_hit'] = -1
-                # If TP was hit, tp_level_hit already has the max TP value
-                # (set in TP block), so DON'T overwrite it!
                 
                 trade_data['time_to_exit_seconds'] = int(time_seconds) if time_seconds else 0
                 trade_data['exit_time'] = hit_time.strftime('%Y-%m-%d %H:%M:%S')
