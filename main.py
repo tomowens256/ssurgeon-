@@ -12513,6 +12513,13 @@ async def main():
             telegram_chat_id, 
             news_calendar=news_calendar  # PASS THE SHARED CALENDAR
         )
+        # In main() function:
+        zebra_manager = ZebraManager(
+            credentials={...},
+            news_calendar=news_calendar,
+            instruments=ZEBRA_INSTRUMENTS
+        )
+        zebra_manager.start()  # Starts all Zebra threads
         
         # Make sure all hammer scanners are started
         logger.info("🔨 Starting all hammer scanners...")
