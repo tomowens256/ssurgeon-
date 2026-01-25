@@ -9407,6 +9407,72 @@ class HammerPatternScanner:
 
 
 # ================================
+# ZEBRA SCANNER CLASS
+# ================================
+
+class ZebraScanner:
+    """Independent HalfTrend Zebra scanner - uses HammerScanner functions"""
+    
+    def __init__(self, credentials, instrument, timeframe, news_calendar=None, logger=None):
+        """
+        Initialize Zebra scanner for a specific instrument and timeframe
+        
+        Args:
+            credentials: Dictionary with API keys and Telegram credentials
+            instrument: Trading instrument (e.g., 'EUR_USD')
+            timeframe: Timeframe to scan (e.g., 'M5')
+            news_calendar: Shared NewsCalendar instance (optional)
+            logger: Logger instance
+        """
+        self.instrument = instrument
+        self.timeframe = timeframe
+        self.credentials = credentials
+        self.news_calendar = news_calendar
+        self.running = True
+        
+        # Set up logger
+        if logger:
+            self.logger = logger
+        else:
+            import logging
+            self.logger = logging.getLogger(f'ZebraScanner.{instrument}.{timeframe}')
+        
+        # Create own HammerScanner instance for Zebra (different CSV directory)
+        zebra_csv_path = '/content/drive/MyDrive/hammer_trades/zebra'
+        
+        self.hammer_scanner = HammerPatternScanner(
+            credentials=credentials,
+            csv_base_path=zebra_csv_path,
+            logger=self.logger,
+            news_calendar=news_calendar,
+            use_global_cache=True  # Use the shared global cache
+        )
+        
+        # Start the hammer scanner (but not background news fetch since we use shared)
+        self.hammer_scanner.running = True
+        
+        self.logger.info(f"🦓 Initialized Zebra Scanner for {instrument} {timeframe}")
+    
+    def run(self):
+        """Main Zebra scanning loop - uses HammerScanner's run_zebra_scan method"""
+        try:
+            # Generate a unique signal ID prefix for this scanner
+            signal_id_prefix = f"ZEBRA_{self.instrument}_{self.timeframe}"
+            
+            # Use HammerScanner's existing run_zebra_scan method
+            self.logger.info(f"🦓 Starting Zebra scanning for {self.instrument} {self.timeframe}")
+            self.hammer_scanner.run_zebra_scan(self.timeframe, self.instrument, signal_id_prefix)
+            
+        except Exception as e:
+            self.logger.error(f"❌ Zebra scanner error for {self.instrument} {self.timeframe}: {str(e)}", exc_info=True)
+    
+    def stop(self):
+        """Stop the Zebra scanner"""
+        self.running = False
+        self.hammer_scanner.running = False
+        self.logger.info(f"🛑 Stopped Zebra Scanner for {self.instrument} {self.timeframe}")
+
+# ================================
 # ULTIMATE TRADING SYSTEM WITH TRIPLE CONFLUENCE
 # ================================
 
