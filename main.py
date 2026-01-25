@@ -5376,7 +5376,7 @@ class HammerPatternScanner:
         
         self.credentials = credentials
 
-        # Use passed logger or create new one
+        # Use passed logger or create new ones
         if logger:
             self.logger = logger
         else:
