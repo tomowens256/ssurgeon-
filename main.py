@@ -12749,6 +12749,30 @@ class UltimateTradingManager:
         
         return message
 
+
+# ================================
+# UTILITY FUNCTIONS
+# ================================
+
+def print_system_status():
+    """Print current system status including cache statistics"""
+    print("\n" + "="*60)
+    print("SYSTEM STATUS")
+    print("="*60)
+    
+    # Global cache stats
+    if 'GLOBAL_CACHE' in globals():
+        cache_stats = GLOBAL_CACHE.get_stats()
+        print(f"📦 Global Cache: {cache_stats['size']}/{cache_stats['max_size']} entries")
+        print(f"   TTL: {cache_stats['ttl_seconds']} seconds")
+    
+    # Log current time
+    current_time = datetime.now(NY_TZ).strftime('%Y-%m-%d %H:%M:%S')
+    print(f"⏰ Current Time (NY): {current_time}")
+    print("="*60 + "\n")
+
+# Optional: Add this at the beginning of main() for status
+# print_system_status()
 # ================================
 # MAIN EXECUTION
 # ================================
@@ -12768,6 +12792,8 @@ async def main():
         logger.error("❌ Missing required environment variables")
         logger.info("💡 Please set OANDA_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID")
         return
+
+    print_system_status()
     
     # Create ONE NewsCalendar instance with 24-hour cache
     news_calendar = None
