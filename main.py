@@ -9700,20 +9700,6 @@ class UltimateTradingSystem:
             # Fix the past before starting the future
             self.reconcile_and_resume_trades()
             
-            # --- UPDATED ZEBRA THREADS ---
-            # We don't pass direction here anymore; the thread will detect it dynamically
-            zebra_timeframes = ['M1', 'M3', 'M5', 'M15']
-            for tf in zebra_timeframes:
-                for inst in self.instruments:
-                    import threading
-                    # We pass None or remove the direction arg if your function handles it
-                    t = threading.Thread(
-                        target=self.hammer_scanner.run_zebra_scan, 
-                        args=(tf, inst, f"Z_{tf}"), # Only pass TF, Inst, and ID
-                        daemon=True
-                    )
-                    t.start()
-                    self.logger.info(f"🦓 Zebra Thread (Dynamic Direction) launched for {inst} on {tf}")
         
     def get_sleep_time(self):
         """Use smart timing instead of fixed intervals"""
