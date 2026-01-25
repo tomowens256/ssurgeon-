@@ -7637,99 +7637,126 @@ class HammerPatternScanner:
             
         except Exception as e:
             self.logger.error(f"❌ Error saving failed webhook: {str(e)}")
+
+    def find_3_candle_pivot(df, direction, lookback=30):
+        """ Finds the most recent 3-candle swing point """
+        for i in range(1, lookback):
+            # We look at index -i-1 as the middle candle
+            prev = df.iloc[-(i+2)]
+            mid = df.iloc[-(i+1)]
+            next_c = df.iloc[-i]
+            
+            if direction == 'bullish': # Swing Low: Low is lower than neighbors
+                if mid['low'] < prev['low'] and mid['low'] < next_c['low']:
+                    return mid['low']
+            else: # Swing High: High is higher than neighbors
+                if mid['high'] > prev['high'] and mid['high'] > next_c['high']:
+                    return mid['high']
+        return None # Fallback
+
+    def run_zebra_scan(self, tf, instrument, direction, signal_data, signal_id, trigger_data):
+        """ This runs in its own thread for each TF """
+        self.logger.info(f"🦓 Zebra Thread Started: {tf}")
+        scanned_candles = set()
+        
+        while self.running:
+            # Wait for candle to be ready
+            self.wait_for_candle_open(tf)
+            
+            # Use your CACHED data
+            df = self.cached_fetch_candles(instrument, tf, count=100, force_fetch=True)
+            if df.empty: continue
+            
+            current_candle = df.iloc[-1]
+            
+            # Check if we already processed this candle
+            if current_candle['time'] in scanned_candles:
+                time.sleep(1)
+                continue
+                
+            # CALL YOUR ZEBRA FUNCTION
+            # (Assuming get_recent_zebra_signal(df) returns True/False)
+            if get_recent_zebra_signal(df): 
+                self.logger.info(f"✅ ZEBRA DETECTED: {instrument} {tf}")
+                
+                entry = current_candle['open']
+                sl = find_3_candle_pivot(df, direction)
+                
+                if sl:
+                    self._process_and_record_hammer(
+                        instrument, tf, current_candle, direction, 'zebra',
+                        signal_data, signal_id, trigger_data,
+                        zebra_entry=entry, zebra_sl=sl
+                    )
+                    scanned_candles.add(current_candle['time'])
+            
+            time.sleep(1)
     
     def _process_and_record_hammer(self, instrument, tf, candle, direction, criteria, 
-                                signal_data, signal_id, trigger_data):
-        """Process a single hammer and record it to CSV - AI SNIPER VERSION"""
+                                   signal_data, signal_id, trigger_data, 
+                                   zebra_entry=None, zebra_sl=None):
+                                       
+        """Process a single signal (Hammer or Zebra) and record it - AI SNIPER VERSION"""
         try:
-            # Extract signal data EARLY
-            fvg_idea = signal_data.get('fvg_idea', {})
-            smt_data = signal_data.get('smt_data', {})
-            zone = signal_data.get('zone', {})
-            crt_signal = signal_data.get('crt_signal', {})
-            has_psp = signal_data.get('has_psp', False)
-            
-            # Get current price for entry
-            current_df = fetch_candles(instrument, tf, count=1, api_key=self.credentials['oanda_api_key'])
-            if current_df.empty:
-                self.logger.error(f"❌ Cannot get current price for {instrument}")
-                return False
-            current_price = current_df.iloc[-1]['open']
-            current_time = datetime.now(NY_TZ)
-            
-            # Calculate signal latency
-            candle_close_time = candle['time']
-            if isinstance(candle_close_time, str):
-                candle_close_time = datetime.strptime(candle_close_time, '%Y-%m-%d %H:%M:%S')
-            
-            tf_to_minutes = {'M1': 1, 'M5': 5, 'M15': 15, 'M30': 30, 'H1': 60}
-            if tf in tf_to_minutes:
-                candle_duration_minutes = tf_to_minutes[tf]
-                candle_open_time = candle_close_time - timedelta(minutes=candle_duration_minutes)
+            # 1. SETUP PRICES BASED ON CRITERIA
+            if criteria == 'zebra':
+                current_price = zebra_entry
+                sl_price = zebra_sl
+                # Zebra signals skip some Hammer-specific signal_data extraction
+                fvg_idea, smt_data, zone, has_psp = {}, {}, {}, False
             else:
-                candle_open_time = candle_close_time - timedelta(hours=1)
-            
-            signal_latency_seconds = (current_time - candle_open_time).total_seconds()
-    
-            # Get news context
-            news_context = {}
-            if hasattr(self, 'news_calendar') and self.news_calendar:
-                try:
-                    signal_time = datetime.now(NY_TZ)
-                    news_context = self.news_calendar.get_news_for_instrument(instrument, signal_time)
-                except Exception as e:
-                    self.logger.error(f"❌ Error getting news: {e}")
-                    news_context = {'event_count': 0, 'high_impact_count': 0, 'fetch_status': 'error'}
-            
-            safe_news_data = self._get_safe_news_data(news_context, instrument)
-            
-            # Calculate price levels
-            hammer_high = candle['high']
-            hammer_low = candle['low']
-            hammer_range = hammer_high - hammer_low
-            pip_multiplier = 100 if 'JPY' in instrument else 10000
-            
-            if direction == 'bearish':
-                sl_price = hammer_high + (hammer_range * 0.25)
-            else:  # bullish
-                sl_price = hammer_low - (hammer_range * 0.25)
+                # EXISTING HAMMER LOGIC
+                fvg_idea = signal_data.get('fvg_idea', {})
+                smt_data = signal_data.get('smt_data', {})
+                zone = signal_data.get('zone', {})
+                has_psp = signal_data.get('has_psp', False)
+                
+                # Get current price for entry
+                current_df = fetch_candles(instrument, tf, count=1, api_key=self.credentials['oanda_api_key'])
+                if current_df.empty:
+                    self.logger.error(f"❌ Cannot get current price for {instrument}")
+                    return False
+                current_price = current_df.iloc[-1]['open']
 
-            # Generate TP prices for all 10 levels
+            current_time = datetime.now(NY_TZ)
+            pip_multiplier = 100 if 'JPY' in instrument else 10000
+
+            # 2. CALCULATE SL FOR HAMMER (IF NOT ZEBRA)
+            if criteria != 'zebra':
+                hammer_high, hammer_low = candle['high'], candle['low']
+                hammer_range = hammer_high - hammer_low
+                if direction == 'bearish':
+                    sl_price = hammer_high + (hammer_range * 0.25)
+                else:
+                    sl_price = hammer_low - (hammer_range * 0.25)
+
+            # 3. CALCULATE TP LEVELS (Universal for both)
             tp_prices = {}
             for i in range(1, 11):
-                if direction == 'bearish':
-                    tp_prices[i] = current_price - (i * (sl_price - current_price))
-                else:
-                    tp_prices[i] = current_price + (i * (current_price - sl_price))
+                if direction.lower() == 'bearish' or direction.lower() == 'sell':
+                    tp_prices[i] = current_price - (i * abs(sl_price - current_price))
+                else: # bullish / buy
+                    tp_prices[i] = current_price + (i * abs(current_price - sl_price))
             
             sl_distance_pips = abs(current_price - sl_price) * pip_multiplier
-            position_units, risk_per_pip = self.calculate_position_sizes(instrument, current_price, sl_price, 50.0)
-            risk_10_lots = round(position_units / 1000.0, 2)
-            risk_100_lots = round(risk_10_lots * 10, 2)
-            
             tp_distances = {f'tp_1_{i}_distance': round(sl_distance_pips * i, 1) for i in range(1, 11)}
-            
-            # Indicators and Advanced Features
+
+            # 4. FETCH INDICATORS & FEATURES
             df_ind = fetch_candles(instrument, tf, count=150, api_key=self.credentials['oanda_api_key'])
             if not df_ind.empty:
-                candle_index = -2
-                for idx in range(len(df_ind)):
-                    if df_ind.iloc[idx]['time'] == candle['time']:
-                        candle_index = idx
-                        break
+                # Find index for the signal candle
+                candle_index = next((i for i, t in enumerate(df_ind['time']) if t == candle['time']), -2)
                 indicators = self.calculate_simple_indicators(df_ind, candle_index)
                 advanced_features = self.calculate_advanced_features(df_ind, candle_index)
             else:
                 indicators = {'rsi': 50, 'vwap': current_price}
                 advanced_features = {}
-            
-            # Inducement and TFs
-            inducement_count = 0 # (Simplified for flow)
+
             timeframe_data = self.fetch_all_timeframe_data(instrument)
             higher_tf_features = self.calculate_higher_tf_features(instrument, current_price, candle['time'], timeframe_data)
             zebra_features = self.calculate_zebra_features(instrument, candle['time'], timeframe_data)
-            
-            # Build trade_data dictionary (This is our "Feature Store")
+
+            # 5. BUILD TRADE DATA
             trade_id = f"T_{int(current_time.timestamp())}"
             trade_data = {
                 'timestamp': current_time.strftime('%Y-%m-%d %H:%M:%S'),
@@ -7745,89 +7772,56 @@ class HammerPatternScanner:
                 'rsi': indicators.get('rsi', 50),
                 'vwap_value': indicators.get('vwap', current_price),
                 'hammer_volume': int(candle.get('volume', 0)),
-                'news_high_count': safe_news_data['news_high_count'],
-                'news_medium_count': safe_news_data['news_medium_count'],
-                'news_low_count': safe_news_data['news_low_count'],
-                'seconds_to_next_news': safe_news_data['seconds_to_next_news'],
-                'seconds_since_last_news': safe_news_data['seconds_since_last_news'],
-                'news_timing_category': safe_news_data['news_timing_category'],
                 'criteria': criteria,
                 **higher_tf_features,
                 **zebra_features
             }
-            # Add remaining TP prices to trade_data for CSV/Monitoring
+            
             for i in range(1, 11): trade_data[f'tp_1_{i}_price'] = round(tp_prices[i], 5)
             trade_data.update(tp_distances)
             trade_data.update(advanced_features)
 
-            # --- START AI BLOCK ---
+            # 6. AI BLOCK & WEBHOOK (WEBHOOK SKIPPED FOR ZEBRA)
             webhook_sent = 0
             node_id = 0
-            try:
-                # 1. Engineering the Time Bin
-                hour = current_time.hour
-                bin_start = (hour // 3) * 3
-                time_bin = f"{bin_start:02d}-{(bin_start + 3) % 24:02d}"
-                
-                # 2. Prepare AI Input Row
-                input_row = trade_data.copy()
-                input_row['entry_time_bin_3h'] = time_bin
-                input_df = pd.DataFrame([input_row])
-                
-                # 3. Process and Predict (FIXED NAMES BELOW)
-                processed_row = self.ai_processor.train.new(input_df) # Changed from self.processor
-                processed_row.process()
-                node_id = self.ai_model.apply(processed_row.xs)[0]   # Changed from self.model
-                self.logger.info(f"🤖 AI Analysis: Signal assigned to Node {node_id}")
             
-                # 4. NODE-SPECIFIC TP ASSIGNMENT
-                node_tp_map = {
-                    23: 10,
-                    26: 4,
-                    21: 4,
-                    14: 2
-                }
-            
-                # 5. The Sniper Decision
-                if node_id in node_tp_map:
-                    target_tp_level = node_tp_map[node_id]
-                    best_tp_price = tp_prices[target_tp_level]
+            if criteria != 'zebra': # Only run AI/Webhook for Hammer for now
+                try:
+                    hour = current_time.hour
+                    bin_start = (hour // 3) * 3
+                    time_bin = f"{bin_start:02d}-{(bin_start + 3) % 24:02d}"
+                    input_row = trade_data.copy()
+                    input_row['entry_time_bin_3h'] = time_bin
+                    input_df = pd.DataFrame([input_row])
                     
-                    self.logger.info(f"🎯 SNIPER confirmed: Node {node_id}. Target TP level: {target_tp_level}")
-            
-                    # 6. CALL WEBHOOK
-                    webhook_sent = self.send_webhook_signal(
-                        instrument=instrument,
-                        direction=direction,
-                        entry_price=current_price,
-                        sl_price=sl_price,
-                        tp_price=best_tp_price,
-                        signal_id=signal_id,
-                        trade_id=trade_id,
-                        timeframe=tf,
-                        criteria=criteria,
-                        risk_usd=50.0
-                    )
-                else:
-                    self.logger.info(f"⏭️ AI Skip: Node {node_id} is not in sniper list.")
-            
-            except Exception as ai_err:
-                self.logger.error(f"⚠️ AI Block failed: {ai_err}")
-            # --- END AI BLOCK ---
+                    processed_row = self.ai_processor.train.new(input_df)
+                    processed_row.process()
+                    node_id = self.ai_model.apply(processed_row.xs)[0]
+                    
+                    node_tp_map = {23: 10, 26: 4, 21: 4, 14: 2}
+                    if node_id in node_tp_map:
+                        target_tp_level = node_tp_map[node_id]
+                        webhook_sent = self.send_webhook_signal(
+                            instrument=instrument, direction=direction, entry_price=current_price,
+                            sl_price=sl_price, tp_price=tp_prices[target_tp_level],
+                            signal_id=signal_id, trade_id=trade_id, timeframe=tf,
+                            criteria=criteria, risk_usd=50.0
+                        )
+                except Exception as ai_err:
+                    self.logger.error(f"⚠️ AI Block failed: {ai_err}")
 
-            # Record webhook status and finalize trade_data
+            # 7. FINALIZE
             trade_data['webhook_sent'] = 1 if webhook_sent else 0
-            trade_data['ai_node'] = node_id if 'node_id' in locals() else 0
-
-            # Send Telegram and Save
-            self.send_hammer_signal(trade_data, trigger_data)
+            trade_data['ai_node'] = node_id
+            
+            self.send_hammer_signal(trade_data, trigger_data) # Telegram
             self.save_trade_to_csv(trade_data)
             self._start_tp_monitoring(trade_data)
             
             return True
-            
+
         except Exception as e:
-            self.logger.error(f"❌ Error processing hammer: {str(e)}", exc_info=True)
+            self.logger.error(f"❌ Error processing signal: {str(e)}", exc_info=True)
             return False
     
     def calculate_simple_indicators(self, df, candle_index):
