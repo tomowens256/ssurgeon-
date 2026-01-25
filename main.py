@@ -7650,40 +7650,52 @@ class HammerPatternScanner:
                     return mid['high']
         return None
 
-    def run_zebra_scan(self, tf, instrument, direction, signal_data, signal_id, trigger_data):
-        self.logger.info(f"🦓 Zebra Scanner Active: {tf}")
+    def run_zebra_scan(self, tf, instrument, direction_placeholder, signal_data, signal_id, trigger_data):
+        """Threaded Zebra scanner"""
         scanned_candles = set()
         
         while self.running:
+            # Sync to candle open to prevent API spam
             self.wait_for_candle_open(tf)
+            
+            # Fetch fresh data from cache
             df = self.cached_fetch_candles(instrument, tf, count=50, force_fetch=True)
             if df.empty: continue
             
             current_candle = df.iloc[-1]
             if current_candle['time'] in scanned_candles:
-                time.sleep(1); continue
+                time.sleep(1)
+                continue
 
-            # CHECK ZEBRA SIGNAL (Calling your logic)
-            if get_recent_zebra_signal(df):
-                sl = self.find_3_candle_pivot(df, direction)
+            # Detect Zebra and get the actual direction
+            # We assume your get_recent_zebra_signal returns (True, 'bullish') or (False, None)
+            is_zebra, detected_dir = get_recent_zebra_signal(df) 
+            
+            if is_zebra:
+                # 1. Find the 3-candle pivot SL
+                sl = self.find_3_candle_pivot(df, detected_dir)
                 entry = current_candle['open']
                 
                 if sl:
-                    # --- HUGE SL FILTER ---
-                    # Calculate avg range of last 5 candles
+                    # 2. HUGE SL FILTER (The 'past 5 candles' logic you requested)
                     recent_ranges = (df['high'].iloc[-6:-1] - df['low'].iloc[-6:-1]).mean()
-                    current_sl_dist = abs(entry - sl)
-                    
-                    if current_sl_dist > (recent_ranges * 2.5):
-                        self.logger.warning(f"⏭️ Zebra Skip: SL too large ({current_sl_dist} vs avg {recent_ranges})")
+                    if abs(entry - sl) > (recent_ranges * 2.5):
+                        self.logger.warning(f"⏭️ Zebra Skip: SL too large for {tf}")
                         scanned_candles.add(current_candle['time'])
                         continue
-                    # ----------------------
 
+                    # 3. RECORD SIGNAL (Passes to the universal journaler)
                     self._process_and_record_hammer(
-                        instrument, tf, current_candle, direction, 'zebra',
-                        signal_data, signal_id, trigger_data,
-                        zebra_entry=entry, zebra_sl=sl
+                        instrument=instrument,
+                        tf=tf,
+                        candle=current_candle,
+                        direction=detected_dir,
+                        criteria='zebra',
+                        signal_data=signal_data,
+                        signal_id=f"ZEB_{int(time.time())}",
+                        trigger_data=trigger_data,
+                        zebra_entry=entry,
+                        zebra_sl=sl
                     )
                     scanned_candles.add(current_candle['time'])
             
