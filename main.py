@@ -9472,6 +9472,138 @@ class ZebraScanner:
         self.hammer_scanner.running = False
         self.logger.info(f"🛑 Stopped Zebra Scanner for {self.instrument} {self.timeframe}")
 
+
+
+# ================================
+# ZEBRA MANAGER CLASS
+# ================================
+
+class ZebraManager:
+    """Manager for all ZebraScanner instances"""
+    
+    def __init__(self, credentials, news_calendar=None, instruments_dict=None, logger=None):
+        """
+        Initialize Zebra Manager
+        
+        Args:
+            credentials: Dictionary with API keys and Telegram credentials
+            news_calendar: Shared NewsCalendar instance (optional)
+            instruments_dict: Dictionary of instruments and timeframes (uses ZEBRA_INSTRUMENTS if None)
+            logger: Logger instance
+        """
+        self.credentials = credentials
+        self.news_calendar = news_calendar
+        self.instruments_dict = instruments_dict or ZEBRA_INSTRUMENTS
+        self.running = False
+        
+        # Set up logger
+        if logger:
+            self.logger = logger
+        else:
+            import logging
+            self.logger = logging.getLogger('ZebraManager')
+        
+        # Store scanners and threads
+        self.scanners = []  # List of ZebraScanner instances
+        self.threads = []   # List of Thread objects
+        
+        self.logger.info(f"🎯 Initialized Zebra Manager for {len(self.instruments_dict)} instruments")
+    
+    def start(self):
+        """Start all Zebra scanners in separate threads"""
+        if self.running:
+            self.logger.warning("⚠️ Zebra Manager is already running")
+            return
+        
+        self.running = True
+        self.logger.info("🚀 Starting all Zebra scanners...")
+        
+        # Count total scanners to start
+        total_scanners = 0
+        for instrument, timeframes in self.instruments_dict.items():
+            total_scanners += len(timeframes)
+        
+        self.logger.info(f"📊 Will start {total_scanners} Zebra scanners")
+        
+        # Create and start scanners for each instrument/timeframe combination
+        for instrument, timeframes in self.instruments_dict.items():
+            for timeframe in timeframes:
+                try:
+                    # Create ZebraScanner instance
+                    scanner = ZebraScanner(
+                        credentials=self.credentials,
+                        instrument=instrument,
+                        timeframe=timeframe,
+                        news_calendar=self.news_calendar,
+                        logger=self.logger
+                    )
+                    
+                    # Create and start thread
+                    thread = threading.Thread(
+                        target=scanner.run,
+                        name=f"Zebra_{instrument}_{timeframe}",
+                        daemon=True
+                    )
+                    thread.start()
+                    
+                    # Store for management
+                    self.scanners.append(scanner)
+                    self.threads.append(thread)
+                    
+                    self.logger.info(f"✅ Started Zebra scanner: {instrument} {timeframe}")
+                    
+                    # Small delay to avoid overwhelming system
+                    time.sleep(0.1)
+                    
+                except Exception as e:
+                    self.logger.error(f"❌ Failed to start Zebra scanner for {instrument} {timeframe}: {str(e)}")
+        
+        self.logger.info(f"🎯 All Zebra scanners started. Total: {len(self.scanners)}")
+    
+    def stop(self):
+        """Stop all Zebra scanners"""
+        if not self.running:
+            return
+        
+        self.running = False
+        self.logger.info("🛑 Stopping all Zebra scanners...")
+        
+        # Stop all scanners
+        for scanner in self.scanners:
+            try:
+                scanner.stop()
+            except Exception as e:
+                self.logger.error(f"Error stopping scanner: {str(e)}")
+        
+        # Wait for threads to finish (with timeout)
+        for thread in self.threads:
+            try:
+                thread.join(timeout=5)
+            except Exception as e:
+                self.logger.error(f"Error joining thread: {str(e)}")
+        
+        self.logger.info("✅ All Zebra scanners stopped")
+    
+    def get_status(self):
+        """Get status of all Zebra scanners"""
+        status = {
+            'running': self.running,
+            'total_scanners': len(self.scanners),
+            'total_threads': len(self.threads),
+            'instruments': len(self.instruments_dict),
+            'cache_stats': GLOBAL_CACHE.get_stats() if 'GLOBAL_CACHE' in globals() else None
+        }
+        
+        # Count active threads
+        active_threads = 0
+        for thread in self.threads:
+            if thread.is_alive():
+                active_threads += 1
+        
+        status['active_threads'] = active_threads
+        
+        return status
+
 # ================================
 # ULTIMATE TRADING SYSTEM WITH TRIPLE CONFLUENCE
 # ================================
