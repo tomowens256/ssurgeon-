@@ -7638,51 +7638,48 @@ class HammerPatternScanner:
         except Exception as e:
             self.logger.error(f"❌ Error saving failed webhook: {str(e)}")
 
-    def find_3_candle_pivot(df, direction, lookback=30):
-        """ Finds the most recent 3-candle swing point """
+    def find_3_candle_pivot(self, df, direction, lookback=25):
+        """Finds the 3-candle pivot SL logic"""
         for i in range(1, lookback):
-            # We look at index -i-1 as the middle candle
-            prev = df.iloc[-(i+2)]
-            mid = df.iloc[-(i+1)]
-            next_c = df.iloc[-i]
-            
-            if direction == 'bullish': # Swing Low: Low is lower than neighbors
+            prev, mid, next_c = df.iloc[-(i+2)], df.iloc[-(i+1)], df.iloc[-i]
+            if direction.lower() == 'bullish' or direction.lower() == 'buy':
                 if mid['low'] < prev['low'] and mid['low'] < next_c['low']:
                     return mid['low']
-            else: # Swing High: High is higher than neighbors
+            else: # bearish
                 if mid['high'] > prev['high'] and mid['high'] > next_c['high']:
                     return mid['high']
-        return None # Fallback
+        return None
 
     def run_zebra_scan(self, tf, instrument, direction, signal_data, signal_id, trigger_data):
-        """ This runs in its own thread for each TF """
-        self.logger.info(f"🦓 Zebra Thread Started: {tf}")
+        self.logger.info(f"🦓 Zebra Scanner Active: {tf}")
         scanned_candles = set()
         
         while self.running:
-            # Wait for candle to be ready
             self.wait_for_candle_open(tf)
-            
-            # Use your CACHED data
-            df = self.cached_fetch_candles(instrument, tf, count=100, force_fetch=True)
+            df = self.cached_fetch_candles(instrument, tf, count=50, force_fetch=True)
             if df.empty: continue
             
             current_candle = df.iloc[-1]
-            
-            # Check if we already processed this candle
             if current_candle['time'] in scanned_candles:
-                time.sleep(1)
-                continue
-                
-            # CALL YOUR ZEBRA FUNCTION
-            # (Assuming get_recent_zebra_signal(df) returns True/False)
-            if get_recent_zebra_signal(df): 
-                self.logger.info(f"✅ ZEBRA DETECTED: {instrument} {tf}")
-                
+                time.sleep(1); continue
+
+            # CHECK ZEBRA SIGNAL (Calling your logic)
+            if get_recent_zebra_signal(df):
+                sl = self.find_3_candle_pivot(df, direction)
                 entry = current_candle['open']
-                sl = find_3_candle_pivot(df, direction)
                 
                 if sl:
+                    # --- HUGE SL FILTER ---
+                    # Calculate avg range of last 5 candles
+                    recent_ranges = (df['high'].iloc[-6:-1] - df['low'].iloc[-6:-1]).mean()
+                    current_sl_dist = abs(entry - sl)
+                    
+                    if current_sl_dist > (recent_ranges * 2.5):
+                        self.logger.warning(f"⏭️ Zebra Skip: SL too large ({current_sl_dist} vs avg {recent_ranges})")
+                        scanned_candles.add(current_candle['time'])
+                        continue
+                    # ----------------------
+
                     self._process_and_record_hammer(
                         instrument, tf, current_candle, direction, 'zebra',
                         signal_data, signal_id, trigger_data,
