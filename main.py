@@ -389,7 +389,7 @@ class GlobalCandleCache:
         if not self._initialized:
             self.ttl_seconds = ttl_seconds
             self.max_size = max_size
-            self.cache = {}  # key -> (data, timestamp)
+            self.cache = {}  # key -> (data, timestamp, ttl)  # ✅ CHANGED: Store ttl with entry
             self._lock = threading.Lock()
             self._initialized = True
             logger.info(f"📦 Global Candle Cache initialized (TTL: {ttl_seconds}s, Max: {max_size} entries)")
@@ -403,8 +403,8 @@ class GlobalCandleCache:
         
         with self._lock:
             if key in self.cache:
-                data, timestamp = self.cache[key]
-                if time.time() - timestamp < self.ttl_seconds:
+                data, timestamp, entry_ttl = self.cache[key]  # ✅ CHANGED: Unpack 3 values
+                if time.time() - timestamp < entry_ttl:  # ✅ CHANGED: Use entry-specific TTL
                     return data
         
         return None
@@ -417,11 +417,13 @@ class GlobalCandleCache:
         with self._lock:
             # Remove oldest entries if cache is full
             if len(self.cache) >= self.max_size:
+                # Find oldest by timestamp (index 1)
                 oldest_key = min(self.cache.keys(), 
                                key=lambda k: self.cache[k][1])
                 del self.cache[oldest_key]
             
-            self.cache[key] = (data, time.time())
+            # Store data, timestamp, and entry-specific TTL
+            self.cache[key] = (data, time.time(), ttl)  # ✅ CHANGED: Store 3 values
     
     def clear(self):
         """Clear entire cache"""
@@ -431,12 +433,20 @@ class GlobalCandleCache:
     def get_stats(self):
         """Get cache statistics"""
         with self._lock:
+            # Calculate hit rate if we track hits/misses
+            hits = getattr(self, 'hits', 0)
+            misses = getattr(self, 'misses', 0)
+            total = hits + misses
+            hit_rate = (hits / total * 100) if total > 0 else 0
+            
             return {
                 'size': len(self.cache),
                 'max_size': self.max_size,
-                'ttl_seconds': self.ttl_seconds
+                'ttl_seconds': self.ttl_seconds,
+                'hits': hits,
+                'misses': misses,
+                'hit_rate_percent': round(hit_rate, 2)
             }
-
 # Create global instance
 GLOBAL_CACHE = GlobalCandleCache()
 
