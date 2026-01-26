@@ -9140,7 +9140,12 @@ class HammerPatternScanner:
             else:
                 df = self.cached_fetch_candles(instrument, 'M1', count=2, force_fetch=True)
 
-            
+            df_entry_check = df[
+                (~df["entry_price"].isna()) &
+                (~df["sl_price"].isna())
+            ] if df is not None and not df.empty else pd.DataFrame()
+
+
             # Check both current and previous candle (in case entry was at candle close)
             if not df_entry_check.empty and len(df_entry_check) >= 1:
                 # Prepare candles to check (up to 2 most recent)
