@@ -58,7 +58,7 @@ TRADING_PAIRS = {
     'us_indices_triad': {
         'pair1': 'NAS100_USD',  
         'pair2': 'SPX500_USD',  
-        'instruments': ['NAS100_USD','SPX500_USD'],  # NEW structure
+        'instruments': ['NAS100_USD','SPX500_USD'],  # NEW structuress
         'timeframe_mapping': {
             'monthly': 'H4',
             'weekly': 'H1', 
