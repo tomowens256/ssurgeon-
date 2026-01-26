@@ -9337,29 +9337,12 @@ class HammerPatternScanner:
             self.logger.error(f"❌ Error starting TP monitoring: {str(e)}")
     
     def _monitor_tp_levels(self, trade_data, replay_candles=None):
-
-        """Monitor and record TP hits in background with PROPER BE tracking
-        
-        Args:
-            trade_data (dict): Dictionary containing trade information including:
-                - instrument: Trading instrument (e.g., 'EURUSD')
-                - direction: Trade direction ('bullish' or 'bearish')
-                - entry_price: Entry price of the trade
-                - sl_price: Stop loss price
-                - tp_1_{i}_distance: Distance in pips for each TP level (1-10)
-                - open_tp_price: Optional open TP price
-                - trade_id: Unique trade identifier
-        
-        This function monitors a trade for 24 hours, checking for:
-        1. Stop loss hits (immediate exit)
-        2. Take profit hits (TP1-TP10)
-        3. Open TP hits (if specified)
-        4. Break-even tracking for each TP hit
-        """
+        """Monitor and record TP hits in background with PROPER BE tracking"""
         try:
             # Extract basic trade information
             instrument = trade_data['instrument']
             direction = trade_data['direction'].lower()
+            
             # Convert entry_price and sl_price to float
             try:
                 entry_price = float(trade_data['entry_price'])
@@ -9375,8 +9358,8 @@ class HammerPatternScanner:
             
             # Calculate TP prices for levels 1-10 based on pip distance
             tp_prices = {}
-            # Calculate TP prices for levels 1-10 based on pip distance
-            tp_prices = {}
+            pip_multiplier = 100 if 'JPY' in instrument else 10000
+            
             for i in range(1, 11):
                 # Get TP distance in pips from trade data AND CONVERT TO FLOAT
                 try:
@@ -9384,15 +9367,10 @@ class HammerPatternScanner:
                 except (ValueError, TypeError):
                     distance_pips = 0.0  # Default to 0 if conversion fails
                 
-                # Determine pip multiplier: 100 for JPY pairs, 10000 for others
-                pip_multiplier = 100 if 'JPY' in instrument else 10000
-                
                 # Calculate TP price based on direction
                 if direction == 'bearish':
-                    # For bearish trades, TP is below entry
                     tp_price = entry_price - (distance_pips / pip_multiplier)
                 else:
-                    # For bullish trades, TP is above entry
                     tp_price = entry_price + (distance_pips / pip_multiplier)
                 
                 tp_prices[i] = tp_price
@@ -9424,68 +9402,21 @@ class HammerPatternScanner:
             last_candle_time = None
             
             # ============================================================================
-            # CRITICAL FIX: Check if SL was hit on the entry candle BEFORE monitoring
-            # This prevents trades that hit SL immediately from being counted as wins
-            # ============================================================================
-            
-            # Fetch recent candles to check for SL on entry candle
-            if replay_candles is not None:
-                if replay_candles.empty:
-                    return
-                df = replay_candles.iloc[:2]
-                replay_candles = replay_candles.iloc[1:]
-            else:
-                df = self.cached_fetch_candles(instrument, 'M1', count=2, force_fetch=True)
-
-            df_entry_check = df[
-                (~df["entry_price"].isna()) &
-                (~df["sl_price"].isna())
-            ] if df is not None and not df.empty else pd.DataFrame()
-
-
-            # Check both current and previous candle (in case entry was at candle close)
-            if not df_entry_check.empty and len(df_entry_check) >= 1:
-                # Prepare candles to check (up to 2 most recent)
-                candles_to_check = []
-                if len(df_entry_check) >= 2:
-                    candles_to_check = [df_entry_check.iloc[-1], df_entry_check.iloc[-2]]
-                else:
-                    candles_to_check = [df_entry_check.iloc[-1]]
-                
-                # Check each candle for SL hit
-                for entry_candle in candles_to_check:
-                    candle_high = entry_candle['high']
-                    candle_low = entry_candle['low']
-                    
-                    # Check if SL was hit on this candle
-                    sl_hit_on_entry = False
-                    
-                    if direction == 'bearish':
-                        # For bearish trade, SL is above entry
-                        # If candle high reaches or exceeds SL, trade is stopped out
-                        if candle_high >= sl_price:
-                            sl_hit_on_entry = True
-                            
-                    elif direction == 'bullish':
-                        # For bullish trade, SL is below entry
-                        # If candle low reaches or goes below SL, trade is stopped out
-                        if candle_low <= sl_price:
-                            sl_hit_on_entry = True
-                    
-                    # If SL was hit on entry candle, record loss and exit immediately
-                    if sl_hit_on_entry:
-                        self._record_tp_result(trade_data, 'SL', -1, start_time)
-                        self._update_trade_in_csv(trade_data)
-                        self.logger.info(f"🛑 SL HIT ON ENTRY CANDLE for trade {trade_data['trade_id']} at {start_time}")
-                        return  # Stop monitoring - trade is already closed at loss
-            
-            # ============================================================================
             # MAIN MONITORING LOOP: Monitor trade for 24 hours
             # ============================================================================
             
             while datetime.now(NY_TZ) - start_time < monitor_duration:
                 # Get current M1 candle data
-                df = self.cached_fetch_candles(instrument, 'M1', count=2, force_fetch=True)
+                if replay_candles is not None:
+                    # For replay mode (reconciliation)
+                    if replay_candles.empty:
+                        break
+                    df = replay_candles.iloc[:2]
+                    replay_candles = replay_candles.iloc[1:]
+                else:
+                    # Live monitoring
+                    df = self.cached_fetch_candles(instrument, 'M1', count=2, force_fetch=True)
+                    
                 if df.empty:
                     time.sleep(check_interval)
                     continue
@@ -9645,7 +9576,6 @@ class HammerPatternScanner:
                 # Wait before next check
                 if replay_candles is None:
                     time.sleep(check_interval)
-
             
             # ============================================================================
             # POST-MONITORING CLEANUP
@@ -9659,7 +9589,8 @@ class HammerPatternScanner:
             
             # Log final results
             self.logger.info(f"📊 TP monitoring completed for {trade_data['trade_id']}")
-            self.logger.info(f"   BE Results: {[f'TP{i}:{be_tracking[i].get('outcome', 'N/A')}' for i in hit_tps]}")
+            be_results = [f'TP{i}:{be_tracking[i].get("outcome", "N/A")}' for i in hit_tps]
+            self.logger.info(f"   BE Results: {be_results}")
             
         except Exception as e:
             self.logger.error(f"❌ Error in TP monitoring: {str(e)}")
