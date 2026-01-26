@@ -7854,6 +7854,10 @@ class HammerPatternScanner:
             
             sl_distance_pips = abs(current_price - sl_price) * pip_multiplier
             tp_distances = {f'tp_1_{i}_distance': round(sl_distance_pips * i, 1) for i in range(1, 11)}
+            # Calculate open TP
+            open_tp_price, open_tp_rr, open_tp_type = self.calculate_open_tp(
+                instrument, direction, current_price, sl_price
+            )
 
             # 4. FETCH INDICATORS & FEATURES
             df_ind = fetch_candles(instrument, tf, count=150, api_key=self.credentials['oanda_api_key'])
