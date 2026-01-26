@@ -7868,21 +7868,19 @@ class HammerPatternScanner:
                 instrument, direction, current_price, sl_price
             )
             
-            # FIX: Handle both tuple and dictionary returns
-            if isinstance(open_tp_data, tuple):
-                # Tuple format: (open_tp_price, open_tp_rr)
-                open_tp_price = open_tp_data[0] if len(open_tp_data) > 0 else None
-                open_tp_rr = open_tp_data[1] if len(open_tp_data) > 1 else 0
-                # Convert tuple to dict for later use
-                open_tp_dict = {
-                    'open_tp_price': open_tp_price,
-                    'open_tp_rr': open_tp_rr
-                } if open_tp_price is not None else {}
+            # FIX: Handle the tuple return properly
+            # open_tp_data returns (price, rr_ratio, type) or (None, None, None) on error
+            if open_tp_data and open_tp_data[0] is not None:
+                open_tp_price, open_tp_rr, open_tp_type = open_tp_data
             else:
-                # Dictionary format
-                open_tp_price = open_tp_data.get('open_tp_price') if open_tp_data else None
-                open_tp_rr = open_tp_data.get('open_tp_rr') if open_tp_data else 0
-                open_tp_dict = open_tp_data or {}
+                open_tp_price, open_tp_rr, open_tp_type = None, 0, None
+            
+            # Create a dictionary for the open_tp data
+            open_tp_dict = {
+                'open_tp_price': open_tp_price,
+                'open_tp_rr': open_tp_rr,
+                'open_tp_type': open_tp_type
+            }
             # 4. FETCH INDICATORS & FEATURES
             df_ind = fetch_candles(instrument, tf, count=150, api_key=self.credentials['oanda_api_key'])
             if not df_ind.empty:
@@ -7976,8 +7974,7 @@ class HammerPatternScanner:
             for i in range(1, 11): trade_data[f'tp_1_{i}_price'] = round(tp_prices[i], 5)
             trade_data.update(tp_distances)
             trade_data.update(advanced_features)
-            if open_tp_dict:  # Only update if we have data
-                trade_data.update(open_tp_dict)
+            trade_data.update(open_tp_dict)
 
             # 6. AI BLOCK & WEBHOOK (WEBHOOK SKIPPED FOR ZEBRA)
             webhook_sent = 0
