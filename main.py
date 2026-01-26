@@ -8927,96 +8927,286 @@ class HammerPatternScanner:
                 return True
     
         return False
-
-
-    def reconcile_and_resume_trades(self):
-        self.logger.info("🕵️ Reconciling orphan trades...")
-    
-        if not os.path.exists(self.csv_file_path):
-            return
-    
-        df = pd.read_csv(self.csv_file_path).fillna('')
-    
-        # 🔒 MASK STAYS (as you requested)
-        mask = (df['tp_1_1_result'] == '') | (df['tp_level_hit'] == '')
-        orphaned_trades = df[df.apply(self.is_orphan_row, axis=1)]
-
-    
-        if orphaned_trades.empty:
-            self.logger.info("✅ No orphan trades found.")
-            return
-    
-        for _, row in orphaned_trades.iterrows():
-            trade_data = row.to_dict()
-    
-            # Skip already closed trades
-            if trade_data.get('exit_time'):
-                continue
-    
-            # Validate entry_time
+    def reconcile_and_resume_trades(self, csv_paths=None):
+        """
+        SAFE reconciliation - doesn't interfere with main bot operations
+        Only processes trades that are COMPLETELY orphaned (no monitoring)
+        """
+        if csv_paths is None:
+            csv_paths = [
+                '/content/drive/My Drive/hammer_trades.csv',
+                '/content/drive/My Drive/hammer_trades/zebra.csv'
+            ]
+        
+        for csv_path in csv_paths:
+            self.logger.info(f"🔧 SAFE reconciling from: {os.path.basename(csv_path)}")
             try:
-                entry_time = pd.to_datetime(trade_data['entry_time']).tz_localize(NY_TZ)
-            except Exception:
-                self.logger.warning(f"⚠️ Bad entry_time for {trade_data['trade_id']}")
-                continue
-
-            def is_trade_replayable(trade_data):
-                try:
-                    if not trade_data.get('entry_price'):
-                        return False
-                    if not trade_data.get('sl_price'):
-                        return False
-                    float(trade_data['entry_price'])
-                    float(trade_data['sl_price'])
-                    return True
-                except Exception:
+                self._safe_csv_reconciliation(csv_path)
+            except Exception as e:
+                self.logger.error(f"❌ Reconciliation error for {csv_path}: {e}")
+    
+    def _safe_csv_reconciliation(self, csv_path):
+        """Safe reconciliation that avoids conflicts with live monitoring"""
+        
+        # Check if file exists
+        if not os.path.exists(csv_path):
+            self.logger.warning(f"📁 CSV not found: {csv_path}")
+            return
+        
+        try:
+            # Read CSV
+            df = pd.read_csv(csv_path).fillna('')
+            
+            # SAFE: Only process trades that are COMPLETELY missing results
+            # This avoids interfering with partially completed trades
+            def is_completely_orphaned(row):
+                """Check if trade has NO TP results and NO exit time"""
+                # Has exit_time? Not an orphan
+                if row.get('exit_time') and str(row['exit_time']).strip():
                     return False
-
-            if not is_trade_replayable(trade_data):
-                self.logger.warning(
-                    f"⏭️ Skipping {trade_data['trade_id']} — missing entry or SL"
-                )
-                continue
-
-
+                
+                # Check if ANY TP has been recorded
+                for i in range(1, 11):
+                    result = row.get(f'tp_1_{i}_result', '')
+                    if str(result).strip() and result != '':
+                        return False
+                
+                # Check open TP
+                open_tp_result = row.get('open_tp_result', '')
+                if str(open_tp_result).strip() and open_tp_result != '':
+                    return False
+                
+                # Has entry and SL? Then it's an orphan
+                if pd.isna(row.get('entry_price')) or pd.isna(row.get('sl_price')):
+                    return False
+                
+                return True
+            
+            # Find completely orphaned trades
+            orphan_mask = df.apply(is_completely_orphaned, axis=1)
+            orphaned_trades = df[orphan_mask]
+            
+            if orphaned_trades.empty:
+                self.logger.info(f"✅ No completely orphaned trades in {os.path.basename(csv_path)}")
+                return
+            
+            self.logger.info(f"🔍 Found {len(orphaned_trades)} orphaned trades in {os.path.basename(csv_path)}")
+            
+            # Track which trades we're reconciling to avoid duplicates
+            reconciling_ids = []
+            
+            for _, row in orphaned_trades.iterrows():
+                trade_data = row.to_dict()
+                trade_id = trade_data['trade_id']
+                
+                # SAFE CHECK: Skip if this trade is already being monitored
+                # Check if there's already a thread for this trade
+                if self._is_trade_being_monitored(trade_id):
+                    self.logger.info(f"⏭️ Trade {trade_id} already being monitored, skipping")
+                    continue
+                
+                reconciling_ids.append(trade_id)
+                
+                # Process the trade
+                self._process_single_orphaned_trade(trade_data, csv_path)
+            
+            self.logger.info(f"✅ SAFE reconciliation complete for {os.path.basename(csv_path)}")
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error in safe reconciliation: {e}")
+            import traceback
+            self.logger.error(f"❌ Traceback: {traceback.format_exc()}")
     
+    def _is_trade_being_monitored(self, trade_id):
+        """Check if a trade is already being monitored by main bot"""
+        # Check active threads
+        for thread in threading.enumerate():
+            if f"TPMonitor_{trade_id}" in thread.name:
+                return True
+        return False
+    
+    def _process_single_orphaned_trade(self, trade_data, csv_path):
+        """Process a single orphaned trade without interfering with main bot"""
+        try:
+            trade_id = trade_data['trade_id']
+            
+            # Parse entry_time safely
+            entry_time_str = trade_data['entry_time']
+            if pd.isna(entry_time_str) or not entry_time_str:
+                self.logger.warning(f"⚠️ Missing entry_time for {trade_id}")
+                return
+            
+            entry_time = pd.to_datetime(entry_time_str)
+            if entry_time.tz is None:
+                entry_time = entry_time.tz_localize(NY_TZ)
+            else:
+                entry_time = entry_time.tz_convert(NY_TZ)
+            
+            # Check if replayable
+            if not self.is_trade_replayable(trade_data):
+                self.logger.warning(f"⏭️ Unreplayable trade {trade_id}")
+                return
+            
             instrument = trade_data['instrument']
-            self.logger.info(f"🔁 Replaying {trade_data['trade_id']}")
-    
-            # Fetch ALL candles since entry (FAST)
+            self.logger.info(f"🔁 Replaying {trade_id} from {entry_time}")
+            
+            # Fetch candles
             candles = self.cached_fetch_candles(
                 instrument,
                 'M5',
                 count=5000,
                 force_fetch=True
             )
-    
-            # With:
-            # In reconcile_and_resume_trades function, around line 8998
-            if not candles.empty and 'time' in candles.columns:
-                candles = candles[candles['time'] >= entry_time]
-            else:
-                print(f"⚠️ No 'time' column in candles for trade, skipping")
-                continue
-    
+            
             if candles.empty:
-                continue
+                self.logger.warning(f"⚠️ No candles for {instrument}")
+                return
+            
+            # Filter candles
+            if 'time' in candles.columns:
+                # Convert candle times
+                if candles['time'].dt.tz is None:
+                    candles['time'] = pd.to_datetime(candles['time']).dt.tz_localize('UTC').dt.tz_convert(NY_TZ)
+                candles = candles[candles['time'] >= entry_time].copy()
+            
+            if candles.empty:
+                self.logger.info(f"ℹ️ No candles after entry for {trade_id}")
+                return
+            
+            # Use a SEPARATE monitoring function that doesn't conflict
+            self._replay_orphaned_trade(trade_data, candles, csv_path)
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error processing trade {trade_data.get('trade_id', 'UNKNOWN')}: {e}")
     
-            # 🔥 THIS IS THE MAGIC
-            self._monitor_tp_levels(
-                trade_data,
-                replay_candles=candles.copy()
-            )
+    def _replay_orphaned_trade(self, trade_data, replay_candles, csv_path):
+        """
+        Special replay function for orphaned trades only
+        Doesn't start new threads, just replays historical data
+        """
+        try:
+            trade_id = trade_data['trade_id']
+            
+            # Extract trade info
+            instrument = trade_data['instrument']
+            direction = trade_data['direction'].lower()
+            
+            try:
+                entry_price = float(trade_data['entry_price'])
+                sl_price = float(trade_data['sl_price'])
+            except (ValueError, TypeError) as e:
+                self.logger.error(f"❌ Invalid prices for {trade_id}: {e}")
+                return
+            
+            # Calculate TP prices
+            tp_prices = self._calculate_tp_prices_for_recovery(trade_data)
+            
+            # Track hits
+            hit_tps = set()
+            exit_time = None
+            exit_reason = None
+            highest_tp_hit = 0
+            
+            # Process each candle in replay data
+            for _, candle in replay_candles.iterrows():
+                candle_time = candle['time']
+                candle_high = candle['high']
+                candle_low = candle['low']
+                
+                # Check SL
+                if direction == 'bearish' and candle_high >= sl_price:
+                    exit_time = candle_time
+                    exit_reason = 'SL'
+                    break
+                elif direction == 'bullish' and candle_low <= sl_price:
+                    exit_time = candle_time
+                    exit_reason = 'SL'
+                    break
+                
+                # Check TPs
+                for i in range(1, 11):
+                    if i in hit_tps:
+                        continue
+                        
+                    tp_hit = False
+                    if direction == 'bearish' and candle_low <= tp_prices[i]:
+                        tp_hit = True
+                    elif direction == 'bullish' and candle_high >= tp_prices[i]:
+                        tp_hit = True
+                    
+                    if tp_hit:
+                        hit_tps.add(i)
+                        highest_tp_hit = max(highest_tp_hit, i)
+                        trade_data[f'tp_1_{i}_result'] = f"+{i}"
+                        # Calculate time in seconds
+                        entry_time = pd.to_datetime(trade_data['entry_time'])
+                        if entry_time.tz is None:
+                            entry_time = entry_time.tz_localize(NY_TZ)
+                        time_diff = (candle_time - entry_time).total_seconds()
+                        trade_data[f'tp_1_{i}_time_seconds'] = int(time_diff)
+                        
+                        # If this is the highest TP hit, update exit info
+                        if i > trade_data.get('tp_level_hit', 0):
+                            trade_data['tp_level_hit'] = i
+                            trade_data['time_to_exit_seconds'] = int(time_diff)
+                            exit_time = candle_time
+                            exit_reason = f'TP_{i}'
+            
+            # Update exit info if trade was closed
+            if exit_time:
+                trade_data['exit_time'] = exit_time.strftime('%Y-%m-%d %H:%M:%S')
+                if exit_reason == 'SL':
+                    # Mark all unhit TPs as -1
+                    for i in range(1, 11):
+                        if i not in hit_tps:
+                            trade_data[f'tp_1_{i}_result'] = "-1"
+                    trade_data['open_tp_result'] = "-1"
+                    trade_data['tp_level_hit'] = -1
+            
+            # Update CSV
+            self._safe_update_csv(trade_data, csv_path)
+            
+            # If still open, let main bot handle live monitoring
+            if not exit_time:
+                self.logger.info(f"📝 Trade {trade_id} still open after replay - main bot will monitor")
+            
+            self.logger.info(f"✅ Replay complete for {trade_id}")
+            
+        except Exception as e:
+            self.logger.error(f"❌ Replay error for {trade_data.get('trade_id', 'UNKNOWN')}: {e}")
     
-            # Ensure CSV reflects final state
-            self._update_trade_in_csv(trade_data)
-    
-            # If still open → resume live monitoring
-            if not trade_data.get('exit_time'):
-                self.logger.info(f"▶️ Resuming live for {trade_data['trade_id']}")
-                self._start_tp_monitoring(trade_data)
-    
-        self.logger.info("✅ Reconciliation complete.")
+    def _safe_update_csv(self, trade_data, csv_path):
+        """Update CSV without interfering with main bot's file operations"""
+        try:
+            # Add a small delay to avoid file lock conflicts
+            time.sleep(0.1)
+            
+            # Read current file
+            if not os.path.exists(csv_path):
+                return False
+            
+            df = pd.read_csv(csv_path)
+            
+            # Find and update the row
+            trade_id = trade_data['trade_id']
+            mask = df['trade_id'] == trade_id
+            
+            if mask.any():
+                # Update only the columns that exist in both
+                for col in trade_data.keys():
+                    if col in df.columns:
+                        df.loc[mask, col] = trade_data[col]
+                
+                # Save back
+                df.to_csv(csv_path, index=False)
+                self.logger.info(f"💾 Updated {trade_id} in {os.path.basename(csv_path)}")
+                return True
+            
+            return False
+            
+        except Exception as e:
+            self.logger.error(f"❌ Safe CSV update failed: {e}")
+            return False
 
 
     def _calculate_tp_prices_for_recovery(self, trade_data):
@@ -9445,8 +9635,9 @@ class HammerPatternScanner:
         except Exception as e:
             self.logger.error(f"❌ Error recording TP result: {str(e)}")
     
-    def _update_trade_in_csv(self, trade_data):
-        """Update trade record in CSV"""
+    def _update_trade_in_csv(self, trade_data, csv_path=None):
+        if csv_path is None:
+            csv_path = self.csv_file_path
         try:
             if not os.path.exists(self.csv_file_path):
                 return False
