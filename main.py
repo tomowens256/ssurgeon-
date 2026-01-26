@@ -8986,12 +8986,17 @@ class HammerPatternScanner:
             # Fetch ALL candles since entry (FAST)
             candles = self.cached_fetch_candles(
                 instrument,
-                'M1',
-                count=20000,
+                'M5',
+                count=5000,
                 force_fetch=True
             )
     
-            candles = candles[candles['time'] >= entry_time]
+            # With:
+            if not candles.empty and 'time' in candles.columns:
+                candles = candles[candles['time'] >= entry_time]
+            else:
+                print(f"⚠️ No 'time' column in candles for {trade_id}, skipping")
+                continue
     
             if candles.empty:
                 continue
