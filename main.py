@@ -8891,127 +8891,95 @@ class HammerPatternScanner:
         
     #     self.logger.info("🔨 Hammer Pattern Scanner started")
     #     return True
+    def is_orphan_row(row):
+        for col in ORPHAN_COLUMNS:
+            val = row.get(col, '')
+            if val in ['', '0', 0] or pd.isna(val):
+                return True
+        return False
+
     def reconcile_and_resume_trades(self):
-        """
-        Final Version: Handles OANDA instrument naming, BULLISH/BEARISH direction,
-        and executes rapid history simulation before handing off to live threads.
-        """
-        self.logger.info("🕵️ Starting Historical Simulation & Recovery...")
-        import pandas as pd
-        from datetime import datetime
-        
+        self.logger.info("🕵️ Reconciling orphan trades...")
+    
         if not os.path.exists(self.csv_file_path):
-            self.logger.warning("No CSV found to reconcile.")
             return
     
-        try:
-            # Read CSV and ensure we handle empty strings correctly
-            df_csv = pd.read_csv(self.csv_file_path).fillna('')
-            
-            # Identify "Orphan" trades (missing result or missing TP1)
-            mask = (df_csv['tp_1_1_result'] == '') | (df_csv['tp_level_hit'] == '')
-            orphaned_trades = df_csv[mask]
+        df = pd.read_csv(self.csv_file_path).fillna('')
     
-            if orphaned_trades.empty:
-                self.logger.info("✅ All trades are fully documented. No recovery needed.")
-                return
+        # 🔒 MASK STAYS (as you requested)
+        mask = (df['tp_1_1_result'] == '') | (df['tp_level_hit'] == '')
+        orphaned_trades = df[df.apply(is_orphan_row, axis=1)]
     
-            self.logger.info(f"Found {len(orphaned_trades)} orphans. Processing...")
+        if orphaned_trades.empty:
+            self.logger.info("✅ No orphan trades found.")
+            return
     
-            for index, row in orphaned_trades.iterrows():
-                trade_data = row.to_dict()
-                
-                # 1. FORMAT INSTRUMENT (e.g., EURUSD -> EUR_USD)
-                raw_inst = str(trade_data['instrument'])
-                instrument = raw_inst if "_" in raw_inst else f"{raw_inst[:3]}_{raw_inst[3:]}"
-                trade_data['instrument'] = instrument
-                
-                # 2. FORMAT DIRECTION
-                direction = str(trade_data['direction']).upper() # 'BULLISH' or 'BEARISH'
-                
-                # CRITICAL FIX: Handle entry_time with proper timezone
-                # FIX: Handle invalid/missing entry_time
-                entry_time_str = trade_data.get('entry_time', '')
-                if not entry_time_str or entry_time_str == '0' or entry_time_str == 'NaN':
-                    self.logger.warning(f"⚠️ Missing or invalid entry_time for {trade_data['trade_id']}. Skipping.")
-                    continue
-                
+        for _, row in orphaned_trades.iterrows():
+            trade_data = row.to_dict()
+    
+            # Skip already closed trades
+            if trade_data.get('exit_time'):
+                continue
+    
+            # Validate entry_time
+            try:
+                entry_time = pd.to_datetime(trade_data['entry_time']).tz_localize(NY_TZ)
+            except Exception:
+                self.logger.warning(f"⚠️ Bad entry_time for {trade_data['trade_id']}")
+                continue
+
+            def is_trade_replayable(trade_data):
                 try:
-                    # First try to parse with pandas
-                    entry_time = pd.to_datetime(entry_time_str)
-                    # If timezone-naive, localize to NY_TZ
-                    if entry_time.tz is None:
-                        entry_time = entry_time.tz_localize(NY_TZ)
-                    else:
-                        entry_time = entry_time.tz_convert(NY_TZ)
-                except Exception as e:
-                    self.logger.error(f"❌ Invalid entry_time format: {entry_time_str}. Error: {str(e)}. Skipping.")
-                    continue
+                    if not trade_data.get('entry_price'):
+                        return False
+                    if not trade_data.get('sl_price'):
+                        return False
+                    float(trade_data['entry_price'])
+                    float(trade_data['sl_price'])
+                    return True
+                except Exception:
+                    return False
+
+            if not is_trade_replayable(trade_data):
+                self.logger.warning(
+                    f"⏭️ Skipping {trade_data['trade_id']} — missing entry or SL"
+                )
+                continue
+
+
     
-                self.logger.info(f"🔄 Recovering {trade_data['trade_id']} | {instrument} | {direction}")
+            instrument = trade_data['instrument']
+            self.logger.info(f"🔁 Replaying {trade_data['trade_id']}")
     
-                # 3. FETCH M5 HISTORY (CRITICAL FIX: 'M5' not '5M')
-                hist_df = self.cached_fetch_candles(instrument, 'M5', count=5000, force_fetch=True)
-                if hist_df.empty:
-                    self.logger.error(f"Could not fetch history for {instrument}. Skipping.")
-                    continue
+            # Fetch ALL candles since entry (FAST)
+            candles = self.cached_fetch_candles(
+                instrument,
+                'M1',
+                count=20000,
+                force_fetch=True
+            )
     
-                # Filter history to start from the entry candle
-                # hist_df['time'] is already timezone-aware from fetch_candles
-                # Ensure both are timezone-aware for comparison
-                playback_data = hist_df[hist_df['time'] >= entry_time]
+            candles = candles[candles['time'] >= entry_time]
     
-                # 4. SIMULATION CONSTANTS
-                tp_prices = self._calculate_tp_prices_for_recovery(trade_data)
-                sl_price = float(trade_data['sl_price'])
-                trade_is_alive = True
+            if candles.empty:
+                continue
     
-                # 5. THE RAPID PLAYBACK LOOP
-                for _, candle in playback_data.iterrows():
-                    c_high, c_low = candle['high'], candle['low']
-                    c_time = candle['time']
+            # 🔥 THIS IS THE MAGIC
+            self._monitor_tp_levels(
+                trade_data,
+                replay_candles=candles.copy()
+            )
     
-                    # Check SL Hit
-                    if (direction == 'BULLISH' and c_low <= sl_price) or \
-                       (direction == 'BEARISH' and c_high >= sl_price):
-                        self._record_tp_result(trade_data, 'SL', -1, c_time)
-                        trade_is_alive = False
-                        break
-                    
-                    # Check TP Hits (1 to 10)
-                    for i in range(1, 11):
-                        tp_key = f'tp_1_{i}_result'
-                        # Only check if this TP hasn't been hit yet
-                        if trade_data.get(tp_key) == '':
-                            tp_hit = False
-                            if direction == 'BULLISH' and c_high >= tp_prices[i]:
-                                tp_hit = True
-                            elif direction == 'BEARISH' and c_low <= tp_prices[i]:
-                                tp_hit = True
-                            
-                            if tp_hit:
-                                time_diff = (c_time - entry_time).total_seconds()
-                                self._record_tp_result(trade_data, f'TP_{i}', i, c_time, time_diff)
-                    
-                    # Exit loop if all 10 TPs are done
-                    if trade_data.get('tp_1_10_result') != '':
-                        trade_is_alive = False
-                        break
+            # Ensure CSV reflects final state
+            self._update_trade_in_csv(trade_data)
     
-                # 6. UPDATING THE CONTRACT
-                if not trade_is_alive:
-                    self.logger.info(f"🏁 Finished: {trade_data['trade_id']} closed during simulation.")
-                    self._update_trade_in_csv(trade_data)
-                else:
-                    # Trade is still active! Update CSV with current progress then resume thread
-                    self.logger.info(f"🏃 Still Active: {trade_data['trade_id']} resuming live monitoring.")
-                    self._update_trade_in_csv(trade_data) 
-                    self._start_tp_monitoring(trade_data)
+            # If still open → resume live monitoring
+            if not trade_data.get('exit_time'):
+                self.logger.info(f"▶️ Resuming live for {trade_data['trade_id']}")
+                self._start_tp_monitoring(trade_data)
     
-            self.logger.info("✅ Recovery Complete.")
-    
-        except Exception as e:
-            self.logger.error(f"❌ Recovery Error: {str(e)}", exc_info=True)
+        self.logger.info("✅ Reconciliation complete.")
+
 
     def _calculate_tp_prices_for_recovery(self, trade_data):
         """Helper to get TP prices without redundant code"""
@@ -9048,7 +9016,8 @@ class HammerPatternScanner:
         except Exception as e:
             self.logger.error(f"❌ Error starting TP monitoring: {str(e)}")
     
-    def _monitor_tp_levels(self, trade_data):
+    def _monitor_tp_levels(self, trade_data, replay_candles=None):
+
         """Monitor and record TP hits in background with PROPER BE tracking
         
         Args:
@@ -9140,7 +9109,14 @@ class HammerPatternScanner:
             # ============================================================================
             
             # Fetch recent candles to check for SL on entry candle
-            df_entry_check = self.cached_fetch_candles(instrument, 'M1', count=2, force_fetch=True)
+            if replay_candles is not None:
+                if replay_candles.empty:
+                    return
+                df = replay_candles.iloc[:2]
+                replay_candles = replay_candles.iloc[1:]
+            else:
+                df = self.cached_fetch_candles(instrument, 'M1', count=2, force_fetch=True)
+
             
             # Check both current and previous candle (in case entry was at candle close)
             if not df_entry_check.empty and len(df_entry_check) >= 1:
@@ -9342,7 +9318,9 @@ class HammerPatternScanner:
                         be_tracking[tp_level]['state'] = 'completed'
                 
                 # Wait before next check
-                time.sleep(check_interval)
+                if replay_candles is None:
+                    time.sleep(check_interval)
+
             
             # ============================================================================
             # POST-MONITORING CLEANUP
