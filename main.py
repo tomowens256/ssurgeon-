@@ -7868,10 +7868,21 @@ class HammerPatternScanner:
                 instrument, direction, current_price, sl_price
             )
             
-            # Extract open_tp_price and open_tp_rr from open_tp_data
-            open_tp_price = open_tp_data.get('open_tp_price') if open_tp_data else None
-            open_tp_rr = open_tp_data.get('open_tp_rr') if open_tp_data else 0
-
+            # FIX: Handle both tuple and dictionary returns
+            if isinstance(open_tp_data, tuple):
+                # Tuple format: (open_tp_price, open_tp_rr)
+                open_tp_price = open_tp_data[0] if len(open_tp_data) > 0 else None
+                open_tp_rr = open_tp_data[1] if len(open_tp_data) > 1 else 0
+                # Convert tuple to dict for later use
+                open_tp_dict = {
+                    'open_tp_price': open_tp_price,
+                    'open_tp_rr': open_tp_rr
+                } if open_tp_price is not None else {}
+            else:
+                # Dictionary format
+                open_tp_price = open_tp_data.get('open_tp_price') if open_tp_data else None
+                open_tp_rr = open_tp_data.get('open_tp_rr') if open_tp_data else 0
+                open_tp_dict = open_tp_data or {}
             # 4. FETCH INDICATORS & FEATURES
             df_ind = fetch_candles(instrument, tf, count=150, api_key=self.credentials['oanda_api_key'])
             if not df_ind.empty:
@@ -7901,7 +7912,8 @@ class HammerPatternScanner:
                 'entry_price': round(current_price, 5),
                 'sl_price': round(sl_price, 5),
                 'tp_1_4_price': round(tp_1_4_price, 5) if tp_1_4_price is not None else '',
-                'open_tp_price': round(open_tp_price, 5) if open_tp_price else '',
+                'open_tp_price': round(open_tp_price, 5) if open_tp_price is not None else '',
+                'open_tp_rr': round(open_tp_rr, 2) if open_tp_rr else 0,
                 'sl_distance_pips': round(sl_distance_pips, 1),
                 'risk_10_lots': risk_10_lots if 'risk_10_lots' in locals() else '',
                 'risk_100_lots': risk_100_lots if 'risk_100_lots' in locals() else '',
@@ -7917,7 +7929,7 @@ class HammerPatternScanner:
                 'tp_1_8_result': '', 'tp_1_8_time_seconds': 0,
                 'tp_1_9_result': '', 'tp_1_9_time_seconds': 0,
                 'tp_1_10_result': '', 'tp_1_10_time_seconds': 0,
-                'open_tp_rr': round(open_tp_rr, 2) if open_tp_rr else 0,
+                # 'open_tp_rr': round(open_tp_rr, 2) if open_tp_rr else 0,
                 'open_tp_result': '',
                 'open_tp_time_seconds': 0,
                 'criteria': criteria,
@@ -7964,7 +7976,8 @@ class HammerPatternScanner:
             for i in range(1, 11): trade_data[f'tp_1_{i}_price'] = round(tp_prices[i], 5)
             trade_data.update(tp_distances)
             trade_data.update(advanced_features)
-            trade_data.update(open_tp_data)
+            if open_tp_dict:  # Only update if we have data
+                trade_data.update(open_tp_dict)
 
             # 6. AI BLOCK & WEBHOOK (WEBHOOK SKIPPED FOR ZEBRA)
             webhook_sent = 0
