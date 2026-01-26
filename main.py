@@ -8861,15 +8861,16 @@ class HammerPatternScanner:
                 direction = str(trade_data['direction']).upper() # 'BULLISH' or 'BEARISH'
                 
                 # CRITICAL FIX: Handle entry_time with proper timezone
+                # FIX: Handle invalid/missing entry_time
                 entry_time_str = trade_data.get('entry_time', '')
-                if not entry_time_str:
-                    self.logger.warning(f"⚠️ Missing entry_time for {trade_data['trade_id']}. Skipping.")
+                if not entry_time_str or entry_time_str == '0' or entry_time_str == 'NaN':
+                    self.logger.warning(f"⚠️ Missing or invalid entry_time for {trade_data['trade_id']}. Skipping.")
                     continue
-    
+                
                 try:
-                    # Convert to datetime and ensure NY timezone
+                    # First try to parse with pandas
                     entry_time = pd.to_datetime(entry_time_str)
-                    # If naive, localize to NY_TZ. If already has timezone, convert to NY_TZ
+                    # If timezone-naive, localize to NY_TZ
                     if entry_time.tz is None:
                         entry_time = entry_time.tz_localize(NY_TZ)
                     else:
@@ -8947,29 +8948,21 @@ class HammerPatternScanner:
         """Helper to get TP prices without redundant code"""
         tp_prices = {}
         instrument = trade_data['instrument']
-        entry_price = float(trade_data['entry_price'])
+        entry_price = float(trade_data['entry_price'])  # CONVERT TO FLOAT
         direction = trade_data['direction'].lower()
-        
-        # Use correct pip multiplier
-        if 'JPY' in instrument:
-            pip_multiplier = 100
-        elif 'XAU' in instrument or 'XAG' in instrument:
-            pip_multiplier = 100  # Gold and Silver
-        else:
-            pip_multiplier = 10000
+        pip_multiplier = 100 if 'JPY' in instrument else 10000
         
         for i in range(1, 11):
-            # Get TP distance in pips from trade data
-            dist = float(trade_data.get(f'tp_1_{i}_distance', 0))
+            # Get TP distance in pips from trade data AND CONVERT TO FLOAT
+            try:
+                dist = float(trade_data.get(f'tp_1_{i}_distance', 0))
+            except (ValueError, TypeError):
+                dist = 0.0
             
-            # Calculate TP price based on direction
             if direction == 'bearish':
-                # For bearish: TP is below entry
                 tp_prices[i] = entry_price - (dist / pip_multiplier)
             else:
-                # For bullish: TP is above entry
                 tp_prices[i] = entry_price + (dist / pip_multiplier)
-        
         return tp_prices
 
     def _start_tp_monitoring(self, trade_data):
@@ -9009,14 +9002,29 @@ class HammerPatternScanner:
             # Extract basic trade information
             instrument = trade_data['instrument']
             direction = trade_data['direction'].lower()
-            entry_price = float(trade_data['entry_price'])  # ADD float()
-            sl_price = float(trade_data['sl_price'])  # ADD float()
+            # Convert entry_price and sl_price to float
+            try:
+                entry_price = float(trade_data['entry_price'])
+            except (ValueError, TypeError):
+                self.logger.error(f"❌ Invalid entry_price: {trade_data.get('entry_price')}")
+                return
             
+            try:
+                sl_price = float(trade_data['sl_price'])
+            except (ValueError, TypeError):
+                self.logger.error(f"❌ Invalid sl_price: {trade_data.get('sl_price')}")
+                return
+            
+            # Calculate TP prices for levels 1-10 based on pip distance
+            tp_prices = {}
             # Calculate TP prices for levels 1-10 based on pip distance
             tp_prices = {}
             for i in range(1, 11):
                 # Get TP distance in pips from trade data AND CONVERT TO FLOAT
-                distance_pips = float(trade_data.get(f'tp_1_{i}_distance', 0))  # ADD float()
+                try:
+                    distance_pips = float(trade_data.get(f'tp_1_{i}_distance', 0))
+                except (ValueError, TypeError):
+                    distance_pips = 0.0  # Default to 0 if conversion fails
                 
                 # Determine pip multiplier: 100 for JPY pairs, 10000 for others
                 pip_multiplier = 100 if 'JPY' in instrument else 10000
@@ -9028,6 +9036,8 @@ class HammerPatternScanner:
                 else:
                     # For bullish trades, TP is above entry
                     tp_price = entry_price + (distance_pips / pip_multiplier)
+                
+                tp_prices[i] = tp_price
             
             # Get optional open TP price (for trailing or flexible TP)
             open_tp_price = trade_data.get('open_tp_price')
