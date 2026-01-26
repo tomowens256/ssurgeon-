@@ -1,31 +1,25 @@
-# Replace your requirements.txt with this:
+# Core - let the setup script handle specific versions
+pandas
+numpy
+pytz
 
-# Core dependencies - MUST be Colab compatible
-pandas==2.2.2
-numpy==1.26.4
+# APIs
+requests
+oandapyV20
+aiohttp
 
-# API clients
-requests>=2.28.0
-oandapyV20>=0.7.2
-aiohttp>=3.8.0
-
-# Performance optimization
-numba>=0.56.0
+# ML/AI
+scikit-learn
+joblib
+fastai
+torch
+torchvision
 
 # Utilities
-python-dotenv>=0.19.0
-tabulate>=0.9.0
-pytz>=2022.7
+python-dotenv
+tabulate
+python-telegram-bot
+numba
+pandas-ta
 
-# AI/ML packages with version constraints for Colab
-scikit-learn==1.4.2
-joblib==1.4.0
-
-# IMPORTANT: Skip fastai for now or install later
-# fastai>=2.7.0  # Comment this out temporarily
-
-# Telegram
-python-telegram-bot>=20.0.0
-
-# Technical Analysis (compatible version)
-pandas-ta==0.3.14b0
+# Note: Let the setup script install specific versions that work with Colab
