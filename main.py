@@ -7834,8 +7834,14 @@ class HammerPatternScanner:
                 hammer_range = hammer_high - hammer_low
                 if direction == 'bearish':
                     sl_price = hammer_high + (hammer_range * 0.25)
+                    tp_1_4_price = current_price - (4 * (sl_price - current_price))
+                    # NEW: Calculate TP3 for webhook (1:3 RR)
+                    tp_1_2_price = current_price - (2 * (sl_price - current_price))
                 else:
                     sl_price = hammer_low - (hammer_range * 0.25)
+                    tp_1_4_price = current_price + (4 * (current_price - sl_price))
+                    # NEW: Calculate TP3 for webhook (1:3 RR)
+                    tp_1_2_price = current_price + (2 * (current_price - sl_price))
 
             # 3. CALCULATE TP LEVELS (Universal for both)
             tp_prices = {}
