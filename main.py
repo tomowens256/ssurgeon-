@@ -7865,23 +7865,76 @@ class HammerPatternScanner:
 
             # 5. BUILD TRADE DATA
             trade_id = f"T_{int(current_time.timestamp())}"
+            # NOW create trade_data dictionary
             trade_data = {
                 'timestamp': current_time.strftime('%Y-%m-%d %H:%M:%S'),
+                'signal_id': signal_id,
+                'trade_id': trade_id,
                 'instrument': instrument,
                 'hammer_timeframe': tf,
                 'direction': direction.upper(),
                 'entry_time': current_time.strftime('%Y-%m-%d %H:%M:%S'),
                 'entry_price': round(current_price, 5),
                 'sl_price': round(sl_price, 5),
+                'tp_1_4_price': round(tp_1_4_price, 5),
+                'open_tp_price': round(open_tp_price, 5) if open_tp_price else '',
                 'sl_distance_pips': round(sl_distance_pips, 1),
-                'smt_cycle': smt_data.get('cycle', ''),
-                'has_psp': 1 if has_psp else 0,
-                'rsi': indicators.get('rsi', 50),
-                'vwap_value': indicators.get('vwap', current_price),
-                'hammer_volume': int(candle.get('volume', 0)),
+                'risk_10_lots': risk_10_lots,
+                'risk_100_lots': risk_100_lots,
+                **tp_distances,
+                # Initialize TP results and times
+                'tp_1_1_result': '', 'tp_1_1_time_seconds': 0,
+                'tp_1_2_result': '', 'tp_1_2_time_seconds': 0,
+                'tp_1_3_result': '', 'tp_1_3_time_seconds': 0,
+                'tp_1_4_result': '', 'tp_1_4_time_seconds': 0,
+                'tp_1_5_result': '', 'tp_1_5_time_seconds': 0,
+                'tp_1_6_result': '', 'tp_1_6_time_seconds': 0,
+                'tp_1_7_result': '', 'tp_1_7_time_seconds': 0,
+                'tp_1_8_result': '', 'tp_1_8_time_seconds': 0,
+                'tp_1_9_result': '', 'tp_1_9_time_seconds': 0,
+                'tp_1_10_result': '', 'tp_1_10_time_seconds': 0,
+                'open_tp_rr': round(open_tp_rr, 2) if open_tp_rr else 0,
+                'open_tp_result': '',
+                'open_tp_time_seconds': 0,
                 'criteria': criteria,
-                **higher_tf_features,
-                **zebra_features
+                'trigger_timeframe': trigger_data.get('trigger_timeframe', ''),
+                'fvg_formation_time': fvg_idea.get('formation_time', '').strftime('%Y-%m-%d %H:%M:%S') if fvg_idea.get('formation_time') else '',
+                'sd_formation_time': zone.get('formation_time', '').strftime('%Y-%m-%d %H:%M:%S') if zone.get('formation_time') else '',
+                'crt_formation_time': crt_signal.get('timestamp', '').strftime('%Y-%m-%d %H:%M:%S') if crt_signal.get('timestamp') else '',
+                'smt_cycle': smt_data.get('cycle', ''),
+                'smt_quarters': smt_data.get('quarters', ''),
+                'has_psp': 1 if has_psp else 0,  # Store the actual has_psp value
+                'is_hp_fvg': 1 if signal_data.get('is_hp_fvg') else 0,
+                'is_hp_zone': 1 if signal_data.get('is_hp_zone') else 0,
+                'rsi': indicators.get('rsi', 50),
+                'vwap': indicators.get('vwap', current_price),
+                'signal_latency_seconds': round(signal_latency_seconds, 2),
+                'hammer_volume': int(candle.get('volume', 0)),
+                'inducement_count': inducement_count,
+                'exit_time': '',
+                'time_to_exit_seconds': 0,
+                'tp_level_hit': 0,
+                # Webhook status
+                'webhook_sent': 1 if webhook_sent else 0,  # Add webhook status to CSV
+                # News data
+                'news_context_json': safe_news_data['news_context_json'],
+                'news_high_count': safe_news_data['news_high_count'],
+                'news_medium_count': safe_news_data['news_medium_count'],
+                'news_low_count': safe_news_data['news_low_count'],
+                'next_news_time': safe_news_data['next_news_time'],
+                'next_news_event': safe_news_data['next_news_event'],
+                'next_news_currency': safe_news_data['next_news_currency'],
+                'prev_news_time': safe_news_data['prev_news_time'],
+                'prev_news_event': safe_news_data['prev_news_event'],
+                'prev_news_currency': safe_news_data['prev_news_currency'],
+                'seconds_to_next_news': safe_news_data['seconds_to_next_news'],
+                'seconds_since_last_news': safe_news_data['seconds_since_last_news'],
+                'news_timing_category': safe_news_data['news_timing_category'],
+                'news_fetch_status': safe_news_data['news_fetch_status'],
+                # Will store RR multiple (e.g., 2 for TP2, 3 for TP3, 2.5 for open TP, 0 for SL)
+                'tp_level_hit': 0,  
+                'exit_time': '',
+                'time_to_exit_seconds': 0
             }
             
             for i in range(1, 11): trade_data[f'tp_1_{i}_price'] = round(tp_prices[i], 5)
