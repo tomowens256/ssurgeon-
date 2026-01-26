@@ -9009,14 +9009,14 @@ class HammerPatternScanner:
             # Extract basic trade information
             instrument = trade_data['instrument']
             direction = trade_data['direction'].lower()
-            entry_price = trade_data['entry_price']
-            sl_price = trade_data['sl_price']
+            entry_price = float(trade_data['entry_price'])  # ADD float()
+            sl_price = float(trade_data['sl_price'])  # ADD float()
             
             # Calculate TP prices for levels 1-10 based on pip distance
             tp_prices = {}
             for i in range(1, 11):
-                # Get TP distance in pips from trade data
-                distance_pips = trade_data.get(f'tp_1_{i}_distance', 0)
+                # Get TP distance in pips from trade data AND CONVERT TO FLOAT
+                distance_pips = float(trade_data.get(f'tp_1_{i}_distance', 0))  # ADD float()
                 
                 # Determine pip multiplier: 100 for JPY pairs, 10000 for others
                 pip_multiplier = 100 if 'JPY' in instrument else 10000
@@ -9028,8 +9028,6 @@ class HammerPatternScanner:
                 else:
                     # For bullish trades, TP is above entry
                     tp_price = entry_price + (distance_pips / pip_multiplier)
-                
-                tp_prices[i] = tp_price
             
             # Get optional open TP price (for trailing or flexible TP)
             open_tp_price = trade_data.get('open_tp_price')
