@@ -7854,10 +7854,14 @@ class HammerPatternScanner:
             
             sl_distance_pips = abs(current_price - sl_price) * pip_multiplier
             tp_distances = {f'tp_1_{i}_distance': round(sl_distance_pips * i, 1) for i in range(1, 11)}
-            # Calculate open TP
-            open_tp_price, open_tp_rr, open_tp_type = self.calculate_open_tp(
+            # Calculate open TP          
+            open_tp_data = self.calculate_open_tp(
                 instrument, direction, current_price, sl_price
             )
+            
+            # If you still need to access them individually:
+            # open_tp_price, open_tp_rr, open_tp_type = open_tp_data
+
 
             # 4. FETCH INDICATORS & FEATURES
             df_ind = fetch_candles(instrument, tf, count=150, api_key=self.credentials['oanda_api_key'])
@@ -7951,6 +7955,7 @@ class HammerPatternScanner:
             for i in range(1, 11): trade_data[f'tp_1_{i}_price'] = round(tp_prices[i], 5)
             trade_data.update(tp_distances)
             trade_data.update(advanced_features)
+            trade_data.update(open_tp_data)
 
             # 6. AI BLOCK & WEBHOOK (WEBHOOK SKIPPED FOR ZEBRA)
             webhook_sent = 0
