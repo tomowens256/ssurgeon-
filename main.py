@@ -7810,12 +7810,13 @@ class HammerPatternScanner:
                 current_price = zebra_entry
                 sl_price = zebra_sl
                 # Zebra signals skip some Hammer-specific signal_data extraction
-                fvg_idea, smt_data, zone, has_psp = {}, {}, {}, False
+                fvg_idea, smt_data, zone, crt_signal, has_psp = {}, {}, {}, {}, False
             else:
                 # EXISTING HAMMER LOGIC
                 fvg_idea = signal_data.get('fvg_idea', {})
                 smt_data = signal_data.get('smt_data', {})
                 zone = signal_data.get('zone', {})
+                crt_signal = signal_data.get('crt_signal', {})  # This was missing!
                 has_psp = signal_data.get('has_psp', False)
                 
                 # Get current price for entry
@@ -7828,9 +7829,57 @@ class HammerPatternScanner:
             current_time = datetime.now(NY_TZ)
             pip_multiplier = 100 if 'JPY' in instrument else 10000
     
-            # 2. CALCULATE SL FOR HAMMER (IF NOT ZEBRA)
-            tp_1_4_price = None  # Initialize with default
-            tp_1_2_price = None  # Initialize with default
+            # 2. CALCULATE SIGNAL LATENCY (for both hammer and zebra)
+            candle_close_time = candle['time']
+            if isinstance(candle_close_time, str):
+                candle_close_time = datetime.strptime(candle_close_time, '%Y-%m-%d %H:%M:%S')
+            signal_latency_seconds = (current_time - candle_close_time).total_seconds()
+    
+            # 3. GET NEWS CONTEXT (same as original)
+            news_context = {}
+            if hasattr(self, 'news_calendar') and self.news_calendar:
+                try:
+                    signal_time = datetime.now(NY_TZ)
+                    news_context = self.news_calendar.get_news_for_instrument(instrument, signal_time)
+                except Exception as e:
+                    self.logger.error(f"❌ Error getting news from calendar: {e}")
+                    news_context = {
+                        'error': str(e),
+                        'event_count': 0,
+                        'high_impact_count': 0,
+                        'fetch_status': 'error'
+                    }
+            elif hasattr(self, 'news_cache_dir') and self.news_cache_dir:
+                try:
+                    today_str = datetime.now(NY_TZ).strftime('%Y-%m-%d')
+                    cache_file = f"{self.news_cache_dir}/news_cache_{today_str}.json"
+                    
+                    if os.path.exists(cache_file):
+                        with open(cache_file, 'r') as f:
+                            cached_news = json.load(f)
+                        # Process cached_news for your instrument
+                        news_context = self._filter_news_for_instrument(cached_news, instrument)
+                except Exception as e:
+                    self.logger.error(f"❌ Error reading news cache: {e}")
+                    news_context = {
+                        'error': str(e),
+                        'event_count': 0,
+                        'high_impact_count': 0,
+                        'fetch_status': 'error'
+                    }
+            else:
+                news_context = {
+                    'event_count': 0,
+                    'high_impact_count': 0,
+                    'fetch_status': 'disabled'
+                }
+            
+            # Extract news data safely
+            safe_news_data = self._get_safe_news_data(news_context, instrument)
+    
+            # 4. CALCULATE SL FOR HAMMER (IF NOT ZEBRA)
+            tp_1_4_price = None
+            tp_1_2_price = None
             
             if criteria != 'zebra':
                 hammer_high, hammer_low = candle['high'], candle['low']
@@ -7852,16 +7901,23 @@ class HammerPatternScanner:
                     tp_1_4_price = current_price + (4 * (current_price - sl_price))
                     tp_1_2_price = current_price + (2 * (current_price - sl_price))
     
-            # 3. CALCULATE TP LEVELS (Universal for both)
+            # 5. CALCULATE TP LEVELS (Universal for both)
             tp_prices = {}
             for i in range(1, 11):
-                if direction.lower() == 'bearish' or direction.lower() == 'sell':
+                if direction.lower() in ['bearish', 'sell']:
                     tp_prices[i] = current_price - (i * abs(sl_price - current_price))
-                else: # bullish / buy
+                else:  # bullish / buy
                     tp_prices[i] = current_price + (i * abs(current_price - sl_price))
             
             sl_distance_pips = abs(current_price - sl_price) * pip_multiplier
             tp_distances = {f'tp_1_{i}_distance': round(sl_distance_pips * i, 1) for i in range(1, 11)}
+            
+            # Calculate position sizes for risk management
+            risk_10_lots, risk_100_lots = self.calculate_position_sizes(
+                instrument, 
+                sl_distance_pips, 
+                current_price
+            )
             
             # Calculate open TP          
             open_tp_data = self.calculate_open_tp(
@@ -7869,19 +7925,42 @@ class HammerPatternScanner:
             )
             
             # FIX: Handle the tuple return properly
-            # open_tp_data returns (price, rr_ratio, type) or (None, None, None) on error
             if open_tp_data and open_tp_data[0] is not None:
                 open_tp_price, open_tp_rr, open_tp_type = open_tp_data
             else:
                 open_tp_price, open_tp_rr, open_tp_type = None, 0, None
-            
-            # Create a dictionary for the open_tp data
-            open_tp_dict = {
-                'open_tp_price': open_tp_price,
-                'open_tp_rr': open_tp_rr,
-                'open_tp_type': open_tp_type
-            }
-            # 4. FETCH INDICATORS & FEATURES
+    
+            # 6. CALCULATE INDUCEMENT COUNT (for hammer only)
+            inducement_count = 0
+            if criteria in ['FVG+SMT', 'SD+SMT']:
+                # Get formation time and second swing
+                formation_time = fvg_idea.get('formation_time') if criteria == 'FVG+SMT' else zone.get('formation_time')
+                smt_swings_dict = smt_data.get('swings', {})
+                
+                # Convert dictionary to list and sort by time
+                swings_list = []
+                for key, swing_info in smt_swings_dict.items():
+                    if isinstance(swing_info, dict) and 'time' in swing_info:
+                        swings_list.append({
+                            'time': swing_info['time'],
+                            'price': swing_info.get('price', 0),
+                            'type': swing_info.get('type', 'unknown')
+                        })
+                
+                # Sort by time
+                swings_list.sort(key=lambda x: x['time'])
+                
+                # Get second swing time if available
+                second_swing_time = swings_list[1]['time'] if len(swings_list) > 1 else None
+                
+                if formation_time and second_swing_time:
+                    zone_timeframe = tf  # Use hammer timeframe for swing detection
+                    inducement_count = self.calculate_inducement(
+                        instrument, direction, trigger_data.get('fib_zones', []),
+                        formation_time, second_swing_time, zone_timeframe
+                    )
+    
+            # 7. FETCH INDICATORS & FEATURES
             df_ind = fetch_candles(instrument, tf, count=150, api_key=self.credentials['oanda_api_key'])
             if not df_ind.empty:
                 # Find index for the signal candle
@@ -7891,13 +7970,17 @@ class HammerPatternScanner:
             else:
                 indicators = {'rsi': 50, 'vwap': current_price}
                 advanced_features = {}
-
+    
             timeframe_data = self.fetch_all_timeframe_data(instrument)
             higher_tf_features = self.calculate_higher_tf_features(instrument, current_price, candle['time'], timeframe_data)
             zebra_features = self.calculate_zebra_features(instrument, candle['time'], timeframe_data)
-
-            # 5. BUILD TRADE DATA
-            trade_id = f"T_{int(current_time.timestamp())}"
+    
+            # 8. BUILD TRADE DATA
+            trade_id = self._generate_trade_id(instrument, tf) if hasattr(self, '_generate_trade_id') else f"T_{int(current_time.timestamp())}"
+            
+            # Initialize webhook_sent early
+            webhook_sent = 0
+            
             # NOW create trade_data dictionary
             trade_data = {
                 'timestamp': current_time.strftime('%Y-%m-%d %H:%M:%S'),
@@ -7913,9 +7996,11 @@ class HammerPatternScanner:
                 'open_tp_price': round(open_tp_price, 5) if open_tp_price is not None else '',
                 'open_tp_rr': round(open_tp_rr, 2) if open_tp_rr else 0,
                 'sl_distance_pips': round(sl_distance_pips, 1),
-                'risk_10_lots': risk_10_lots if 'risk_10_lots' in locals() else '',
-                'risk_100_lots': risk_100_lots if 'risk_100_lots' in locals() else '',
-                **tp_distances,
+                'risk_10_lots': risk_10_lots,
+                'risk_100_lots': risk_100_lots,
+                'signal_latency_seconds': round(signal_latency_seconds, 2),
+                'hammer_volume': int(candle.get('volume', 0)),
+                'inducement_count': inducement_count,
                 # Initialize TP results and times
                 'tp_1_1_result': '', 'tp_1_1_time_seconds': 0,
                 'tp_1_2_result': '', 'tp_1_2_time_seconds': 0,
@@ -7927,60 +8012,56 @@ class HammerPatternScanner:
                 'tp_1_8_result': '', 'tp_1_8_time_seconds': 0,
                 'tp_1_9_result': '', 'tp_1_9_time_seconds': 0,
                 'tp_1_10_result': '', 'tp_1_10_time_seconds': 0,
-                # 'open_tp_rr': round(open_tp_rr, 2) if open_tp_rr else 0,
                 'open_tp_result': '',
                 'open_tp_time_seconds': 0,
                 'criteria': criteria,
                 'trigger_timeframe': trigger_data.get('trigger_timeframe', ''),
                 'fvg_formation_time': fvg_idea.get('formation_time', '').strftime('%Y-%m-%d %H:%M:%S') if fvg_idea.get('formation_time') else '',
                 'sd_formation_time': zone.get('formation_time', '').strftime('%Y-%m-%d %H:%M:%S') if zone.get('formation_time') else '',
-                'crt_formation_time': crt_signal.get('timestamp', '').strftime('%Y-%m-%d %H:%M:%S') if crt_signal.get('timestamp') else '',
+                'crt_formation_time': crt_signal.get('timestamp', '').strftime('%Y-%m-%d %H:%M:%S') if crt_signal and crt_signal.get('timestamp') else '',
                 'smt_cycle': smt_data.get('cycle', ''),
                 'smt_quarters': smt_data.get('quarters', ''),
-                'has_psp': 1 if has_psp else 0,  # Store the actual has_psp value
+                'has_psp': 1 if has_psp else 0,
                 'is_hp_fvg': 1 if signal_data.get('is_hp_fvg') else 0,
                 'is_hp_zone': 1 if signal_data.get('is_hp_zone') else 0,
                 'rsi': indicators.get('rsi', 50),
                 'vwap': indicators.get('vwap', current_price),
-                'signal_latency_seconds': round(signal_latency_seconds, 2),
-                'hammer_volume': int(candle.get('volume', 0)),
-                'inducement_count': inducement_count,
                 'exit_time': '',
                 'time_to_exit_seconds': 0,
                 'tp_level_hit': 0,
                 # Webhook status
-                'webhook_sent': 1 if webhook_sent else 0,  # Add webhook status to CSV
+                'webhook_sent': 0,  # Will be updated later
                 # News data
-                'news_context_json': safe_news_data['news_context_json'],
-                'news_high_count': safe_news_data['news_high_count'],
-                'news_medium_count': safe_news_data['news_medium_count'],
-                'news_low_count': safe_news_data['news_low_count'],
-                'next_news_time': safe_news_data['next_news_time'],
-                'next_news_event': safe_news_data['next_news_event'],
-                'next_news_currency': safe_news_data['next_news_currency'],
-                'prev_news_time': safe_news_data['prev_news_time'],
-                'prev_news_event': safe_news_data['prev_news_event'],
-                'prev_news_currency': safe_news_data['prev_news_currency'],
-                'seconds_to_next_news': safe_news_data['seconds_to_next_news'],
-                'seconds_since_last_news': safe_news_data['seconds_since_last_news'],
-                'news_timing_category': safe_news_data['news_timing_category'],
-                'news_fetch_status': safe_news_data['news_fetch_status'],
-                # Will store RR multiple (e.g., 2 for TP2, 3 for TP3, 2.5 for open TP, 0 for SL)
-                'tp_level_hit': 0,  
-                'exit_time': '',
-                'time_to_exit_seconds': 0
+                'news_context_json': safe_news_data.get('news_context_json', ''),
+                'news_high_count': safe_news_data.get('news_high_count', 0),
+                'news_medium_count': safe_news_data.get('news_medium_count', 0),
+                'news_low_count': safe_news_data.get('news_low_count', 0),
+                'next_news_time': safe_news_data.get('next_news_time', ''),
+                'next_news_event': safe_news_data.get('next_news_event', ''),
+                'next_news_currency': safe_news_data.get('next_news_currency', ''),
+                'prev_news_time': safe_news_data.get('prev_news_time', ''),
+                'prev_news_event': safe_news_data.get('prev_news_event', ''),
+                'prev_news_currency': safe_news_data.get('prev_news_currency', ''),
+                'seconds_to_next_news': safe_news_data.get('seconds_to_next_news', 0),
+                'seconds_since_last_news': safe_news_data.get('seconds_since_last_news', 0),
+                'news_timing_category': safe_news_data.get('news_timing_category', ''),
+                'news_fetch_status': safe_news_data.get('news_fetch_status', ''),
             }
             
-            for i in range(1, 11): trade_data[f'tp_1_{i}_price'] = round(tp_prices[i], 5)
+            # Add TP prices and distances
+            for i in range(1, 11):
+                trade_data[f'tp_1_{i}_price'] = round(tp_prices[i], 5)
             trade_data.update(tp_distances)
+            
+            # Add all features
             trade_data.update(advanced_features)
-            trade_data.update(open_tp_dict)
-
-            # 6. AI BLOCK & WEBHOOK (WEBHOOK SKIPPED FOR ZEBRA)
-            webhook_sent = 0
+            trade_data.update(higher_tf_features)
+            trade_data.update(zebra_features)
+    
+            # 9. AI BLOCK & WEBHOOK (WEBHOOK SKIPPED FOR ZEBRA)
             node_id = 0
             
-            if criteria != 'zebra': # Only run AI/Webhook for Hammer for now
+            if criteria != 'zebra':  # Only run AI/Webhook for Hammer for now
                 try:
                     hour = current_time.hour
                     bin_start = (hour // 3) * 3
@@ -8002,19 +8083,20 @@ class HammerPatternScanner:
                             signal_id=signal_id, trade_id=trade_id, timeframe=tf,
                             criteria=criteria, risk_usd=50.0
                         )
+                        webhook_sent = 1 if webhook_sent else 0
                 except Exception as ai_err:
                     self.logger.error(f"⚠️ AI Block failed: {ai_err}")
-
-            # 7. FINALIZE
-            trade_data['webhook_sent'] = 1 if webhook_sent else 0
+    
+            # 10. FINALIZE
+            trade_data['webhook_sent'] = webhook_sent
             trade_data['ai_node'] = node_id
             
-            self.send_hammer_signal(trade_data, trigger_data) # Telegram
+            self.send_hammer_signal(trade_data, trigger_data)  # Telegram
             self.save_trade_to_csv(trade_data)
             self._start_tp_monitoring(trade_data)
             
             return True
-
+    
         except Exception as e:
             self.logger.error(f"❌ Error processing signal: {str(e)}", exc_info=True)
             return False
