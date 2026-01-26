@@ -7801,9 +7801,8 @@ class HammerPatternScanner:
                 time.sleep(5)
     
     def _process_and_record_hammer(self, instrument, tf, candle, direction, criteria, 
-                                   signal_data, signal_id, trigger_data, 
-                                   zebra_entry=None, zebra_sl=None):
-                                       
+                               signal_data, signal_id, trigger_data, 
+                               zebra_entry=None, zebra_sl=None):
         """Process a single signal (Hammer or Zebra) and record it - AI SNIPER VERSION"""
         try:
             # 1. SETUP PRICES BASED ON CRITERIA
@@ -7825,25 +7824,34 @@ class HammerPatternScanner:
                     self.logger.error(f"❌ Cannot get current price for {instrument}")
                     return False
                 current_price = current_df.iloc[-1]['open']
-
+    
             current_time = datetime.now(NY_TZ)
             pip_multiplier = 100 if 'JPY' in instrument else 10000
-
+    
             # 2. CALCULATE SL FOR HAMMER (IF NOT ZEBRA)
+            tp_1_4_price = None  # Initialize with default
+            tp_1_2_price = None  # Initialize with default
+            
             if criteria != 'zebra':
                 hammer_high, hammer_low = candle['high'], candle['low']
                 hammer_range = hammer_high - hammer_low
                 if direction == 'bearish':
                     sl_price = hammer_high + (hammer_range * 0.25)
                     tp_1_4_price = current_price - (4 * (sl_price - current_price))
-                    # NEW: Calculate TP3 for webhook (1:3 RR)
                     tp_1_2_price = current_price - (2 * (sl_price - current_price))
                 else:
                     sl_price = hammer_low - (hammer_range * 0.25)
                     tp_1_4_price = current_price + (4 * (current_price - sl_price))
-                    # NEW: Calculate TP3 for webhook (1:3 RR)
                     tp_1_2_price = current_price + (2 * (current_price - sl_price))
-
+            else:
+                # For ZEBRA: Calculate tp_1_4_price and tp_1_2_price from zebra SL
+                if direction == 'bearish':
+                    tp_1_4_price = current_price - (4 * (sl_price - current_price))
+                    tp_1_2_price = current_price - (2 * (sl_price - current_price))
+                else:
+                    tp_1_4_price = current_price + (4 * (current_price - sl_price))
+                    tp_1_2_price = current_price + (2 * (current_price - sl_price))
+    
             # 3. CALCULATE TP LEVELS (Universal for both)
             tp_prices = {}
             for i in range(1, 11):
@@ -7854,14 +7862,15 @@ class HammerPatternScanner:
             
             sl_distance_pips = abs(current_price - sl_price) * pip_multiplier
             tp_distances = {f'tp_1_{i}_distance': round(sl_distance_pips * i, 1) for i in range(1, 11)}
+            
             # Calculate open TP          
             open_tp_data = self.calculate_open_tp(
                 instrument, direction, current_price, sl_price
             )
             
-            # If you still need to access them individually:
-            # open_tp_price, open_tp_rr, open_tp_type = open_tp_data
-
+            # Extract open_tp_price and open_tp_rr from open_tp_data
+            open_tp_price = open_tp_data.get('open_tp_price') if open_tp_data else None
+            open_tp_rr = open_tp_data.get('open_tp_rr') if open_tp_data else 0
 
             # 4. FETCH INDICATORS & FEATURES
             df_ind = fetch_candles(instrument, tf, count=150, api_key=self.credentials['oanda_api_key'])
@@ -7891,11 +7900,11 @@ class HammerPatternScanner:
                 'entry_time': current_time.strftime('%Y-%m-%d %H:%M:%S'),
                 'entry_price': round(current_price, 5),
                 'sl_price': round(sl_price, 5),
-                'tp_1_4_price': round(tp_1_4_price, 5),
+                'tp_1_4_price': round(tp_1_4_price, 5) if tp_1_4_price is not None else '',
                 'open_tp_price': round(open_tp_price, 5) if open_tp_price else '',
                 'sl_distance_pips': round(sl_distance_pips, 1),
-                'risk_10_lots': risk_10_lots,
-                'risk_100_lots': risk_100_lots,
+                'risk_10_lots': risk_10_lots if 'risk_10_lots' in locals() else '',
+                'risk_100_lots': risk_100_lots if 'risk_100_lots' in locals() else '',
                 **tp_distances,
                 # Initialize TP results and times
                 'tp_1_1_result': '', 'tp_1_1_time_seconds': 0,
