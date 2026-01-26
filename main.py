@@ -8891,26 +8891,34 @@ class HammerPatternScanner:
         
     #     self.logger.info("🔨 Hammer Pattern Scanner started")
     #     return True
-    ORPHAN_COLUMNS = [
-        'tp_1_1_result', 'tp_1_1_time_seconds',
-        'tp_1_2_result', 'tp_1_2_time_seconds',
-        'tp_1_3_result', 'tp_1_3_time_seconds',
-        'tp_1_4_result', 'tp_1_4_time_seconds',
-        'tp_1_5_result', 'tp_1_5_time_seconds',
-        'tp_1_6_result', 'tp_1_6_time_seconds',
-        'tp_1_7_result', 'tp_1_7_time_seconds',
-        'tp_1_8_result', 'tp_1_8_time_seconds',
-        'tp_1_9_result', 'tp_1_9_time_seconds',
-        'tp_1_10_result','tp_1_10_time_seconds',
-        'open_tp_rr', 'open_tp_result', 'open_tp_time_seconds'
-    ]
-
-    def is_orphan_row(row):
-        for col in ORPHAN_COLUMNS:
-            val = row.get(col, '')
-            if val in ['', '0', 0] or pd.isna(val):
+    def is_orphan_row(self, row):
+        # Skip if we don’t even know entry or SL
+        if pd.isna(row.get("entry_price")) or pd.isna(row.get("sl_price")):
+            return False
+    
+        orphan_fields = [
+            'tp_1_1_result', 'tp_1_1_time_seconds',
+            'tp_1_2_result', 'tp_1_2_time_seconds',
+            'tp_1_3_result', 'tp_1_3_time_seconds',
+            'tp_1_4_result', 'tp_1_4_time_seconds',
+            'tp_1_5_result', 'tp_1_5_time_seconds',
+            'tp_1_6_result', 'tp_1_6_time_seconds',
+            'tp_1_7_result', 'tp_1_7_time_seconds',
+            'tp_1_8_result', 'tp_1_8_time_seconds',
+            'tp_1_9_result', 'tp_1_9_time_seconds',
+            'tp_1_10_result', 'tp_1_10_time_seconds',
+            'open_tp_rr',
+            'open_tp_result',
+            'open_tp_time_seconds',
+        ]
+    
+        for field in orphan_fields:
+            val = row.get(field)
+            if pd.isna(val) or val == 0 or val == "":
                 return True
+    
         return False
+
 
     def reconcile_and_resume_trades(self):
         self.logger.info("🕵️ Reconciling orphan trades...")
@@ -8922,7 +8930,8 @@ class HammerPatternScanner:
     
         # 🔒 MASK STAYS (as you requested)
         mask = (df['tp_1_1_result'] == '') | (df['tp_level_hit'] == '')
-        orphaned_trades = df[df.apply(is_orphan_row, axis=1)]
+        orphaned_trades = df[df.apply(self.is_orphan_row, axis=1)]
+
     
         if orphaned_trades.empty:
             self.logger.info("✅ No orphan trades found.")
