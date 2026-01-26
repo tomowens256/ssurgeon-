@@ -9428,8 +9428,8 @@ class ZebraScanner:
             credentials=credentials,
             csv_base_path=zebra_csv_path,
             logger=self.logger,
-            news_calendar=news_calendar,
-            use_global_cache=True  # Use the shared global cache
+            news_calendar=news_calendar
+            # use_global_cache=True  # Use the shared global cache
         )
         
         # Start the hammer scanner (but not background news fetch since we use shared)
