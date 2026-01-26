@@ -45,7 +45,7 @@ TRADING_PAIRS = {
         }
     },
     'precious_metals': {
-        'pair1': 'XAU_USD',  # OLD structure (keep for compatibility)
+        'pair1': 'XAU_USD',  # OLD structure (keep for compatibility)ssss
         'pair2': 'XAG_USD',  # OLD structure (keep for compatibility)
         'instruments': ['XAU_USD', 'XAG_USD'],  # NEW structure
         'timeframe_mapping': {
