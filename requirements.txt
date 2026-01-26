@@ -1,7 +1,8 @@
-# Core dependencies
+# Replace your requirements.txt with this:
+
+# Core dependencies - MUST be Colab compatible
 pandas==2.2.2
-numpy==1.26.0
-pytz>=2022.7
+numpy==1.26.4
 
 # API clients
 requests>=2.28.0
@@ -9,24 +10,22 @@ oandapyV20>=0.7.2
 aiohttp>=3.8.0
 
 # Performance optimization
-numba>=0.56.0  # <<< ADD THIS FOR JIT COMPILATION
+numba>=0.56.0
 
 # Utilities
 python-dotenv>=0.19.0
 tabulate>=0.9.0
+pytz>=2022.7
 
-fastai
-joblib
-scikit-learn
+# AI/ML packages with version constraints for Colab
+scikit-learn==1.4.2
+joblib==1.4.0
 
-# Telegram (if used)
+# IMPORTANT: Skip fastai for now or install later
+# fastai>=2.7.0  # Comment this out temporarily
+
+# Telegram
 python-telegram-bot>=20.0.0
 
-# Optional: Database for better data persistence
-# sqlite3 (built-in) or sqlalchemy>=1.4.0
-
-# Optional: Caching for API calls
-# cachetools>=5.0.0
-
-# Optional: Performance monitoring
-# psutil>=5.9.0
+# Technical Analysis (compatible version)
+pandas-ta==0.3.14b0
