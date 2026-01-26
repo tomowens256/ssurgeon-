@@ -8992,10 +8992,11 @@ class HammerPatternScanner:
             )
     
             # With:
+            # In reconcile_and_resume_trades function, around line 8998
             if not candles.empty and 'time' in candles.columns:
                 candles = candles[candles['time'] >= entry_time]
             else:
-                print(f"⚠️ No 'time' column in candles for {trade_id}, skipping")
+                print(f"⚠️ No 'time' column in candles for trade, skipping")
                 continue
     
             if candles.empty:
