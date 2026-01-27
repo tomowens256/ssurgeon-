@@ -7707,84 +7707,180 @@ class HammerPatternScanner:
                     return mid['high']
         return None
 
+    def _calc_expected_candle_start(self, current_dt, timeframe):
+        """
+        Returns the START time (UTC datetime) of the candle that SHOULD be 
+        currently forming at the given 'current_dt' for the specified 'timeframe'.
+        
+        OANDA's 'time' field is the START time of the candle period.
+        """
+        # For minute-based timeframes (M1, M5, M15, M30)
+        if timeframe.startswith('M'):
+            minutes = int(timeframe[1:])
+            # Calculate total minutes since midnight
+            total_minutes = current_dt.hour * 60 + current_dt.minute
+            # Find the start minute of the current X-minute period
+            start_minute = (total_minutes // minutes) * minutes
+            # Return datetime with that start minute
+            return current_dt.replace(hour=start_minute//60, 
+                                      minute=start_minute%60, 
+                                      second=0, 
+                                      microsecond=0)
+        
+        # For hour-based timeframes (H1, H4)
+        elif timeframe.startswith('H'):
+            hours = int(timeframe[1:])
+            start_hour = (current_dt.hour // hours) * hours
+            return current_dt.replace(hour=start_hour, 
+                                      minute=0, 
+                                      second=0, 
+                                      microsecond=0)
+        
+        # For daily timeframe (D)
+        elif timeframe == 'D':
+            return current_dt.replace(hour=0, 
+                                      minute=0, 
+                                      second=0, 
+                                      microsecond=0)
+        
+        # For weekly timeframe (W)
+        elif timeframe == 'W':
+            # Find most recent Monday at 00:00
+            days_since_monday = current_dt.weekday()  # Monday=0, Sunday=6
+            return current_dt - timedelta(days=days_since_monday)
+        
+        else:
+            self.logger.error(f"Unhandled timeframe in time calc: {timeframe}")
+            # Fallback: assume current minute start
+            return current_dt.replace(second=0, microsecond=0)
+    
+    
+    def _calc_seconds_to_next_candle(self, current_dt, timeframe):
+        """
+        Calculate seconds until the start of the NEXT candle.
+        Used for efficient sleeping when data is stale.
+        """
+        # Get start of current period
+        current_start = self._calc_expected_candle_start(current_dt, timeframe)
+        
+        # Calculate start of next period based on timeframe
+        if timeframe.startswith('M'):
+            minutes = int(timeframe[1:])
+            next_start = current_start + timedelta(minutes=minutes)
+        elif timeframe.startswith('H'):
+            hours = int(timeframe[1:])
+            next_start = current_start + timedelta(hours=hours)
+        elif timeframe == 'D':
+            next_start = current_start + timedelta(days=1)
+        elif timeframe == 'W':
+            next_start = current_start + timedelta(weeks=1)
+        else:
+            # Default fallback
+            return 60
+        
+        # Return seconds until next period starts
+        return max(0, (next_start - current_dt).total_seconds())
+
     def run_zebra_scan(self, tf, instrument, signal_id_prefix):
         """
-        Threaded Zebra scanner: 
-        - Uses 150 candles for deep analysis
-        - Triggers ONLY if a HalfTrend arrow appears on the CURRENT (live) candle
-        - Calculates SL based on 3-candle pivot
-        - Skips signals with oversized SL (News/Spikes)
+        Threaded Zebra scanner with CORRECTED time validation.
+        Verifies the latest candle's START TIME matches the expected current candle.
         """
         self.logger.info(f"🦓 Zebra Scanner Thread Started: {instrument} {tf}")
         import numpy as np
         import time
+        from datetime import datetime, timedelta
+        import pytz
         
         scanned_candles = set()
         
         while self.running:
             try:
-                # 1. Wait for candle open/tick
+                # 1. Wait for candle open/tick (your existing logic)
                 self.wait_for_candle_open(tf)
                 
-                # 2. Fetch 150 candles as requested
+                # 2. Fetch 150 candles
                 df = self.cached_fetch_candles(instrument, tf, count=150, force_fetch=True)
                 if df.empty or len(df) < 100:
                     time.sleep(2)
                     continue
                 
-                current_candle = df.iloc[-1]
-                current_time = current_candle['time']
+                # 3. GET THE LATEST CANDLE'S START TIME
+                latest_candle = df.iloc[-1]
+                latest_candle_start = latest_candle['time']
+                
+                # 4. CALCULATE: What *should* be the current candle's start time?
+                current_utc_time = datetime.now(pytz.utc)
+                expected_candle_start = self._calc_expected_candle_start(current_utc_time, tf)
+                
+                # 5. THE CRITICAL FRESHNESS CHECK
+                if latest_candle_start != expected_candle_start:
+                    # DATA IS STALE: API hasn't sent the new candle yet
+                    self.logger.warning(
+                        f"⏳ {instrument} {tf}: Data STALE. "
+                        f"Latest candle started at {latest_candle_start}, "
+                        f"but current candle should have started at {expected_candle_start}. "
+                        f"Skipping cycle."
+                    )
+                    
+                    # Efficient sleep until next candle open instead of fixed time
+                    seconds_to_next = self._calc_seconds_to_next_candle(current_utc_time, tf) + 2
+                    self.logger.info(f"💤 Sleeping {seconds_to_next:.0f}s until next candle.")
+                    time.sleep(seconds_to_next)
+                    scanned_candles.add(expected_candle_start)
+                    continue
+                
+                # 6. ✅ DATA IS FRESH: Proceed with existing logic
+                current_time = latest_candle_start  # This is the start time of the fresh candle
                 
                 # Prevent multiple entries on the same live candle
                 if current_time in scanned_candles:
                     time.sleep(1)
                     continue
-
-                # 3. Calculate HalfTrend logic (Your MQL4-style function)
+    
+                # 7. Calculate HalfTrend logic
                 arrup, arrdwn = self._calculate_half_trend(df)
                 
                 if len(arrup) == 0 or len(arrdwn) == 0:
                     continue
-
-                # 4. THE TRIGGER: Check if arrow is present on index [-1] (Current Candle)
+    
+                # 8. Check if arrow is present on index [-1] (Current Candle)
                 detected_dir = None
                 if not np.isnan(arrup[-1]):
                     detected_dir = 'bullish'
                 elif not np.isnan(arrdwn[-1]):
                     detected_dir = 'bearish'
-
-                # 5. If arrow is live, proceed with checks
+    
+                # 9. If arrow is live, proceed with checks
                 if detected_dir:
-                    self.logger.info(f"🎯 ZEBRA {detected_dir.upper()} ARROW on Current Candle: {tf}")
+                    self.logger.info(f"🎯 ZEBRA {detected_dir.upper()} ARROW on Fresh Candle: {tf} {instrument}")
                     
-                    # Entry is the current open
-                    entry_price = current_candle['open']
+                    # Entry is the current open (from the fresh candle)
+                    entry_price = latest_candle['open']
                     
-                    # SL is the 3-candle pivot (V-shape for buy, Inverted V for sell)
+                    # SL is the 3-candle pivot
                     sl_price = self.find_3_candle_pivot(df, detected_dir)
                     
                     if sl_price:
-                        # --- HUGE SL FILTER (Past 5 candles average range check) ---
-                        # Logic: Skip if current SL distance > 2.5x the average candle range
+                        # --- HUGE SL FILTER ---
                         recent_ranges = (df['high'].iloc[-6:-1] - df['low'].iloc[-6:-1]).mean()
                         sl_dist = abs(entry_price - sl_price)
                         
                         if sl_dist > (recent_ranges * 2.5):
                             self.logger.warning(f"⏭️ Zebra Skip: SL is too wide ({round(sl_dist, 5)} vs Avg {round(recent_ranges, 5)})")
-                            scanned_candles.add(current_time) # Skip this candle cycle
+                            scanned_candles.add(current_time)
                             continue
-
-                        # 6. PROCESS AND JOURNAL
-                        # We pass the zebra specific prices to the universal process function
+    
+                        # 10. PROCESS AND JOURNAL
                         success = self._process_and_record_hammer(
                             instrument=instrument,
                             tf=tf,
-                            candle=current_candle,
+                            candle=latest_candle,
                             direction=detected_dir,
                             criteria='zebra',
-                            signal_data={},      # Zebra triggers don't use Hammer signal_data
+                            signal_data={},
                             signal_id=f"ZEB_{tf}_{int(time.time())}",
-                            trigger_data={},     # Differentiator
+                            trigger_data={},
                             zebra_entry=entry_price,
                             zebra_sl=sl_price
                         )
@@ -7793,11 +7889,11 @@ class HammerPatternScanner:
                             self.logger.info(f"✅ Zebra {detected_dir} logged to CSV and Journaled.")
                             scanned_candles.add(current_time)
                 
-                # Sleep briefly to be kind to the CPU
+                # Brief sleep to be kind to CPU
                 time.sleep(1)
                 
             except Exception as e:
-                self.logger.error(f"❌ Error in Zebra {tf} loop: {str(e)}", exc_info=True)
+                self.logger.error(f"❌ Error in Zebra {tf} loop for {instrument}: {str(e)}", exc_info=True)
                 time.sleep(5)
     
     def _process_and_record_hammer(self, instrument, tf, candle, direction, criteria, 
