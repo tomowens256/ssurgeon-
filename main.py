@@ -5766,8 +5766,8 @@ class HammerPatternScanner:
                 seconds_to_next_close = (minutes - minutes_past - 1) * 60 + (60 - seconds_past)
                 
                 if seconds_to_next_close > 0:
-                    # Wait for candle to close + 3 seconds for data availability
-                    total_wait_time = seconds_to_next_close + 3
+                    # Wait for candle to close + 2 seconds for data availability
+                    total_wait_time = seconds_to_next_close + 2
                     next_candle_time = now + timedelta(seconds=total_wait_time)
                     self.logger.info(f"⏰ {timeframe}: Candle closes in {seconds_to_next_close:.0f}s")
                     self.logger.info(f"   Waiting {total_wait_time:.0f}s total (close + 3s buffer)")
@@ -5778,9 +5778,9 @@ class HammerPatternScanner:
                 else:
                     # Candle already closed, check if we need to wait for next candle
                     seconds_since_close = -seconds_to_next_close
-                    if seconds_since_close < 3:
+                    if seconds_since_close < 2:
                         # Still within 3-second buffer, wait remaining time
-                        remaining_buffer = 3 - seconds_since_close
+                        remaining_buffer = 2 - seconds_since_close
                         self.logger.info(f"⏰ {timeframe}: Candle closed {seconds_since_close:.0f}s ago")
                         self.logger.info(f"   Waiting {remaining_buffer:.0f}s for data buffer")
                         time.sleep(remaining_buffer)
