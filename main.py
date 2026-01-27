@@ -5767,10 +5767,10 @@ class HammerPatternScanner:
                 
                 if seconds_to_next_close > 0:
                     # Wait for candle to close + 2 seconds for data availability
-                    total_wait_time = seconds_to_next_close + 2
+                    total_wait_time = seconds_to_next_close + 4
                     next_candle_time = now + timedelta(seconds=total_wait_time)
                     self.logger.info(f"⏰ {timeframe}: Candle closes in {seconds_to_next_close:.0f}s")
-                    self.logger.info(f"   Waiting {total_wait_time:.0f}s total (close + 3s buffer)")
+                    self.logger.info(f"   Waiting {total_wait_time:.0f}s total (close + 4s buffer)")
                     self.logger.info(f"   Next data at: {next_candle_time.strftime('%H:%M:%S')}")
                     time.sleep(total_wait_time)
                     self.logger.info(f"✅ {timeframe} data should now be available")
@@ -5778,9 +5778,9 @@ class HammerPatternScanner:
                 else:
                     # Candle already closed, check if we need to wait for next candle
                     seconds_since_close = -seconds_to_next_close
-                    if seconds_since_close < 2:
+                    if seconds_since_close < 4:
                         # Still within 3-second buffer, wait remaining time
-                        remaining_buffer = 2 - seconds_since_close
+                        remaining_buffer = 4 - seconds_since_close
                         self.logger.info(f"⏰ {timeframe}: Candle closed {seconds_since_close:.0f}s ago")
                         self.logger.info(f"   Waiting {remaining_buffer:.0f}s for data buffer")
                         time.sleep(remaining_buffer)
@@ -5788,7 +5788,7 @@ class HammerPatternScanner:
                     return True
             else:
                 # For non-minute timeframes, just wait 3 seconds
-                self.logger.info(f"⏰ {timeframe}: Waiting 3s for data availability")
+                self.logger.info(f"⏰ {timeframe}: Waiting 4s for data availability")
                 time.sleep(3)
                 return True
                 
