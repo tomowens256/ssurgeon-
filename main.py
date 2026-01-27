@@ -7814,20 +7814,35 @@ class HammerPatternScanner:
                 expected_candle_start = self._calc_expected_candle_start(current_utc_time, tf)
                 
                 # 5. THE CRITICAL FRESHNESS CHECK
-                if latest_candle_start != expected_candle_start:
+                # 5a. Make expected_candle_start NY-timezone-aware
+                if expected_candle_start.tzinfo is None:
+                    # If it has no timezone, assume it's meant to be NY time
+                    expected_candle_start_ny = NY_TZ.localize(expected_candle_start)
+                else:
+                    # If it has a timezone (like UTC), convert it to NY time
+                    expected_candle_start_ny = expected_candle_start.astimezone(NY_TZ)
+                
+                # 5b. Ensure API timestamp is NY-timezone-aware
+                latest_candle_start_ny = latest_candle['time']
+                if latest_candle_start_ny.tzinfo is None:
+                    # If pandas didn't parse timezone, add NY timezone
+                    latest_candle_start_ny = NY_TZ.localize(latest_candle_start_ny)
+                
+                # 5c. THE CRITICAL FRESHNESS CHECK (comparing NY to NY)
+                if latest_candle_start_ny != expected_candle_start_ny:
                     # DATA IS STALE: API hasn't sent the new candle yet
                     self.logger.warning(
                         f"⏳ {instrument} {tf}: Data STALE. "
-                        f"Latest candle started at {latest_candle_start}, "
-                        f"but current candle should have started at {expected_candle_start}. "
+                        f"Latest NY candle: {latest_candle_start_ny}, "
+                        f"Expected NY candle: {expected_candle_start_ny}. "
                         f"Skipping cycle."
                     )
                     
-                    # Efficient sleep until next candle open instead of fixed time
+                    # Efficient sleep until next candle open
                     seconds_to_next = self._calc_seconds_to_next_candle(current_utc_time, tf) + 2
                     self.logger.info(f"💤 Sleeping {seconds_to_next:.0f}s until next candle.")
                     time.sleep(seconds_to_next)
-                    scanned_candles.add(expected_candle_start)
+                    scanned_candles.add(expected_candle_start_ny)  # Use NY time for tracking
                     continue
                 
                 # 6. ✅ DATA IS FRESH: Proceed with existing logic
