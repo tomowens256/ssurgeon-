@@ -7839,7 +7839,9 @@ class HammerPatternScanner:
                     continue
     
                 # 7. Calculate HalfTrend logic
-                arrup, arrdwn = self._calculate_half_trend(df)
+                # 7. Calculate HalfTrend logic (using last 100 candles only)
+                candles_for_half_trend = df.iloc[-100:]  # Takes the last 100 rows
+                arrup, arrdwn = self._calculate_half_trend(candles_for_half_trend)
                 
                 if len(arrup) == 0 or len(arrdwn) == 0:
                     continue
