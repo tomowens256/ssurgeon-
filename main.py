@@ -7714,6 +7714,11 @@ class HammerPatternScanner:
         
         OANDA's 'time' field is the START time of the candle period.
         """
+        # First convert current_dt to NY time if it isn't already
+        if current_dt.tzinfo is None:
+            current_dt = NY_TZ.localize(current_dt)
+        else:
+            current_dt = current_dt.astimezone(NY_TZ)
         # For minute-based timeframes (M1, M5, M15, M30)
         if timeframe.startswith('M'):
             minutes = int(timeframe[1:])
