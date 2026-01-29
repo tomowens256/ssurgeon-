@@ -7299,21 +7299,22 @@ class HammerPatternScanner:
             # Create a shared state for all scanners
             shared_state = {
                 'hammer_count': 0,
-                'zebra_count': 0,  # NEW: Track Zebra signals too
+                'zebra_count': 0,
                 'scan_end': scan_end,
                 'fib_zones': fib_zones,
-                'sl_price': sl_price,        # Fibonacci SL
-                'tp_price': tp_price,        # Fibonacci TP
+                'sl_price': sl_price,
+                'tp_price': tp_price,
                 'instrument': instrument,
                 'direction': direction,
                 'criteria': criteria,
                 'signal_data': signal_data,
                 'signal_id': signal_id,
                 'trigger_data': trigger_data,
-                'scanned_candles': {},       # Dict of sets per timeframe
-                'zebra_scanned_candles': {}, # NEW: Separate tracking for Zebra
-                'lock': threading.Lock(),    # Lock for thread safety
-                'zebra_lock': threading.Lock()  # NEW: Separate lock for Zebra
+                'scanned_candles': {},
+                'zebra_scanned_candles': {},
+                'lock': threading.Lock(),
+                'zebra_lock': threading.Lock(),
+                'trigger_types_found': set(),  # NEW: Track which trigger types we found
             }
             
             # Initialize scanned_candles for each timeframe
