@@ -5791,7 +5791,8 @@ class HammerPatternScanner:
                 'if_BE_open_TP',
                 
                 # Result Tracking
-                'exit_time', 'time_to_exit_seconds'
+                'exit_time', 'time_to_exit_seconds',
+                'trigger_type'
                 
             ]
             
