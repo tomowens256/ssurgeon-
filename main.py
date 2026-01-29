@@ -8084,6 +8084,9 @@ class HammerPatternScanner:
                                zebra_entry=None, zebra_sl=None):
         """Process a single signal (Hammer or Zebra) and record it - AI SNIPER VERSION"""
         try:
+            # === NEW: Add trigger_criteria field for Zebra signals ===
+            trigger_criteria = trigger_data.get('type', '')  # Get original signal type
+            
             # === NEW: ML FILTER CHECK (only for hammer signals) ===
             webhook_approved = False  # Store ML approval decision
             
@@ -8117,6 +8120,7 @@ class HammerPatternScanner:
                 else:
                     webhook_approved = True  # ✅ Store the approval
                     self.logger.info(f"✅ ML approved 1st hammer on {tf} (prediction: {prediction})")
+            
             # 1. SETUP PRICES BASED ON CRITERIA
             if criteria == 'zebra':
                 current_price = zebra_entry
@@ -8128,7 +8132,7 @@ class HammerPatternScanner:
                 fvg_idea = signal_data.get('fvg_idea', {})
                 smt_data = signal_data.get('smt_data', {})
                 zone = signal_data.get('zone', {})
-                crt_signal = signal_data.get('crt_signal', {})  # This was missing!
+                crt_signal = signal_data.get('crt_signal', {})
                 has_psp = signal_data.get('has_psp', False)
                 
                 # Get current price for entry
@@ -8308,8 +8312,6 @@ class HammerPatternScanner:
                 'open_tp_price': round(open_tp_price, 5) if open_tp_price is not None else '',
                 'open_tp_rr': round(open_tp_rr, 2) if open_tp_rr else 0,
                 'sl_distance_pips': round(sl_distance_pips, 1),
-                # 'risk_10_lots': risk_10_lots,
-                # 'risk_100_lots': risk_100_lots,
                 'signal_latency_seconds': round(signal_latency_seconds, 2),
                 'hammer_volume': int(candle.get('volume', 0)),
                 'inducement_count': inducement_count,
@@ -8327,6 +8329,7 @@ class HammerPatternScanner:
                 'open_tp_result': '',
                 'open_tp_time_seconds': 0,
                 'criteria': criteria,
+                'trigger_criteria': trigger_criteria,  # NEW: Store original signal type for Zebra
                 'trigger_timeframe': trigger_data.get('trigger_timeframe', ''),
                 'fvg_formation_time': fvg_idea.get('formation_time', '').strftime('%Y-%m-%d %H:%M:%S') if fvg_idea.get('formation_time') else '',
                 'sd_formation_time': zone.get('formation_time', '').strftime('%Y-%m-%d %H:%M:%S') if zone.get('formation_time') else '',
