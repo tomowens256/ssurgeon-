@@ -8057,6 +8057,39 @@ class HammerPatternScanner:
                                zebra_entry=None, zebra_sl=None):
         """Process a single signal (Hammer or Zebra) and record it - AI SNIPER VERSION"""
         try:
+            # === NEW: ML FILTER CHECK (only for hammer signals) ===
+            webhook_approved = False  # Store ML approval decision
+            
+            if criteria != 'zebra':
+                # Extract required features for ML filter
+                smt_cycle = signal_data.get('smt_data', {}).get('cycle', '')
+                smt_quarters = signal_data.get('smt_data', {}).get('quarters', '')
+                trigger_tf = trigger_data.get('trigger_timeframe', '')
+                
+                # Check with ML filter if we should trade
+                should_trade, hammer_count, prediction = self.signal_processor.check_and_predict(
+                    signal_id=signal_id,
+                    hammer_timeframe=tf,
+                    criteria=criteria,
+                    smt_cycle=smt_cycle,
+                    smt_quarters=smt_quarters,
+                    trigger_timeframe=trigger_tf
+                )
+                
+                if hammer_count == 1:
+                    self.logger.info(f"🔍 Signal {signal_id} | TF: {tf} | 1st hammer | ML: {prediction}")
+                else:
+                    self.logger.info(f"🔍 Signal {signal_id} | TF: {tf} | Hammer #{hammer_count}")
+                
+                if not should_trade:
+                    if hammer_count > 1:
+                        self.logger.info(f"⏸️ Skipping - Not 1st hammer on {tf} for signal {signal_id}")
+                    else:
+                        self.logger.info(f"⏸️ ML rejected 1st hammer on {tf} (prediction: {prediction})")
+                    return False
+                else:
+                    webhook_approved = True  # ✅ Store the approval
+                    self.logger.info(f"✅ ML approved 1st hammer on {tf} (prediction: {prediction})")
             # 1. SETUP PRICES BASED ON CRITERIA
             if criteria == 'zebra':
                 current_price = zebra_entry
@@ -8248,8 +8281,8 @@ class HammerPatternScanner:
                 'open_tp_price': round(open_tp_price, 5) if open_tp_price is not None else '',
                 'open_tp_rr': round(open_tp_rr, 2) if open_tp_rr else 0,
                 'sl_distance_pips': round(sl_distance_pips, 1),
-                'risk_10_lots': risk_10_lots,
-                'risk_100_lots': risk_100_lots,
+                # 'risk_10_lots': risk_10_lots,
+                # 'risk_100_lots': risk_100_lots,
                 'signal_latency_seconds': round(signal_latency_seconds, 2),
                 'hammer_volume': int(candle.get('volume', 0)),
                 'inducement_count': inducement_count,
@@ -8310,42 +8343,40 @@ class HammerPatternScanner:
             trade_data.update(higher_tf_features)
             trade_data.update(zebra_features)
     
-            # 9. AI BLOCK & WEBHOOK (WEBHOOK SKIPPED FOR ZEBRA)
+            # 9. MODIFIED WEBHOOK SECTION (REPLACING AI BLOCK)
             node_id = 0
+            webhook_sent = 0
             
-            if criteria != 'zebra':  # Only run AI/Webhook for Hammer for now
+            if criteria != 'zebra' and webhook_approved:  # Only for ML-approved hammers
                 try:
-                    hour = current_time.hour
-                    bin_start = (hour // 3) * 3
-                    time_bin = f"{bin_start:02d}-{(bin_start + 3) % 24:02d}"
-                    input_row = trade_data.copy()
-                    input_row['entry_time_bin_3h'] = time_bin
-                    input_df = pd.DataFrame([input_row])
+                    # Use TP2 (tp_1_2_price) - which is already in trade_data
+                    target_tp_level = 2  # Always use TP2
                     
-                    processed_row = self.ai_processor.train.new(input_df)
-                    processed_row.process()
-                    node_id = self.ai_model.apply(processed_row.xs)[0]
+                    webhook_sent = self.send_webhook_signal(
+                        instrument=instrument, 
+                        direction=direction, 
+                        entry_price=current_price,
+                        sl_price=sl_price, 
+                        tp_price=tp_prices[target_tp_level],  # Use TP2 from tp_prices dict
+                        signal_id=signal_id, 
+                        trade_id=trade_id,  # Use trade_id variable
+                        timeframe=tf,
+                        criteria=criteria, 
+                        risk_usd=50.0
+                    )
+                    webhook_sent = 1 if webhook_sent else 0
                     
-                    node_tp_map = {23: 10, 26: 4, 21: 4, 14: 2}
-                    if node_id in node_tp_map:
-                        target_tp_level = node_tp_map[node_id]
-                        webhook_sent = self.send_webhook_signal(
-                            instrument=instrument, direction=direction, entry_price=current_price,
-                            sl_price=sl_price, tp_price=tp_prices[target_tp_level],
-                            signal_id=signal_id, trade_id=trade_id, timeframe=tf,
-                            criteria=criteria, risk_usd=50.0
-                        )
-                        webhook_sent = 1 if webhook_sent else 0
-                except Exception as ai_err:
-                    self.logger.error(f"⚠️ AI Block failed: {ai_err}")
+                except Exception as webhook_err:
+                    self.logger.error(f"⚠️ Webhook error: {webhook_err}")
+                    webhook_sent = 0
+            elif criteria != 'zebra':
+                self.logger.info(f"⏸️ Skipping webhook - ML prediction was not approved")
     
             # 10. FINALIZE
             trade_data['webhook_sent'] = webhook_sent
-            trade_data['ai_node'] = node_id
-
+            trade_data['ai_node'] = node_id  # Keep this field but always 0
+    
             self.logger.info(f"🔄 Zebra trade_data keys: {sorted(list(trade_data.keys()))}")
-            # self.logger.info(f"🔄 Number of keys: {len(trade_data.keys())}")
-            
             
             self.send_hammer_signal(trade_data, trigger_data)  # Telegram
             self.save_trade_to_csv(trade_data)
