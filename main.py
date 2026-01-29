@@ -7061,9 +7061,183 @@ class HammerPatternScanner:
             
         except Exception as e:
             self.logger.error(f"❌ Error adding missing headers: {str(e)}")
+
+    def run_zebra_scan_with_signal(self, tf, shared_state):
+        """Run Zebra scanner for signal-triggered setups with Fibonacci validation"""
+        try:
+            import numpy as np
+            import time
+            from datetime import datetime, timedelta
+            
+            instrument = shared_state['instrument']
+            direction = shared_state['direction']
+            criteria = shared_state['criteria']
+            fib_zones = shared_state['fib_zones']
+            sl_price = shared_state['sl_price']
+            tp_price = shared_state['tp_price']
+            signal_data = shared_state['signal_data']
+            signal_id = shared_state['signal_id']
+            trigger_data = shared_state['trigger_data']
+            
+            self.logger.info(f"🦓 Signal-Triggered Zebra Thread Started: {instrument} {tf}")
+            
+            scanned_candles = set()
+            
+            while datetime.now(NY_TZ) < shared_state['scan_end']:
+                try:
+                    # 1. Wait for candle open/tick
+                    if not self.wait_for_candle_open(tf):
+                        time.sleep(1)
+                        continue
+                    
+                    # 2. Fetch candles for HalfTrend calculation
+                    df = self.cached_fetch_candles(instrument, tf, count=150, force_fetch=True)
+                    if df.empty or len(df) < 100:
+                        time.sleep(2)
+                        continue
+                    
+                    # 3. GET THE LATEST CLOSED CANDLE (index -2)
+                    latest_closed_candle = df.iloc[-2] if len(df) >= 2 else df.iloc[-1]
+                    candle_time = latest_closed_candle['time']
+                    candle_key = f"{tf}_{candle_time}"
+                    
+                    if candle_key in scanned_candles:
+                        time.sleep(1)
+                        continue
+                    
+                    scanned_candles.add(candle_key)
+                    
+                    # 4. CHECK SL/TP HIT (same as hammer scanner)
+                    candle_high = latest_closed_candle['high']
+                    candle_low = latest_closed_candle['low']
+                    
+                    if direction == 'bearish':
+                        # For bearish: if candle high goes above SL, setup is invalid
+                        if candle_high > sl_price:
+                            self.logger.info(f"❌ {instrument} {tf}: SL HIT in Zebra scanner! Candle high {candle_high:.5f} >= SL {sl_price:.5f}")
+                            break
+                        
+                        # For bearish: if candle low goes below TP, target reached
+                        if candle_low < tp_price:
+                            self.logger.info(f"✅ {instrument} {tf}: TP HIT in Zebra scanner! Candle low {candle_low:.5f} <= TP {tp_price:.5f}")
+                            break
+                    else:  # bullish
+                        # For bullish: if candle low goes below SL, setup is invalid
+                        if candle_low < sl_price:
+                            self.logger.info(f"❌ {instrument} {tf}: SL HIT in Zebra scanner! Candle low {candle_low:.5f} <= SL {sl_price:.5f}")
+                            break
+                        
+                        # For bullish: if candle high goes above TP, target reached
+                        if candle_high > tp_price:
+                            self.logger.info(f"✅ {instrument} {tf}: TP HIT in Zebra scanner! Candle high {candle_high:.5f} >= TP {tp_price:.5f}")
+                            break
+                    
+                    # 5. CHECK 50% ZONE VALIDATION
+                    candle_price = latest_closed_candle['close']
+                    in_valid_zone = False
+                    fifty_percent_line = None
+                    
+                    # Calculate 50% line from Fibonacci zones
+                    if direction == 'bearish':
+                        fifty_percent_line = sl_price - ((sl_price - tp_price) * 0.5)
+                    else:  # bullish
+                        fifty_percent_line = sl_price + ((tp_price - sl_price) * 0.5)
+                    
+                    # Check if price is on correct side of 50% line
+                    if direction == 'bearish':
+                        # For bearish: price must be ABOVE 50% line
+                        if candle_price >= fifty_percent_line:
+                            in_valid_zone = True
+                            self.logger.info(f"✅ {instrument} {tf}: Price {candle_price:.5f} ABOVE 50% line {fifty_percent_line:.5f}")
+                        else:
+                            self.logger.info(f"❌ {instrument} {tf}: Price {candle_price:.5f} BELOW 50% line {fifty_percent_line:.5f}")
+                            time.sleep(1)
+                            continue
+                    else:  # bullish
+                        # For bullish: price must be BELOW 50% line
+                        if candle_price <= fifty_percent_line:
+                            in_valid_zone = True
+                            self.logger.info(f"✅ {instrument} {tf}: Price {candle_price:.5f} BELOW 50% line {fifty_percent_line:.5f}")
+                        else:
+                            self.logger.info(f"❌ {instrument} {tf}: Price {candle_price:.5f} ABOVE 50% line {fifty_percent_line:.5f}")
+                            time.sleep(1)
+                            continue
+                    
+                    if not in_valid_zone:
+                        time.sleep(1)
+                        continue
+                    
+                    # 6. Calculate HalfTrend logic
+                    candles_for_half_trend = df.iloc[-100:]  # Takes the last 100 rows
+                    arrup, arrdwn = self._calculate_half_trend(candles_for_half_trend)
+                    
+                    if len(arrup) == 0 or len(arrdwn) == 0:
+                        time.sleep(1)
+                        continue
+    
+                    # 7. Check if arrow is present on index [-1] (Current Candle)
+                    detected_dir = None
+                    arrow_found = False
+                    
+                    # Check direction match - only look for arrows in the signal direction
+                    if direction == 'bearish' and not np.isnan(arrdwn[-1]):
+                        detected_dir = 'bearish'
+                        arrow_found = True
+                    elif direction == 'bullish' and not np.isnan(arrup[-1]):
+                        detected_dir = 'bullish'
+                        arrow_found = True
+                    
+                    # 8. If arrow is found in correct direction, process it
+                    if arrow_found:
+                        self.logger.info(f"🎯 ZEBRA {detected_dir.upper()} ARROW found on {tf} {instrument}")
+                        
+                        # Entry is the current open (from the fresh candle)
+                        entry_price = latest_closed_candle['open']
+                        
+                        # SL is the 3-candle pivot
+                        sl_price_zebra = self.find_3_candle_pivot(df, detected_dir)
+                        
+                        if sl_price_zebra:
+                            # --- HUGE SL FILTER ---
+                            recent_ranges = (df['high'].iloc[-6:-1] - df['low'].iloc[-6:-1]).mean()
+                            sl_dist = abs(entry_price - sl_price_zebra)
+                            
+                            if sl_dist > (recent_ranges * 2.5):
+                                self.logger.warning(f"⏭️ Zebra Skip: SL is too wide ({round(sl_dist, 5)} vs Avg {round(recent_ranges, 5)})")
+                                time.sleep(1)
+                                continue
+    
+                            # 9. PROCESS AND JOURNAL
+                            success = self._process_and_record_hammer(
+                                instrument=instrument,
+                                tf=tf,
+                                candle=latest_closed_candle,
+                                direction=detected_dir,
+                                criteria='zebra',  # Always 'zebra' for Zebra trades
+                                signal_data=signal_data,
+                                signal_id=f"ZEB_{signal_id}_{tf}_{int(time.time())}",
+                                trigger_data=trigger_data,  # Pass original trigger data
+                                zebra_entry=entry_price,
+                                zebra_sl=sl_price_zebra
+                            )
+                            
+                            if success:
+                                self.logger.info(f"✅ Zebra {detected_dir} logged to CSV and Journaled.")
+                    
+                    # Brief sleep to be kind to CPU
+                    time.sleep(1)
+                    
+                except Exception as e:
+                    self.logger.error(f"❌ Error in Signal-Triggered Zebra {tf} loop for {instrument}: {str(e)}", exc_info=True)
+                    time.sleep(5)
+            
+            self.logger.info(f"⏰ {instrument} {tf} Signal-Triggered Zebra scanner thread completed")
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error in Signal-Triggered Zebra scanner thread: {str(e)}", exc_info=True)
     
     def scan_fibonacci_hammer(self, trigger_data):
-        """Main hammer scanning function with CONCURRENT timeframe scanniggng"""
+        """Main hammer scanning function with CONCURRENT timeframe scanning AND Zebra threads"""
         try:
             instrument = trigger_data.get('instrument')
             direction = trigger_data.get('direction')
@@ -7122,37 +7296,32 @@ class HammerPatternScanner:
             # Create a shared state for all scanners
             shared_state = {
                 'hammer_count': 0,
+                'zebra_count': 0,  # NEW: Track Zebra signals too
                 'scan_end': scan_end,
                 'fib_zones': fib_zones,
-                'sl_price': sl_price,        # ADDED
-                'tp_price': tp_price,        # ADDED
+                'sl_price': sl_price,        # Fibonacci SL
+                'tp_price': tp_price,        # Fibonacci TP
                 'instrument': instrument,
                 'direction': direction,
                 'criteria': criteria,
                 'signal_data': signal_data,
                 'signal_id': signal_id,
                 'trigger_data': trigger_data,
-                'scanned_candles': {},  # Dict of sets per timeframe
-                'lock': threading.Lock()  # Lock for thread safety
+                'scanned_candles': {},       # Dict of sets per timeframe
+                'zebra_scanned_candles': {}, # NEW: Separate tracking for Zebra
+                'lock': threading.Lock(),    # Lock for thread safety
+                'zebra_lock': threading.Lock()  # NEW: Separate lock for Zebra
             }
             
             # Initialize scanned_candles for each timeframe
             for tf in timeframes:
                 shared_state['scanned_candles'][tf] = set()
-            
+                shared_state['zebra_scanned_candles'][tf] = set()  # NEW: For Zebra
             
             def scan_timeframe(tf):
-                """Scan a single timeframe (runs in separate thread)"""
+                """Scan a single timeframe for hammer patterns (runs in separate thread)"""
                 try:
-                    self.logger.info(f"🔍 Starting {instrument} {tf} scanner thread")
-                    
-                    # DEBUG: Check what data we have
-                    self.logger.info(f"📊 {instrument} {tf} Initial State:")
-                    self.logger.info(f"   Criteria: {shared_state['criteria']}")
-                    self.logger.info(f"   Direction: {shared_state['direction']}")
-                    self.logger.info(f"   Fibonacci zones: {len(shared_state['fib_zones'])}")
-                    self.logger.info(f"   SL: {shared_state['sl_price']:.5f}")
-                    self.logger.info(f"   TP: {shared_state['tp_price']:.5f}")
+                    self.logger.info(f"🔍 Starting {instrument} {tf} hammer scanner thread")
                     
                     tf_scanned_candles = shared_state['scanned_candles'][tf]
                     
@@ -7283,7 +7452,6 @@ class HammerPatternScanner:
                             self.logger.info(f"✅ {instrument} {tf}: HAMMER DETECTED! Checking if in zone...")
                             self.log_detailed_candle_analysis(closed_candle, tf, shared_state['direction'])
                         
-                        
                         # 9. Check if price is on correct side of 50% line
                         candle_price = closed_candle['close']
                         in_valid_zone = False
@@ -7351,23 +7519,37 @@ class HammerPatternScanner:
                         # Small pause to avoid API rate limits and excessive CPU
                         time.sleep(1)
                         
-                    self.logger.info(f"⏰ {instrument} {tf} scanner thread completed")
+                    self.logger.info(f"⏰ {instrument} {tf} hammer scanner thread completed")
                     
                 except Exception as e:
-                    self.logger.error(f"❌ Error in {instrument} {tf} scanner thread: {str(e)}", exc_info=True)
-
-            # Start a thread for each timeframe
+                    self.logger.error(f"❌ Error in {instrument} {tf} hammer scanner thread: {str(e)}", exc_info=True)
+            
+            # Start threads for each timeframe
             threads = []
+            
+            # Start Hammer Scanner Threads
             for tf in timeframes:
-                thread = threading.Thread(
+                hammer_thread = threading.Thread(
                     target=scan_timeframe,
                     args=(tf,),
                     name=f"HammerScan_{instrument}_{tf}",
                     daemon=True
                 )
-                thread.start()
-                threads.append(thread)
-                self.logger.info(f"🚀 Started {tf} scanner thread")
+                hammer_thread.start()
+                threads.append(hammer_thread)
+                self.logger.info(f"🚀 Started Hammer {tf} scanner thread")
+            
+            # NEW: Start Zebra Scanner Threads
+            for tf in timeframes:
+                zebra_thread = threading.Thread(
+                    target=self.run_zebra_scan_with_signal,
+                    args=(tf, shared_state),
+                    name=f"ZebraScan_{instrument}_{tf}",
+                    daemon=True
+                )
+                zebra_thread.start()
+                threads.append(zebra_thread)
+                self.logger.info(f"🦓 Started Zebra {tf} scanner thread")
             
             # Main thread waits for scan duration or until interrupted
             try:
@@ -7389,13 +7571,16 @@ class HammerPatternScanner:
                 self.logger.info(f"✓ {thread.name} joined")
             
             total_hammers = shared_state['hammer_count']
-            self.logger.info(f"✅ CONCURRENT scan completed. Found {total_hammers} hammers.")
+            total_zebras = shared_state['zebra_count']
+            self.logger.info(f"✅ CONCURRENT scan completed. Found {total_hammers} hammers and {total_zebras} Zebra signals.")
             
             # Log summary of scanned candles
             for tf, candles in shared_state['scanned_candles'].items():
-                self.logger.info(f"📊 {tf}: Scanned {len(candles)} candles")
+                self.logger.info(f"📊 {tf}: Scanned {len(candles)} candles for hammers")
+            for tf, candles in shared_state['zebra_scanned_candles'].items():
+                self.logger.info(f"🦓 {tf}: Scanned {len(candles)} candles for Zebra")
             
-            if total_hammers > 0:
+            if total_hammers > 0 or total_zebras > 0:
                 return True
             
             return False
@@ -8081,16 +8266,17 @@ class HammerPatternScanner:
     
     def _process_and_record_hammer(self, instrument, tf, candle, direction, criteria, 
                                signal_data, signal_id, trigger_data, 
-                               zebra_entry=None, zebra_sl=None):
+                               zebra_entry=None, zebra_sl=None, trigger_type='hammer'):
         """Process a single signal (Hammer or Zebra) and record it - AI SNIPER VERSION"""
         try:
-            # === NEW: Add trigger_criteria field for Zebra signals ===
+            # === NEW: Add trigger_type parameter ===
             trigger_criteria = trigger_data.get('type', '')  # Get original signal type
+            trigger_type = trigger_type  # 'hammer' or 'zebra'
             
             # === NEW: ML FILTER CHECK (only for hammer signals) ===
             webhook_approved = False  # Store ML approval decision
             
-            if criteria != 'zebra':
+            if trigger_type == 'hammer':  # Changed from criteria != 'zebra'
                 # Extract required features for ML filter
                 smt_cycle = signal_data.get('smt_data', {}).get('cycle', '')
                 smt_quarters = signal_data.get('smt_data', {}).get('quarters', '')
@@ -8122,7 +8308,7 @@ class HammerPatternScanner:
                     self.logger.info(f"✅ ML approved 1st hammer on {tf} (prediction: {prediction})")
             
             # 1. SETUP PRICES BASED ON CRITERIA
-            if criteria == 'zebra':
+            if trigger_type == 'zebra':
                 current_price = zebra_entry
                 sl_price = zebra_sl
                 # Zebra signals skip some Hammer-specific signal_data extraction
@@ -8197,7 +8383,7 @@ class HammerPatternScanner:
             tp_1_4_price = None
             tp_1_2_price = None
             
-            if criteria != 'zebra':
+            if trigger_type == 'hammer':
                 hammer_high, hammer_low = candle['high'], candle['low']
                 hammer_range = hammer_high - hammer_low
                 if direction == 'bearish':
@@ -8248,7 +8434,7 @@ class HammerPatternScanner:
     
             # 6. CALCULATE INDUCEMENT COUNT (for hammer only)
             inducement_count = 0
-            if criteria in ['FVG+SMT', 'SD+SMT']:
+            if trigger_type == 'hammer' and criteria in ['FVG+SMT', 'SD+SMT']:
                 # Get formation time and second swing
                 formation_time = fvg_idea.get('formation_time') if criteria == 'FVG+SMT' else zone.get('formation_time')
                 smt_swings_dict = smt_data.get('swings', {})
@@ -8315,6 +8501,8 @@ class HammerPatternScanner:
                 'signal_latency_seconds': round(signal_latency_seconds, 2),
                 'hammer_volume': int(candle.get('volume', 0)),
                 'inducement_count': inducement_count,
+                # NEW: Add trigger_type field
+                'trigger_type': trigger_type,  # 'hammer' or 'zebra'
                 # Initialize TP results and times
                 'tp_1_1_result': '', 'tp_1_1_time_seconds': 0,
                 'tp_1_2_result': '', 'tp_1_2_time_seconds': 0,
@@ -8329,7 +8517,7 @@ class HammerPatternScanner:
                 'open_tp_result': '',
                 'open_tp_time_seconds': 0,
                 'criteria': criteria,
-                'trigger_criteria': trigger_criteria,  # NEW: Store original signal type for Zebra
+                'trigger_criteria': trigger_criteria,  # Store original signal type
                 'trigger_timeframe': trigger_data.get('trigger_timeframe', ''),
                 'fvg_formation_time': fvg_idea.get('formation_time', '').strftime('%Y-%m-%d %H:%M:%S') if fvg_idea.get('formation_time') else '',
                 'sd_formation_time': zone.get('formation_time', '').strftime('%Y-%m-%d %H:%M:%S') if zone.get('formation_time') else '',
@@ -8377,7 +8565,7 @@ class HammerPatternScanner:
             node_id = 0
             webhook_sent = 0
             
-            if criteria != 'zebra' and webhook_approved:  # Only for ML-approved hammers
+            if trigger_type == 'hammer' and webhook_approved:  # Only for ML-approved hammers
                 try:
                     # Use TP2 (tp_1_2_price) - which is already in trade_data
                     target_tp_level = 2  # Always use TP2
@@ -8399,14 +8587,14 @@ class HammerPatternScanner:
                 except Exception as webhook_err:
                     self.logger.error(f"⚠️ Webhook error: {webhook_err}")
                     webhook_sent = 0
-            elif criteria != 'zebra':
+            elif trigger_type == 'hammer':
                 self.logger.info(f"⏸️ Skipping webhook - ML prediction was not approved")
     
             # 10. FINALIZE
             trade_data['webhook_sent'] = webhook_sent
             trade_data['ai_node'] = node_id  # Keep this field but always 0
     
-            self.logger.info(f"🔄 Zebra trade_data keys: {sorted(list(trade_data.keys()))}")
+            self.logger.info(f"🔄 {trigger_type.upper()} trade_data created: {signal_id}")
             
             self.send_hammer_signal(trade_data, trigger_data)  # Telegram
             self.save_trade_to_csv(trade_data)
@@ -8415,7 +8603,7 @@ class HammerPatternScanner:
             return True
     
         except Exception as e:
-            self.logger.error(f"❌ Error processing signal: {str(e)}", exc_info=True)
+            self.logger.error(f"❌ Error processing {trigger_type} signal: {str(e)}", exc_info=True)
             return False
     
     def calculate_simple_indicators(self, df, candle_index):
