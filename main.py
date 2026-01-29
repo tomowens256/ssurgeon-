@@ -7206,7 +7206,6 @@ class HammerPatternScanner:
                                 self.logger.warning(f"⏭️ Zebra Skip: SL is too wide ({round(sl_dist, 5)} vs Avg {round(recent_ranges, 5)})")
                                 time.sleep(1)
                                 continue
-    
                             # 9. PROCESS AND JOURNAL
                             success = self._process_and_record_hammer(
                                 instrument=instrument,
@@ -7218,10 +7217,14 @@ class HammerPatternScanner:
                                 signal_id=f"ZEB_{signal_id}_{tf}_{int(time.time())}",
                                 trigger_data=trigger_data,  # Pass original trigger data
                                 zebra_entry=entry_price,
-                                zebra_sl=sl_price_zebra
+                                zebra_sl=sl_price_zebra,
+                                trigger_type='zebra'  # NEW: Add trigger_type
                             )
                             
                             if success:
+                                # Increment Zebra count with thread safety
+                                with shared_state['zebra_lock']:
+                                    shared_state['zebra_count'] += 1
                                 self.logger.info(f"✅ Zebra {detected_dir} logged to CSV and Journaled.")
                     
                     # Brief sleep to be kind to CPU
