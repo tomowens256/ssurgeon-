@@ -552,63 +552,140 @@ GLOBAL_CACHE = GlobalCandleCache()
 
 
 import pandas as pd
-from fastai.tabular.all import *
+import pickle
+from typing import Dict, List, Tuple
+from collections import defaultdict
 
 class SignalProcessor:
-    def __init__(self, learner, webhook_url=None):
-        self.learn = learner
+    def __init__(self, model_path: str, mapping_df: pd.DataFrame, webhook_url=None):
+        """
+        Args:
+            model_path: Path to .pkl model file
+            mapping_df: DataFrame with mapping (Column, ID, Value)
+            webhook_url: Optional webhook URL
+        """
+        # Load ML model
+        with open(model_path, 'rb') as f:
+            self.model = pickle.load(f)
+        
+        # Store mapping for feature encoding
+        self.mapping = self._create_mapping_dict(mapping_df)
+        
+        # Track ALL processed signals FOREVER (no clearing)
+        # Structure: {signal_id: {timeframe: count}}
+        self.processed_signals = defaultdict(lambda: defaultdict(int))
+        
+        # Track which hammers passed ML filter (for webhook sending)
+        self.approved_hammers = {}  # {signal_id: {timeframe: True/False}}
+        
         self.webhook_url = webhook_url
-        # Tracking signal_id to identify 'first trades'
-        self.active_signals = {} 
-
-    def extract_features(self, raw_data):
+        self.logger = None  # Will be set by main class
+        
+    def set_logger(self, logger):
+        """Allow external logger injection"""
+        self.logger = logger
+        
+    def _create_mapping_dict(self, mapping_df: pd.DataFrame) -> Dict:
+        """Convert mapping DataFrame to lookup dictionary"""
+        mapping = {}
+        for _, row in mapping_df.iterrows():
+            col = row['Column']
+            val = row['Value']
+            idx = row['ID']
+            
+            if col not in mapping:
+                mapping[col] = {}
+            mapping[col][val] = idx
+        
+        return mapping
+    
+    def encode_features(self, hammer_timeframe: str, criteria: str, 
+                        smt_cycle: str, smt_quarters: str, 
+                        trigger_timeframe: str) -> pd.DataFrame:
         """
-        Converts raw signal data into the categorical-only format 
-        the model expects.
+        Map categorical values to IDs using the mapping table.
         """
-        # Example feature extraction logic
         features = {
-            'asset_type': raw_data.get('asset'),
-            'strategy_id': raw_data.get('strat'),
-            'market_regime': raw_data.get('regime'),
-            'time_of_day': raw_data.get('tod')
+            'hammer_timeframe': self.mapping['hammer_timeframe'].get(hammer_timeframe, 0),
+            'criteria': self.mapping['criteria'].get(criteria, 0),
+            'smt_cycle': self.mapping['smt_cycle'].get(smt_cycle, 0),
+            'smt_quarters': self.mapping['smt_quarters'].get(smt_quarters, 0),
+            'trigger_timeframe': self.mapping['trigger_timeframe'].get(trigger_timeframe, 0)
         }
         return pd.DataFrame([features])
-
-    def send_webhook(self, prediction_result):
-        """Logic to send the actual webhook if prediction is positive."""
-        print(f"🚀 Webhook sent! Decision: {prediction_result}")
-        # In production: requests.post(self.webhook_url, json=prediction_result)
-        return True
-
-    def process_signal(self, signal_data):
-        """Main entry point for incoming data."""
-        sig_id = signal_data.get('signal_id')
+    
+    def check_and_predict(self, signal_id: str, hammer_timeframe: str, criteria: str,
+                          smt_cycle: str, smt_quarters: str, trigger_timeframe: str) -> Tuple[bool, int, int]:
+        """
+        Check if this is the FIRST hammer for this timeframe on this signal_id,
+        and predict if we should trade.
         
-        # 1. Check if this is a new/first trade for this signal_id
-        if sig_id not in self.active_signals:
-            print(f"New Signal Detected: {sig_id}. Extracting features...")
+        Returns: (should_trade: bool, hammer_count: int, prediction: int)
+        """
+        # Get current count for this timeframe
+        hammer_count = self.processed_signals[signal_id][hammer_timeframe]
+        
+        # Increment the count
+        self.processed_signals[signal_id][hammer_timeframe] += 1
+        
+        # ONLY process ML for first hammer of this timeframe (hammer_count == 0)
+        if hammer_count == 0:
+            # Encode features to IDs
+            features_df = self.encode_features(
+                hammer_timeframe, criteria, smt_cycle, 
+                smt_quarters, trigger_timeframe
+            )
             
-            # 2. Extract features (Categorical only)
-            features_df = self.extract_features(signal_data)
-            
-            # 3. Store the state so we don't re-extract for this ID
-            self.active_signals[sig_id] = {'processed': True, 'features': features_df}
-            
-            # 4. Push to model for prediction
-            # row, clas, probs = self.learn.predict(features_df.iloc[0])
-            # For this example, let's assume '1' is the 'Take Trade' signal
-            prediction = self.learn.predict(features_df.iloc[0])
-            prediction_class = prediction[1].item() 
-
-            # 5. Send webhook if model says 'Take Trade' (e.g., class 1)
-            if prediction_class == 1:
-                return self.send_webhook({"signal_id": sig_id, "action": "BUY"})
-            
+            # Get prediction from model
+            try:
+                if hasattr(self.model, "predict_proba"):
+                    proba = self.model.predict_proba(features_df)[0][1]
+                    prediction = 1 if proba >= 0.5 else 0
+                else:
+                    prediction = self.model.predict(features_df)[0]
+                
+                # Store approval decision if prediction is 1
+                if prediction == 1:
+                    if signal_id not in self.approved_hammers:
+                        self.approved_hammers[signal_id] = {}
+                    self.approved_hammers[signal_id][hammer_timeframe] = True
+                
+                return (prediction == 1, 1, prediction)
+                
+            except Exception as e:
+                if self.logger:
+                    self.logger.error(f"⚠️ ML Prediction error: {e}")
+                else:
+                    print(f"⚠️ ML Prediction error: {e}")
+                return (False, 1, 0)
         else:
-            print(f"Signal {sig_id} already processed. Skipping feature extraction.")
+            # Not first hammer - check if previously approved
+            approved = (signal_id in self.approved_hammers and 
+                       hammer_timeframe in self.approved_hammers[signal_id])
+            return (approved, hammer_count + 1, 0)
+    
+    def is_approved_for_webhook(self, signal_id: str, hammer_timeframe: str) -> bool:
+        """Check if this hammer was approved for webhook sending"""
+        return (signal_id in self.approved_hammers and 
+                hammer_timeframe in self.approved_hammers[signal_id])
+    
+    def get_hammer_stats(self, signal_id: str = None) -> Dict:
+        """Get statistics about processed hammers"""
+        if signal_id:
+            if signal_id in self.processed_signals:
+                return dict(self.processed_signals[signal_id])
+            return {}
+        else:
+            # Return all signals
+            total_signals = len(self.processed_signals)
+            total_hammers = sum(sum(tf_counts.values()) for tf_counts in self.processed_signals.values())
+            approved_trades = sum(len(tfs) for tfs in self.approved_hammers.values())
             
-        return False
+            return {
+                'total_signals': total_signals,
+                'total_hammers': total_hammers,
+                'approved_trades': approved_trades
+            }
 # ================================
 # ENHANCED TIMING MANAGER
 # ================================
