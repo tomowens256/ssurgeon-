@@ -5566,7 +5566,7 @@ class TimeframeScanner:
 
 class HammerPatternScanner:
     def __init__(self, credentials, csv_base_path='/content/drive/MyDrive/hammer_trades', 
-                 logger=None, news_calendar=None):  # ADD news_calendar parameter
+                 logger=None, news_calendar=None ,signal_processor=None ):  # ADD news_calendar parameter
         """Concurrent hammer pattern scanner with shared news calendar support"""
         
         self.credentials = credentials
@@ -5604,10 +5604,8 @@ class HammerPatternScanner:
             max_size=2000         # Store up to 200 cache entries
         )
         self.logger.info(f"📦 Candle data cache initialized (TTL: 45s, Max: 2000 entries)")
-        self.signal_processor = signal_processor  # Store the signal processor
-        
+        self.signal_processor = signal_processor
         if signal_processor and logger:
-            signal_processor.set_logger(logger)
             logger.info("🔗 SignalProcessor connected to HammerPatternScanner")
 
         import joblib
