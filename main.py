@@ -552,23 +552,22 @@ GLOBAL_CACHE = GlobalCandleCache()
 
 
 import pandas as pd
-import pickle
-from typing import Dict, List, Tuple
+from fastai.tabular.all import load_learner
 from collections import defaultdict
+from typing import Dict, Tuple
 
 class SignalProcessor:
     def __init__(self, model_path: str, mapping_df: pd.DataFrame, webhook_url=None):
         """
         Args:
-            model_path: Path to .pkl model file
+            model_path: Path to .pkl model file (FastAI model)
             mapping_df: DataFrame with mapping (Column, ID, Value)
             webhook_url: Optional webhook URL
         """
-        # Load ML model
-        with open(model_path, 'rb') as f:
-            self.model = pickle.load(f)
+        # Load FastAI model CORRECTLY
+        self.learn = load_learner(model_path)
         
-        # Store mapping for feature encoding
+        # Store mapping for feature encoding (we still need this for reference)
         self.mapping = self._create_mapping_dict(mapping_df)
         
         # Track ALL processed signals FOREVER (no clearing)
@@ -604,13 +603,16 @@ class SignalProcessor:
                         trigger_timeframe: str) -> pd.DataFrame:
         """
         Map categorical values to IDs using the mapping table.
+        This creates a DataFrame with the ACTUAL CATEGORICAL VALUES (not IDs)
+        because FastAI handles the encoding internally.
         """
+        # Create DataFrame with original categorical values (FastAI wants these)
         features = {
-            'hammer_timeframe': self.mapping['hammer_timeframe'].get(hammer_timeframe, 0),
-            'criteria': self.mapping['criteria'].get(criteria, 0),
-            'smt_cycle': self.mapping['smt_cycle'].get(smt_cycle, 0),
-            'smt_quarters': self.mapping['smt_quarters'].get(smt_quarters, 0),
-            'trigger_timeframe': self.mapping['trigger_timeframe'].get(trigger_timeframe, 0)
+            'hammer_timeframe': hammer_timeframe,
+            'criteria': criteria,
+            'smt_cycle': smt_cycle,
+            'smt_quarters': smt_quarters,
+            'trigger_timeframe': trigger_timeframe
         }
         return pd.DataFrame([features])
     
@@ -630,25 +632,30 @@ class SignalProcessor:
         
         # ONLY process ML for first hammer of this timeframe (hammer_count == 0)
         if hammer_count == 0:
-            # Encode features to IDs
+            # Encode features to CATEGORICAL VALUES (not IDs) for FastAI
             features_df = self.encode_features(
                 hammer_timeframe, criteria, smt_cycle, 
                 smt_quarters, trigger_timeframe
             )
             
-            # Get prediction from model
+            # Get prediction from FastAI model
             try:
-                if hasattr(self.model, "predict_proba"):
-                    proba = self.model.predict_proba(features_df)[0][1]
-                    prediction = 1 if proba >= 0.5 else 0
-                else:
-                    prediction = self.model.predict(features_df)[0]
+                # FastAI way: test_dl + get_preds
+                dl = self.learn.dls.test_dl(features_df)
+                preds, _ = self.learn.get_preds(dl=dl)
+                prob_success = preds[0][1].item()  # Probability of class 1 (success)
+                
+                # Threshold at 0.5
+                prediction = 1 if prob_success >= 0.5 else 0
                 
                 # Store approval decision if prediction is 1
                 if prediction == 1:
                     if signal_id not in self.approved_hammers:
                         self.approved_hammers[signal_id] = {}
                     self.approved_hammers[signal_id][hammer_timeframe] = True
+                
+                if self.logger:
+                    self.logger.info(f"🤖 ML Prediction: prob={prob_success:.2f}, decision={prediction}")
                 
                 return (prediction == 1, 1, prediction)
                 
