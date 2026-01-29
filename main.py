@@ -5597,6 +5597,11 @@ class HammerPatternScanner:
             max_size=2000         # Store up to 200 cache entries
         )
         self.logger.info(f"📦 Candle data cache initialized (TTL: 45s, Max: 2000 entries)")
+        self.signal_processor = signal_processor  # Store the signal processor
+        
+        if signal_processor and logger:
+            signal_processor.set_logger(logger)
+            logger.info("🔗 SignalProcessor connected to HammerPatternScanner")
 
         import joblib
 
