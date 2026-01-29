@@ -8253,7 +8253,8 @@ class HammerPatternScanner:
                             signal_id=f"ZEB_{tf}_{int(time.time())}",
                             trigger_data={},
                             zebra_entry=entry_price,
-                            zebra_sl=sl_price
+                            zebra_sl=sl_price,
+                            trigger_type='zebra'  # NEW: Add trigger_type
                         )
                         
                         if success:
