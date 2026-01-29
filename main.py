@@ -13284,9 +13284,10 @@ class UltimateTradingManager:
         self.telegram_token = telegram_token
         self.chat_id = chat_id
         self.news_calendar = news_calendar
-        self.signal_processor = signal_processor  # Store signal processor
         
         self.trading_systems = {}
+        
+        self.signal_processor = signal_processor
         
         for pair_group, pair_config in TRADING_PAIRS.items():
             self.trading_systems[pair_group] = UltimateTradingSystem(
@@ -13295,7 +13296,7 @@ class UltimateTradingManager:
                 news_calendar=self.news_calendar,
                 telegram_token=telegram_token,
                 telegram_chat_id=chat_id,
-                signal_processor=self.signal_processor  # ⬅️ PASS TO SYSTEM
+                signal_processor=self.signal_processor  # Pass it
             )
         
         logger.info(f"🎯 Initialized ULTIMATE trading manager with {len(self.trading_systems)} pair groups")
