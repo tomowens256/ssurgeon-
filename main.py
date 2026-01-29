@@ -13272,31 +13272,30 @@ class UltimateTradingSystem:
 # ================================
 
 class UltimateTradingManager:
-    def __init__(self, api_key, telegram_token, chat_id, news_calendar=None):  # ADD news_calendar parameter
+    def __init__(self, api_key, telegram_token, chat_id, news_calendar=None, signal_processor=None):
         self.api_key = api_key
         self.telegram_token = telegram_token
         self.chat_id = chat_id
-        self.news_calendar = news_calendar  # Store the shared calendar
-        self.trading_systems = {}
-        # Store signal_processor
-        self.signal_processor = signal_processor
+        self.news_calendar = news_calendar
+        self.signal_processor = signal_processor  # Store signal processor
         
-        # Make sure hammer_scanner gets the signal_processor
-        if hasattr(self, 'hammer_scanner') and signal_processor:
-            self.hammer_scanner.signal_processor = signal_processor
+        self.trading_systems = {}
         
         for pair_group, pair_config in TRADING_PAIRS.items():
             self.trading_systems[pair_group] = UltimateTradingSystem(
                 pair_group, 
                 pair_config,
-                news_calendar=self.news_calendar,  # PASS TO EACH SYSTEM
+                news_calendar=self.news_calendar,
                 telegram_token=telegram_token,
-                telegram_chat_id=chat_id
+                telegram_chat_id=chat_id,
+                signal_processor=self.signal_processor  # ⬅️ PASS TO SYSTEM
             )
         
         logger.info(f"🎯 Initialized ULTIMATE trading manager with {len(self.trading_systems)} pair groups")
         if self.news_calendar:
             logger.info(f"📰 Using shared News Calendar instance")
+        if self.signal_processor:
+            logger.info(f"🤖 SignalProcessor loaded for ML filtering")
         
 
     def _format_ultimate_signal_message(self, signal):
