@@ -10472,7 +10472,7 @@ class UltimateTradingSystem:
             hammer_credentials,
             csv_base_path='/content/drive/MyDrive/hammer_trades',
             logger=logger,
-            news_calendar=self.news_calendar  # PASS SHARED CALENDAR
+            news_calendar=self.news_calendar,  # PASS SHARED CALENDAR
             signal_processor=signal_processor  # ⬅️ PASS TO SCANNER
         )
         
