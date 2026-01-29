@@ -8208,6 +8208,10 @@ class HammerPatternScanner:
             # 10. FINALIZE
             trade_data['webhook_sent'] = webhook_sent
             trade_data['ai_node'] = node_id
+
+            self.logger.info(f"🔄 Zebra trade_data keys: {sorted(list(trade_data.keys()))}")
+            # self.logger.info(f"🔄 Number of keys: {len(trade_data.keys())}")
+            
             
             self.send_hammer_signal(trade_data, trigger_data)  # Telegram
             self.save_trade_to_csv(trade_data)
