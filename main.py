@@ -8214,7 +8214,7 @@ class HammerPatternScanner:
             
             
             self.send_hammer_signal(trade_data, trigger_data)  # Telegram
-            self.save_trade_to_csv(trade_data)
+            self.save_trade_to_csv(trade_data, update_existing=False)
             self._start_tp_monitoring(trade_data)
             
             return True
