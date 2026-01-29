@@ -551,7 +551,64 @@ class GlobalCandleCache:
 GLOBAL_CACHE = GlobalCandleCache()
 
 
+import pandas as pd
+from fastai.tabular.all import *
 
+class SignalProcessor:
+    def __init__(self, learner, webhook_url=None):
+        self.learn = learner
+        self.webhook_url = webhook_url
+        # Tracking signal_id to identify 'first trades'
+        self.active_signals = {} 
+
+    def extract_features(self, raw_data):
+        """
+        Converts raw signal data into the categorical-only format 
+        the model expects.
+        """
+        # Example feature extraction logic
+        features = {
+            'asset_type': raw_data.get('asset'),
+            'strategy_id': raw_data.get('strat'),
+            'market_regime': raw_data.get('regime'),
+            'time_of_day': raw_data.get('tod')
+        }
+        return pd.DataFrame([features])
+
+    def send_webhook(self, prediction_result):
+        """Logic to send the actual webhook if prediction is positive."""
+        print(f"🚀 Webhook sent! Decision: {prediction_result}")
+        # In production: requests.post(self.webhook_url, json=prediction_result)
+        return True
+
+    def process_signal(self, signal_data):
+        """Main entry point for incoming data."""
+        sig_id = signal_data.get('signal_id')
+        
+        # 1. Check if this is a new/first trade for this signal_id
+        if sig_id not in self.active_signals:
+            print(f"New Signal Detected: {sig_id}. Extracting features...")
+            
+            # 2. Extract features (Categorical only)
+            features_df = self.extract_features(signal_data)
+            
+            # 3. Store the state so we don't re-extract for this ID
+            self.active_signals[sig_id] = {'processed': True, 'features': features_df}
+            
+            # 4. Push to model for prediction
+            # row, clas, probs = self.learn.predict(features_df.iloc[0])
+            # For this example, let's assume '1' is the 'Take Trade' signal
+            prediction = self.learn.predict(features_df.iloc[0])
+            prediction_class = prediction[1].item() 
+
+            # 5. Send webhook if model says 'Take Trade' (e.g., class 1)
+            if prediction_class == 1:
+                return self.send_webhook({"signal_id": sig_id, "action": "BUY"})
+            
+        else:
+            print(f"Signal {sig_id} already processed. Skipping feature extraction.")
+            
+        return False
 # ================================
 # ENHANCED TIMING MANAGER
 # ================================
