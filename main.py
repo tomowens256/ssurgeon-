@@ -10393,7 +10393,7 @@ class ZebraManager:
 # ================================
 
 class UltimateTradingSystem:
-    def __init__(self, pair_group, pair_config, news_calendar=None, telegram_token=None, telegram_chat_id=None):  
+    def __init__(self, pair_group, pair_config, news_calendar=None, telegram_token=None, telegram_chat_id=None, signal_processor=None ):  
         # Store the parameters as instance variables
         self.pair_group = pair_group
         self.pair_config = pair_config
