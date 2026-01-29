@@ -8967,43 +8967,190 @@ class HammerPatternScanner:
             return None, None, None
     
     def save_trade_to_csv(self, trade_data):
-        """Save trade data safely - APPEND only (no overwrite)"""
+        """Save trade data safely - APPEND only (no overwrite) - DEBUG VERSION"""
         try:
-            self.logger.info(f"💾 Saving trade {trade_data['trade_id']} to CSV...")
+            # =============== DEBUG START ===============
+            self.logger.info(f"🔍 DEBUG CSV SAVE START for {trade_data.get('trade_id', 'UNKNOWN')}")
+            self.logger.info(f"🔍 Criteria: {trade_data.get('criteria', 'UNKNOWN')}")
             
-            # Create new row with all headers
+            # Check 1: Look for None in self.headers
+            if self.headers:
+                none_in_headers = [i for i, h in enumerate(self.headers) if h is None]
+                if none_in_headers:
+                    self.logger.error(f"🚨 CRITICAL: Found None in self.headers at indices: {none_in_headers}")
+                    self.logger.error(f"🚨 Full headers (first 20): {self.headers[:20]}")
+                    self.logger.error(f"🚨 Total headers count: {len(self.headers)}")
+                    
+                    # Log the context around each None
+                    for idx in none_in_headers:
+                        start = max(0, idx - 2)
+                        end = min(len(self.headers), idx + 3)
+                        self.logger.error(f"🚨 Context around index {idx}: {self.headers[start:end]}")
+                    
+                    # Filter out None
+                    self.headers = [h for h in self.headers if h is not None]
+                    self.logger.info(f"✅ Filtered headers, new count: {len(self.headers)}")
+            
+            # Check 2: Look for None keys in trade_data
+            none_keys = [k for k in trade_data.keys() if k is None]
+            if none_keys:
+                self.logger.error(f"🚨 Found {len(none_keys)} None keys in trade_data!")
+                self.logger.error(f"🚨 Trade data keys (first 30): {list(trade_data.keys())[:30]}")
+                
+                # Log the source of None keys by checking feature functions
+                if 'criteria' in trade_data and trade_data['criteria'] == 'zebra':
+                    self.logger.info(f"🔍 This is a ZEBRA trade - checking zebra-specific issues")
+                
+                # Remove None keys
+                for k in none_keys:
+                    trade_data.pop(k)
+                    self.logger.info(f"✅ Removed None key from trade_data")
+            
+            # Check 3: Log any keys in trade_data that aren't in headers
+            headers_set = set(self.headers)
+            trade_keys_set = set(trade_data.keys())
+            extra_keys = trade_keys_set - headers_set
+            
+            if extra_keys:
+                self.logger.warning(f"⚠️ Trade data has {len(extra_keys)} keys not in headers:")
+                for key in sorted(extra_keys):
+                    self.logger.warning(f"   - '{key}' (value: {trade_data.get(key, 'N/A')})")
+            
+            # Check 4: Log any headers not in trade_data
+            missing_headers = headers_set - trade_keys_set
+            if missing_headers:
+                self.logger.info(f"📝 {len(missing_headers)} headers not in trade_data (will get empty values)")
+                # Show first 5 missing headers
+                for header in sorted(list(missing_headers))[:5]:
+                    self.logger.info(f"   - '{header}'")
+            
+            # =============== DEBUG END ===============
+            
+            self.logger.info(f"💾 Saving trade {trade_data.get('trade_id', 'UNKNOWN')} to CSV...")
+            
+            # Create new row with all headers (with extra safety)
             new_row = {}
             for header in self.headers:
-                new_row[header] = trade_data.get(header, '')
+                try:
+                    new_row[header] = trade_data.get(header, '')
+                except Exception as e:
+                    self.logger.error(f"❌ Error getting value for header '{header}': {e}")
+                    new_row[header] = ''
+            
+            # Final check: Verify new_row doesn't have None keys
+            none_in_new_row = [k for k in new_row.keys() if k is None]
+            if none_in_new_row:
+                self.logger.critical(f"🚨 EMERGENCY: new_row has None keys after building!")
+                self.logger.critical(f"🚨 This should never happen - headers: {self.headers}")
+                
+                # Create a clean new_row without None keys
+                clean_new_row = {k: v for k, v in new_row.items() if k is not None}
+                self.logger.info(f"✅ Created clean row with {len(clean_new_row)} keys")
+                new_row = clean_new_row
             
             # Write ONLY the new row (append mode)
             file_exists = os.path.exists(self.csv_file_path)
+            
+            # DEBUG: Log file status
+            if file_exists:
+                self.logger.info(f"📁 CSV file exists at: {self.csv_file_path}")
+                
+                # Read and log first 2 lines of existing file for debugging
+                try:
+                    with open(self.csv_file_path, 'r', encoding='utf-8') as f:
+                        lines = [next(f).strip() for _ in range(2)] if f.readable() else []
+                    self.logger.info(f"📁 Existing CSV first line (headers): {lines[0] if lines else 'EMPTY'}")
+                    if len(lines) > 1:
+                        self.logger.info(f"📁 Second line: {lines[1]}")
+                except Exception as e:
+                    self.logger.warning(f"⚠️ Couldn't read existing CSV: {e}")
+            else:
+                self.logger.info(f"📁 Creating new CSV file at: {self.csv_file_path}")
             
             with open(self.csv_file_path, 'a', newline='', encoding='utf-8') as f:
                 writer = csv.DictWriter(f, fieldnames=self.headers)
                 
                 # Write header if file is new
                 if not file_exists:
+                    self.logger.info(f"📝 Writing headers to new file")
                     writer.writeheader()
+                
+                # DEBUG: Before writing
+                self.logger.info(f"📝 Writing row with {len(new_row)} columns")
+                self.logger.info(f"📝 Sample data: Instrument={new_row.get('instrument', 'N/A')}, "
+                               f"Entry={new_row.get('entry_price', 'N/A')}, "
+                               f"Criteria={new_row.get('criteria', 'N/A')}")
                 
                 writer.writerow(new_row)
             
-            self.logger.info(f"✅ Appended trade {trade_data['trade_id']} to CSV")
+            self.logger.info(f"✅ Successfully appended trade {trade_data.get('trade_id', 'UNKNOWN')} to CSV")
+            
+            # DEBUG: Verify the write by counting lines
+            try:
+                with open(self.csv_file_path, 'r', encoding='utf-8') as f:
+                    line_count = sum(1 for _ in f)
+                self.logger.info(f"📊 CSV now has {line_count} lines total")
+            except:
+                pass
+                
             return True
             
         except Exception as e:
             self.logger.error(f"❌ Error saving to CSV: {str(e)}", exc_info=True)
             
-            # Emergency backup save
+            # EMERGENCY LOGGING: Capture everything about this failure
             try:
-                backup_path = f"{self.csv_file_path}.backup_{int(time.time())}"
+                error_log_path = f"{self.csv_file_path}.error_{int(time.time())}.log"
+                with open(error_log_path, 'w', encoding='utf-8') as f:
+                    f.write(f"CSV SAVE ERROR at {datetime.now()}\n")
+                    f.write(f"Error: {str(e)}\n\n")
+                    f.write(f"Headers ({len(self.headers) if self.headers else 0}):\n")
+                    f.write(str(self.headers) + "\n\n")
+                    f.write(f"Trade data keys ({len(trade_data.keys()) if trade_data else 0}):\n")
+                    f.write(str(list(trade_data.keys())) + "\n\n")
+                    f.write(f"Trade data criteria: {trade_data.get('criteria', 'UNKNOWN')}\n")
+                    
+                    # Try to save the trade data as JSON for analysis
+                    import json
+                    f.write("\nFull trade data (JSON):\n")
+                    # Convert any non-serializable values to strings
+                    safe_trade_data = {}
+                    for k, v in trade_data.items():
+                        try:
+                            json.dumps(v)
+                            safe_trade_data[k] = v
+                        except:
+                            safe_trade_data[k] = str(v)
+                    f.write(json.dumps(safe_trade_data, indent=2))
+                    
+                self.logger.info(f"📦 Saved detailed error log to {error_log_path}")
+            except Exception as log_err:
+                self.logger.error(f"❌ Failed to save error log: {log_err}")
+                    
+            # Try emergency backup save
+            try:
+                backup_path = f"{self.csv_file_path}.backup_{int(time.time())}.csv"
+                self.logger.info(f"🆘 Attempting emergency backup to {backup_path}")
+                
+                # Use a simpler approach for backup
+                import csv as csv_module
                 with open(backup_path, 'w', newline='', encoding='utf-8') as f:
-                    writer = csv.DictWriter(f, fieldnames=self.headers)
-                    writer.writeheader()
-                    writer.writerow(new_row)
-                self.logger.info(f"📦 Saved backup to {backup_path}")
-            except:
-                pass
+                    # Write headers
+                    f.write(','.join(str(h) for h in self.headers) + '\n')
+                    # Write data
+                    row_values = []
+                    for header in self.headers:
+                        value = trade_data.get(header, '')
+                        # Escape commas and quotes in CSV
+                        if isinstance(value, str):
+                            if ',' in value or '"' in value:
+                                value = f'"{value.replace(\'"\', \'""\')}"'
+                        row_values.append(str(value))
+                    f.write(','.join(row_values) + '\n')
+                    
+                self.logger.info(f"📦 Emergency backup saved to {backup_path}")
+            except Exception as backup_err:
+                self.logger.error(f"❌ Emergency backup also failed: {backup_err}")
                 
             return False
         
