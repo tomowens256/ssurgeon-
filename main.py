@@ -10460,6 +10460,7 @@ class UltimateTradingSystem:
             'telegram_chat_id': telegram_chat_id,
             'oanda_api_key': os.getenv('OANDA_API_KEY')
         }
+        self.signal_processor = signal_processor
         
         # Pass the shared news calendar to hammer scanner
         self.hammer_scanner = HammerPatternScanner(
@@ -10467,6 +10468,7 @@ class UltimateTradingSystem:
             csv_base_path='/content/drive/MyDrive/hammer_trades',
             logger=logger,
             news_calendar=self.news_calendar  # PASS SHARED CALENDAR
+            signal_processor=signal_processor  # ⬅️ PASS TO SCANNER
         )
         
         logger.info(f"🔨 Hammer Pattern Scanner initialized for {pair_group}")
