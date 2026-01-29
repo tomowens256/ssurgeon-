@@ -13278,6 +13278,12 @@ class UltimateTradingManager:
         self.chat_id = chat_id
         self.news_calendar = news_calendar  # Store the shared calendar
         self.trading_systems = {}
+        # Store signal_processor
+        self.signal_processor = signal_processor
+        
+        # Make sure hammer_scanner gets the signal_processor
+        if hasattr(self, 'hammer_scanner') and signal_processor:
+            self.hammer_scanner.signal_processor = signal_processor
         
         for pair_group, pair_config in TRADING_PAIRS.items():
             self.trading_systems[pair_group] = UltimateTradingSystem(
