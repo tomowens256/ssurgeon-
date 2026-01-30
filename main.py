@@ -5583,7 +5583,7 @@ class TimeframeScanner:
 
 class HammerPatternScanner:
     def __init__(self, credentials, csv_base_path='/content/drive/MyDrive/hammer_trades', 
-                 logger=None, news_calendar=None ,signal_processor=None ):  # ADD news_calendar parameter
+                 logger=None, news_calendar=None ,signal_processor=None, quarter_manager=None ):  # ADD news_calendar parameter
         """Concurrent hammer pattern scanner with shared news calendar support"""
         
         self.credentials = credentials
@@ -5604,12 +5604,14 @@ class HammerPatternScanner:
         
         self.logger.info("🔨 Initializing HammerPatternScanner...")
                      
+                     
         # Webhook configuration - set your values here
         self.webhook_url = "https://d4a270af4ba7.ngrok-free.app/webhook"
         self.webhook_token = "uVDdSdTrQCDiAQwU9YR-LIeHMKJ8Ewgz"  
         self.running = False
         self.scanner_thread = None
         self.active_scans = {}
+        self.quarter_manager = RobustQuarterManager()
         # Add caching for API calls
         self.data_cache = {}
         self.cache_expiry = {}  # Track when cache expires
@@ -7062,6 +7064,127 @@ class HammerPatternScanner:
             
         except Exception as e:
             self.logger.error(f"❌ Error adding missing headers: {str(e)}")
+
+    def get_true_open_for_cycle(self, instrument, cycle_type, current_time=None):
+        """
+        Get the True Open price for a specific cycle.
+        True Open = price at the open of Q2 for the current cycle
+        """
+        if current_time is None:
+            current_time = datetime.now(NY_TZ)
+        
+        # Get current quarter
+        quarters = self.quarter_manager.get_current_quarters(current_time)
+        current_quarter = quarters.get(cycle_type)
+        
+        # Get the start time of Q2 for this cycle
+        q2_start_time = self._get_q2_start_time(cycle_type, current_time)
+        
+        if not q2_start_time:
+            self.logger.warning(f"⚠️ Could not get Q2 start time for {cycle_type} at {current_time}")
+            return None, None
+        
+        # Cache key
+        cache_key = f"{instrument}_{cycle_type}_{q2_start_time.strftime('%Y%m%d')}"
+        
+        with self.true_open_lock:
+            if cache_key in self.true_open_cache:
+                return self.true_open_cache[cache_key], current_quarter
+        
+        # Fetch the candle at Q2 start time
+        # Determine appropriate timeframe for fetching based on cycle
+        cycle_to_tf = {
+            'monthly': 'H4',      # H4 candles for monthly cycles
+            'weekly': 'H1',       # H1 candles for weekly cycles  
+            'daily': 'M15',       # 15-hour candles for daily cycles
+            '90min': 'M5'       # 5-minute candles for 90min cycles
+        }
+        
+        tf = cycle_to_tf.get(cycle_type, 'H1')
+        
+        # Fetch candles around Q2 start time
+        try:
+            df = fetch_candles(
+                instrument,
+                tf,
+                count=50,
+                api_key=self.credentials['oanda_api_key']
+            )
+            
+            if df.empty:
+                self.logger.warning(f"⚠️ No data for {instrument} {tf} to find True Open")
+                return None, current_quarter
+            
+            # Find the candle closest to Q2 start time
+            # We'll look for the candle that started at or just before Q2 start
+            df['time_diff'] = abs((df['time'] - q2_start_time).dt.total_seconds())
+            closest_candle = df.loc[df['time_diff'].idxmin()]
+            
+            true_open = closest_candle['open']
+            
+            # Cache the result
+            with self.true_open_lock:
+                self.true_open_cache[cache_key] = true_open
+            
+            self.logger.info(f"✅ {instrument} {cycle_type} True Open: {true_open:.5f} (Q2 start: {q2_start_time})")
+            
+            return true_open, current_quarter
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error getting True Open for {instrument} {cycle_type}: {str(e)}")
+            return None, current_quarter
+    
+    def _get_q2_start_time(self, cycle_type, current_time):
+        """
+        Calculate the start time of Q2 for a given cycle.
+        """
+        if cycle_type == 'monthly':
+            # Q2 starts on the 8th day of the month at 00:00 NY time
+            # Monthly quarters: week 1 (days 1-7), week 2 (days 8-14), etc.
+            # So Q2 starts on day 8
+            if current_time.day >= 8:
+                # Q2 started earlier this month
+                q2_start = current_time.replace(day=8, hour=0, minute=0, second=0, microsecond=0)
+            else:
+                # Q2 hasn't started yet this month, so use previous month
+                prev_month = current_time - timedelta(days=current_time.day)
+                q2_start = prev_month.replace(day=8, hour=0, minute=0, second=0, microsecond=0)
+            
+        elif cycle_type == 'weekly':
+            # Q2 is Tuesday (Monday=Q1, Tuesday=Q2, etc.)
+            # Start of Tuesday 00:00 NY time
+            days_since_monday = current_time.weekday()  # Monday=0
+            if days_since_monday >= 1:  # Tuesday or later
+                # This week's Tuesday
+                days_to_tuesday = 1 - days_since_monday
+                q2_start = current_time + timedelta(days=days_to_tuesday)
+            else:
+                # It's Monday, Q2 hasn't started yet, so use last week's Tuesday
+                days_to_last_tuesday = -6  # Go back 6 days to last Tuesday
+                q2_start = current_time + timedelta(days=days_to_last_tuesday)
+            
+            q2_start = q2_start.replace(hour=0, minute=0, second=0, microsecond=0)
+            
+        elif cycle_type == 'daily':
+            # Daily Q2 is 00:00-06:00, so Q2 starts at 00:00
+            q2_start = current_time.replace(hour=0, minute=0, second=0, microsecond=0)
+            
+        elif cycle_type == '90min':
+            # Get current daily quarter first
+            daily_quarter = self.quarter_manager._get_daily_quarter_fixed(current_time)
+            daily_quarter_start = self.quarter_manager._get_daily_quarter_start_time(current_time, daily_quarter)
+            
+            # Within the daily quarter, Q2 starts 90 minutes after the start
+            q2_start = daily_quarter_start + timedelta(minutes=90)
+            
+        else:
+            return None
+        
+        # Ensure timezone
+        if q2_start.tzinfo is None:
+            q2_start = NY_TZ.localize(q2_start)
+        
+        return q2_start
 
     def get_zebra_timeframes(self, instrument, criteria, trigger_timeframe):
         """
