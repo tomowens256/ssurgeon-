@@ -7342,13 +7342,17 @@ class HammerPatternScanner:
                 self.logger.error(f"❌ No Fibonacci zones calculated")
                 return False
             
-            # Get hammer timeframes
-            timeframes = self.get_aligned_timeframes(instrument, criteria, trigger_timeframe)
-            self.logger.info(f"🔨 Timeframes to scan CONCURRENTLY: {timeframes}")
+            # Get hammer timeframes (original logic)
+            hammer_timeframes = self.get_aligned_timeframes(instrument, criteria, trigger_timeframe)
+            self.logger.info(f"🔨 Hammer timeframes: {hammer_timeframes}")
+            
+            # NEW: Get Zebra timeframes (M1, M3, M5 only)
+            zebra_timeframes = self.get_zebra_timeframes(instrument, criteria, trigger_timeframe)
+            self.logger.info(f"🦓 Zebra timeframes: {zebra_timeframes}")
             
             signal_id = self._generate_signal_id(trigger_data)
             
-            self.logger.info(f"🎯 Starting CONCURRENT hammer scan for {instrument} {criteria}")
+            self.logger.info(f"🎯 Starting CONCURRENT scan for {instrument} {criteria}")
             self.logger.info(f"   Signal ID: {signal_id}")
             self.logger.info(f"   Direction: {direction}")
             self.logger.info(f"   Trigger TF: {trigger_timeframe}")
@@ -7381,20 +7385,21 @@ class HammerPatternScanner:
                 'instrument': instrument,
                 'direction': direction,
                 'criteria': criteria,
-                'signal_data': signal_data,
+                'signal_data': signal_data,  # This contains the signal data for Zebra
                 'signal_id': signal_id,
                 'trigger_data': trigger_data,
-                'scanned_candles': {},
-                'zebra_scanned_candles': {},
+                'scanned_candles': {},       # For hammer
+                'zebra_scanned_candles': {}, # For Zebra
                 'lock': threading.Lock(),
                 'zebra_lock': threading.Lock(),
-                'trigger_types_found': set(),  # NEW: Track which trigger types we found
+                'trigger_types_found': set(),
             }
             
             # Initialize scanned_candles for each timeframe
-            for tf in timeframes:
+            for tf in hammer_timeframes:
                 shared_state['scanned_candles'][tf] = set()
-                shared_state['zebra_scanned_candles'][tf] = set()  # NEW: For Zebra
+            for tf in zebra_timeframes:
+                shared_state['zebra_scanned_candles'][tf] = set()
             
             def scan_timeframe(tf):
                 """Scan a single timeframe for hammer patterns (runs in separate thread)"""
@@ -7604,12 +7609,10 @@ class HammerPatternScanner:
             
             # Start threads for each timeframe
             threads = []
-            
-            # Start Hammer Scanner Threads
-            for tf in timeframes:
+            for tf in hammer_timeframes:
                 hammer_thread = threading.Thread(
-                    target=scan_timeframe,
-                    args=(tf,),
+                    target=self.scan_timeframe,  # Your existing hammer scanner function
+                    args=(tf, shared_state),
                     name=f"HammerScan_{instrument}_{tf}",
                     daemon=True
                 )
@@ -7617,8 +7620,8 @@ class HammerPatternScanner:
                 threads.append(hammer_thread)
                 self.logger.info(f"🚀 Started Hammer {tf} scanner thread")
             
-            # NEW: Start Zebra Scanner Threads
-            for tf in timeframes:
+            # NEW: Start Zebra Scanner Threads (with different timeframes)
+            for tf in zebra_timeframes:
                 zebra_thread = threading.Thread(
                     target=self.run_zebra_scan_with_signal,
                     args=(tf, shared_state),
