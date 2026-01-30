@@ -8336,6 +8336,111 @@ class HammerPatternScanner:
         # Return seconds until next period starts
         return max(0, (next_start - current_dt).total_seconds())
 
+    def analyze_quarter_structure(self, instrument, price, timestamp=None):
+        """
+        Analyze the quarter structure for debugging and logging.
+        Simplified to show up/down relation.
+        """
+        if timestamp is None:
+            timestamp = datetime.now(NY_TZ)
+        
+        analysis = {
+            'timestamp': timestamp.strftime('%Y-%m-%d %H:%M:%S'),
+            'instrument': instrument,
+            'price': price,
+            'quarters': {},
+            'summary': ''
+        }
+        
+        # Get all current quarters
+        quarters = self.quarter_manager.get_current_quarters(timestamp)
+        
+        summary_lines = []
+        
+        for cycle_type in ['monthly', 'weekly', 'daily', '90min']:
+            current_quarter = quarters.get(cycle_type)
+            true_open, _ = self.get_true_open_for_cycle(instrument, cycle_type, timestamp)
+            
+            if true_open:
+                if price > true_open:
+                    relation = "UP"
+                    emoji = "🔼"
+                elif price < true_open:
+                    relation = "DOWN"
+                    emoji = "🔽"
+                else:
+                    relation = "EQUAL"
+                    emoji = "⚖️"
+            else:
+                relation = "UNKNOWN"
+                emoji = "❓"
+            
+            analysis['quarters'][cycle_type] = {
+                'current_quarter': current_quarter,
+                'true_open': true_open,
+                'relation': relation
+            }
+            
+            if true_open:
+                summary_lines.append(f"{cycle_type.upper():8} | Q{current_quarter} | "
+                                   f"True Open: {true_open:.5f} | {emoji} {relation}")
+        
+        # Create summary string
+        analysis['summary'] = "\n".join(summary_lines)
+        
+        # Log the analysis
+        self.logger.info(f"📊 QUARTER ANALYSIS for {instrument}:")
+        for line in summary_lines:
+            self.logger.info(f"   {line}")
+        
+        return analysis
+
+    def check_quarter_filters(self, instrument, direction, price, timestamp=None):
+        """
+        Apply quarter-based filters to determine trade validity.
+        Returns True if passes all filters.
+        """
+        if timestamp is None:
+            timestamp = datetime.now(NY_TZ)
+        
+        filters_passed = {
+            'monthly': True,
+            'weekly': True,
+            'daily': True,
+            '90min': True
+        }
+        
+        # Get all current quarters
+        quarters = self.quarter_manager.get_current_quarters(timestamp)
+        
+        for cycle_type in ['daily', '90min']:  # Focus on shorter cycles for filtering
+            current_quarter = quarters.get(cycle_type)
+            true_open, _ = self.get_true_open_for_cycle(instrument, cycle_type, timestamp)
+            
+            if not true_open:
+                continue
+            
+            # Filter logic based on direction and quarter
+            if direction == 'bearish':
+                # For bearish trades, prefer being below true open in Q3/Q4
+                if current_quarter in ['q3', 'q4'] and price > true_open:
+                    filters_passed[cycle_type] = False
+                    self.logger.info(f"⏸️ {cycle_type} filter failed: Bearish in {current_quarter} but price above true open")
+            
+            elif direction == 'bullish':
+                # For bullish trades, prefer being above true open in Q1/Q2
+                if current_quarter in ['q1', 'q2'] and price < true_open:
+                    filters_passed[cycle_type] = False
+                    self.logger.info(f"⏸️ {cycle_type} filter failed: Bullish in {current_quarter} but price below true open")
+        
+        # Check if all required filters passed
+        required_cycles = ['daily']  # Can adjust based on strategy
+        for cycle in required_cycles:
+            if not filters_passed[cycle]:
+                return False
+        
+        return True
+
     def run_zebra_scan(self, tf, instrument, signal_id_prefix):
         """
         Threaded Zebra scanner with CORRECTED time validation.
