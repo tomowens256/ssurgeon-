@@ -5791,6 +5791,11 @@ class HammerPatternScanner:
                 'if_BE_TP1', 'if_BE_TP2', 'if_BE_TP3', 'if_BE_TP4', 'if_BE_TP5',
                 'if_BE_TP6', 'if_BE_TP7', 'if_BE_TP8', 'if_BE_TP9', 'if_BE_TP10',
                 'if_BE_open_TP',
+                # Quater information 
+                'current_quarter_monthly', 'true_open_monthly', 'true_open_relation_monthly',
+                'current_quarter_weekly', 'true_open_weekly', 'true_open_relation_weekly',
+                'current_quarter_daily', 'true_open_daily', 'true_open_relation_daily',
+                'current_quarter_90min', 'true_open_90min', 'true_open_relation_90min',
                 
                 # Result Tracking
                 'exit_time', 'time_to_exit_seconds',
