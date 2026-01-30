@@ -8675,6 +8675,50 @@ class HammerPatternScanner:
             if isinstance(candle_close_time, str):
                 candle_close_time = datetime.strptime(candle_close_time, '%Y-%m-%d %H:%M:%S')
             signal_latency_seconds = (current_time - candle_close_time).total_seconds()
+
+            # === ADD QUARTER ANALYSIS HERE ===
+            signal_time = candle['time']  # Use the candle time for quarter calculation
+            
+            quarter_features = {}
+            for cycle_type in ['monthly', 'weekly', 'daily', '90min']:
+                true_open, current_quarter = self.get_true_open_for_cycle(instrument, cycle_type, signal_time)
+                
+                # Store features
+                quarter_features[f'current_quarter_{cycle_type}'] = current_quarter or ''
+                quarter_features[f'true_open_{cycle_type}'] = round(true_open, 5) if true_open else ''
+                
+                # Calculate relation to true open (simplified: just up/down)
+                if true_open and current_price:
+                    if current_price > true_open:
+                        quarter_features[f'true_open_relation_{cycle_type}'] = 'up'
+                    elif current_price < true_open:
+                        quarter_features[f'true_open_relation_{cycle_type}'] = 'down'
+                    else:
+                        quarter_features[f'true_open_relation_{cycle_type}'] = 'equal'
+                else:
+                    quarter_features[f'true_open_relation_{cycle_type}'] = ''
+            
+            # Log quarter analysis
+            self.logger.info(f"📊 QUARTER ANALYSIS for {instrument} ({trigger_type.upper()}):")
+            for cycle_type in ['monthly', 'weekly', 'daily', '90min']:
+                true_open = quarter_features.get(f'true_open_{cycle_type}')
+                if true_open:
+                    relation = quarter_features.get(f'true_open_relation_{cycle_type}', '')
+                    current_quarter = quarter_features.get(f'current_quarter_{cycle_type}', '')
+                    if relation == 'up':
+                        emoji = "🔼"
+                        relation_text = "UP"
+                    elif relation == 'down':
+                        emoji = "🔽"
+                        relation_text = "DOWN"
+                    elif relation == 'equal':
+                        emoji = "⚖️"
+                        relation_text = "EQUAL"
+                    else:
+                        emoji = "❓"
+                        relation_text = "UNKNOWN"
+                    self.logger.info(f"   {cycle_type.upper():8} | Q{current_quarter} | "
+                                   f"True Open: {true_open:.5f} | {emoji} {relation_text}")
     
             # 3. GET NEWS CONTEXT (same as original)
             news_context = {}
@@ -8816,31 +8860,31 @@ class HammerPatternScanner:
             higher_tf_features = self.calculate_higher_tf_features(instrument, current_price, candle['time'], timeframe_data)
             zebra_features = self.calculate_zebra_features(instrument, candle['time'], timeframe_data)
 
-            # === NEW: GET QUARTER FEATURES ===
-            signal_time = candle['time']  # Use the candle time for quarter calculation
+            # # === NEW: GET QUARTER FEATURES ===
+            # signal_time = candle['time']  # Use the candle time for quarter calculation
             
-            quarter_features = {}
-            for cycle_type in ['monthly', 'weekly', 'daily', '90min']:
-                true_open, current_quarter = self.get_true_open_for_cycle(instrument, cycle_type, signal_time)
+            # quarter_features = {}
+            # for cycle_type in ['monthly', 'weekly', 'daily', '90min']:
+            #     true_open, current_quarter = self.get_true_open_for_cycle(instrument, cycle_type, signal_time)
                 
-                # Store basic features
-                quarter_features[f'current_quarter_{cycle_type}'] = current_quarter or ''
-                quarter_features[f'true_open_{cycle_type}'] = round(true_open, 5) if true_open else ''
+            #     # Store basic features
+            #     quarter_features[f'current_quarter_{cycle_type}'] = current_quarter or ''
+            #     quarter_features[f'true_open_{cycle_type}'] = round(true_open, 5) if true_open else ''
                 
-                # Calculate relation to true open (simplified: just up/down)
-                if true_open and current_price:
-                    if current_price > true_open:
-                        quarter_features[f'true_open_relation_{cycle_type}'] = 'up'
-                    elif current_price < true_open:
-                        quarter_features[f'true_open_relation_{cycle_type}'] = 'down'
-                    else:
-                        quarter_features[f'true_open_relation_{cycle_type}'] = 'equal'
-                else:
-                    quarter_features[f'true_open_relation_{cycle_type}'] = ''
+            #     # Calculate relation to true open (simplified: just up/down)
+            #     if true_open and current_price:
+            #         if current_price > true_open:
+            #             quarter_features[f'true_open_relation_{cycle_type}'] = 'up'
+            #         elif current_price < true_open:
+            #             quarter_features[f'true_open_relation_{cycle_type}'] = 'down'
+            #         else:
+            #             quarter_features[f'true_open_relation_{cycle_type}'] = 'equal'
+            #     else:
+            #         quarter_features[f'true_open_relation_{cycle_type}'] = ''
                 
-                # For backward compatibility, keep the 0/1 flags (optional - you can remove these)
-                # quarter_features[f'above_true_open_{cycle_type}'] = 1 if quarter_features[f'true_open_relation_{cycle_type}'] == 'up' else 0
-                # quarter_features[f'below_true_open_{cycle_type}'] = 1 if quarter_features[f'true_open_relation_{cycle_type}'] == 'down' else 0
+            #     # For backward compatibility, keep the 0/1 flags (optional - you can remove these)
+            #     # quarter_features[f'above_true_open_{cycle_type}'] = 1 if quarter_features[f'true_open_relation_{cycle_type}'] == 'up' else 0
+            #     # quarter_features[f'below_true_open_{cycle_type}'] = 1 if quarter_features[f'true_open_relation_{cycle_type}'] == 'down' else 0
     
             # 8. BUILD TRADE DATA
             trade_id = self._generate_trade_id(instrument, tf) if hasattr(self, '_generate_trade_id') else f"T_{int(current_time.timestamp())}"
