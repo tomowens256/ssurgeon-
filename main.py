@@ -5612,6 +5612,8 @@ class HammerPatternScanner:
         self.scanner_thread = None
         self.active_scans = {}
         self.quarter_manager = RobustQuarterManager()
+        self.true_open_cache = {}  # Format: {instrument: {cycle: {quarter: price}}}
+        self.true_open_lock = threading.Lock()  # For thread safety
         # Add caching for API calls
         self.data_cache = {}
         self.cache_expiry = {}  # Track when cache expires
