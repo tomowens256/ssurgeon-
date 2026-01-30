@@ -7739,8 +7739,8 @@ class HammerPatternScanner:
             threads = []
             for tf in hammer_timeframes:
                 hammer_thread = threading.Thread(
-                    target=self.scan_timeframe,  # Your existing hammer scanner function
-                    args=(tf, shared_state),
+                    target=scan_timeframe,  # Your existing hammer scanner function
+                    args=(tf,),
                     name=f"HammerScan_{instrument}_{tf}",
                     daemon=True
                 )
