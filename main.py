@@ -10917,6 +10917,7 @@ class ZebraManager:
         self.news_calendar = news_calendar
         self.instruments_dict = instruments_dict or ZEBRA_INSTRUMENTS
         self.running = False
+        self.quarter_manager = RobustQuarterManager()
         
         # Set up logger
         if logger:
