@@ -11112,7 +11112,7 @@ class UltimateTradingSystem:
             logger=logger,
             news_calendar=self.news_calendar,  # PASS SHARED CALENDAR
             signal_processor=signal_processor,  # ⬅️ PASS TO SCANNER
-            quarter_manager = quarter_manager
+            quarter_manager = self.quarter_manager
         )
         
         logger.info(f"🔨 Hammer Pattern Scanner initialized for {pair_group}")
