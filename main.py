@@ -8705,6 +8705,32 @@ class HammerPatternScanner:
             timeframe_data = self.fetch_all_timeframe_data(instrument)
             higher_tf_features = self.calculate_higher_tf_features(instrument, current_price, candle['time'], timeframe_data)
             zebra_features = self.calculate_zebra_features(instrument, candle['time'], timeframe_data)
+
+            # === NEW: GET QUARTER FEATURES ===
+            signal_time = candle['time']  # Use the candle time for quarter calculation
+            
+            quarter_features = {}
+            for cycle_type in ['monthly', 'weekly', 'daily', '90min']:
+                true_open, current_quarter = self.get_true_open_for_cycle(instrument, cycle_type, signal_time)
+                
+                # Store basic features
+                quarter_features[f'current_quarter_{cycle_type}'] = current_quarter or ''
+                quarter_features[f'true_open_{cycle_type}'] = round(true_open, 5) if true_open else ''
+                
+                # Calculate relation to true open (simplified: just up/down)
+                if true_open and current_price:
+                    if current_price > true_open:
+                        quarter_features[f'true_open_relation_{cycle_type}'] = 'up'
+                    elif current_price < true_open:
+                        quarter_features[f'true_open_relation_{cycle_type}'] = 'down'
+                    else:
+                        quarter_features[f'true_open_relation_{cycle_type}'] = 'equal'
+                else:
+                    quarter_features[f'true_open_relation_{cycle_type}'] = ''
+                
+                # For backward compatibility, keep the 0/1 flags (optional - you can remove these)
+                # quarter_features[f'above_true_open_{cycle_type}'] = 1 if quarter_features[f'true_open_relation_{cycle_type}'] == 'up' else 0
+                # quarter_features[f'below_true_open_{cycle_type}'] = 1 if quarter_features[f'true_open_relation_{cycle_type}'] == 'down' else 0
     
             # 8. BUILD TRADE DATA
             trade_id = self._generate_trade_id(instrument, tf) if hasattr(self, '_generate_trade_id') else f"T_{int(current_time.timestamp())}"
@@ -8761,6 +8787,22 @@ class HammerPatternScanner:
                 'exit_time': '',
                 'time_to_exit_seconds': 0,
                 'tp_level_hit': 0,
+                # NEW SIMPLIFIED QUARTER FEATURES
+                'current_quarter_monthly': quarter_features.get('current_quarter_monthly', ''),
+                'true_open_monthly': quarter_features.get('true_open_monthly', ''),
+                'true_open_relation_monthly': quarter_features.get('true_open_relation_monthly', ''),  # 'up' or 'down'
+                
+                'current_quarter_weekly': quarter_features.get('current_quarter_weekly', ''),
+                'true_open_weekly': quarter_features.get('true_open_weekly', ''),
+                'true_open_relation_weekly': quarter_features.get('true_open_relation_weekly', ''),  # 'up' or 'down'
+                
+                'current_quarter_daily': quarter_features.get('current_quarter_daily', ''),
+                'true_open_daily': quarter_features.get('true_open_daily', ''),
+                'true_open_relation_daily': quarter_features.get('true_open_relation_daily', ''),  # 'up' or 'down'
+                
+                'current_quarter_90min': quarter_features.get('current_quarter_90min', ''),
+                'true_open_90min': quarter_features.get('true_open_90min', ''),
+                'true_open_relation_90min': quarter_features.get('true_open_relation_90min', ''),  # 'up' or 'down'
                 # Webhook status
                 'webhook_sent': 0,  # Will be updated later
                 # News data
