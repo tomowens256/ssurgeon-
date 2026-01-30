@@ -7063,6 +7063,37 @@ class HammerPatternScanner:
         except Exception as e:
             self.logger.error(f"❌ Error adding missing headers: {str(e)}")
 
+    def get_zebra_timeframes(self, instrument, criteria, trigger_timeframe):
+        """
+        Get timeframes for Zebra scanning.
+        Always includes M1, M3, M5 for all signals.
+        Removes M10 and M15.
+        """
+        # First get the original timeframes
+        original_timeframes = self.get_aligned_timeframes(instrument, criteria, trigger_timeframe)
+        
+        # Define mandatory Zebra timeframes
+        mandatory_tfs = ['M1', 'M3', 'M5']
+        
+        # Start with mandatory timeframes
+        zebra_timeframes = mandatory_tfs.copy()
+        
+        # Add original timeframes that are not already included and not M10/M15
+        for tf in original_timeframes:
+            if tf not in zebra_timeframes and tf not in ['M10', 'M15']:
+                zebra_timeframes.append(tf)
+        
+        # Sort by timeframe priority (smaller first for Zebra)
+        timeframe_order = {
+            'M1': 1, 'M3': 2, 'M5': 3, 'M15': 4, 'M30': 5,
+            'H1': 6, 'H4': 7, 'D': 8, 'W': 9
+        }
+        
+        zebra_timeframes.sort(key=lambda x: timeframe_order.get(x, 99))
+        
+        self.logger.info(f"🦓 Zebra timeframes for {instrument} ({criteria}): {zebra_timeframes}")
+        return zebra_timeframes
+
     def run_zebra_scan_with_signal(self, tf, shared_state):
         """Run Zebra scanner for signal-triggered setups with Fibonacci validation"""
         try:
@@ -8279,10 +8310,34 @@ class HammerPatternScanner:
             trigger_criteria = trigger_data.get('type', '')  # Get original signal type
             trigger_type = trigger_type  # 'hammer' or 'zebra'
             
+            # === FIX: Properly extract signal data for Zebra when triggered by signals ===
+            if trigger_type == 'zebra' and trigger_criteria:  # Zebra triggered by a signal
+                # We have signal_data from the trigger, use it
+                fvg_idea = signal_data.get('fvg_idea', {})
+                smt_data = signal_data.get('smt_data', {})
+                zone = signal_data.get('zone', {})
+                crt_signal = signal_data.get('crt_signal', {})
+                has_psp = signal_data.get('has_psp', False)
+                is_hp_fvg = signal_data.get('is_hp_fvg', False)
+                is_hp_zone = signal_data.get('is_hp_zone', False)
+            elif trigger_type == 'zebra' and not trigger_criteria:
+                # Independent Zebra (no signal trigger)
+                fvg_idea, smt_data, zone, crt_signal, has_psp = {}, {}, {}, {}, False
+                is_hp_fvg, is_hp_zone = False, False
+            else:
+                # Hammer logic
+                fvg_idea = signal_data.get('fvg_idea', {})
+                smt_data = signal_data.get('smt_data', {})
+                zone = signal_data.get('zone', {})
+                crt_signal = signal_data.get('crt_signal', {})
+                has_psp = signal_data.get('has_psp', False)
+                is_hp_fvg = signal_data.get('is_hp_fvg', False)
+                is_hp_zone = signal_data.get('is_hp_zone', False)
+            
             # === NEW: ML FILTER CHECK (only for hammer signals) ===
             webhook_approved = False  # Store ML approval decision
             
-            if trigger_type == 'hammer':  # Changed from criteria != 'zebra'
+            if trigger_type == 'zebra':  # Changed from criteria != 'zebra'
                 # Extract required features for ML filter
                 smt_cycle = signal_data.get('smt_data', {}).get('cycle', '')
                 smt_quarters = signal_data.get('smt_data', {}).get('quarters', '')
