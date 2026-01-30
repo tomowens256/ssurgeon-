@@ -8613,7 +8613,7 @@ class HammerPatternScanner:
                 is_hp_zone = signal_data.get('is_hp_zone', False)
             
             # === NEW: ML FILTER CHECK (only for hammer signals) ===
-            webhook_approved = False  # Store ML approval decision
+            webhook_approved = False  # Store ML approval decisions
             
             if trigger_type == 'zebra':  # Changed from criteria != 'zebra'
                 # Extract required features for ML filter
