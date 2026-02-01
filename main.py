@@ -552,164 +552,221 @@ GLOBAL_CACHE = GlobalCandleCache()
 
 
 import pandas as pd
-from fastai.tabular.all import load_learner
-from collections import defaultdict
-from typing import Dict, Tuple
-
-import pandas as pd
-from collections import defaultdict
-from typing import Dict, Tuple
+import pickle
 import warnings
+from datetime import datetime
+from typing import Dict
+import os
+from collections import defaultdict
 
 class SignalProcessor:
-    def __init__(self, model_path: str, mapping_df: pd.DataFrame, webhook_url=None):
+    def __init__(self, rf_model_path: str, category_maps_path: str, predictions_log_path: str = None):
         """
         Args:
-            model_path: Path to .pkl model file (FastAI model)
-            mapping_df: DataFrame with mapping (Column, ID, Value)
-            webhook_url: Optional webhook URL
+            rf_model_path: Path to Random Forest model pickle file (rf_t2version_v3.pkl)
+            category_maps_path: Path to category maps pickle file (category_maps.pkl)
+            predictions_log_path: Path to CSV where predictions will be logged
         """
-        # First suppress warnings
-        warnings.filterwarnings("ignore", message=".*StringDtype.*")
-        warnings.filterwarnings("ignore", message=".*load_learner.*")
+        # Suppress warnings
+        warnings.filterwarnings("ignore")
         
-        try:
-            # Try to import and load with compatibility
-            from fastai.tabular.all import load_learner
-            import torch
-            
-            # Load with torch's pickle module which might handle the versioning better
-            self.learn = load_learner(model_path, pickle_module=torch.pickle)
-            
-        except Exception as e:
-            print(f"⚠️ FastAI load failed: {e}")
-            print("🔄 Trying alternative loading method...")
-            
+        print(f"🎯 Initializing SignalProcessor with Random Forest model...")
+        
+        # Store paths
+        self.rf_model_path = rf_model_path
+        self.category_maps_path = category_maps_path
+        
+        # Define feature columns (EXACT order as model expects)
+        self.categorical_cols = [
+            'instrument', 'hammer_timeframe', 'direction', 'criteria',
+            'trigger_timeframe', 'smt_cycle', 'smt_quarters', 'H4_open_rel',
+            'H6_open_rel', 'D_open_rel', 'W_open_rel', '1m_zebra', '3m_zebra',
+            '5m_zebra', '15m_zebra', 'h1_zebra', 'h4_zebra', 'h6_zebra', 'd_zebra'
+        ]
+        
+        self.continuous_cols = [
+            'sl_distance_pips', 'rsi', 'vwap', 'news_high_count',
+            'news_medium_count', 'news_low_count', 'entry_count'
+        ]
+        
+        self.all_columns = self.categorical_cols + self.continuous_cols
+        
+        # Load everything ONCE at initialization
+        self.model = None
+        self.cat_maps = None
+        
+        # Load Random Forest model
+        if os.path.exists(rf_model_path):
             try:
-                # Alternative: Use joblib which handles versioning better
-                import joblib
-                self.learn = joblib.load(model_path)
-                
-            except Exception as e2:
-                print(f"❌ Joblib load also failed: {e2}")
-                print("🚫 Creating dummy model for testing")
-                self.learn = None
+                print(f"📊 Loading Random Forest model from: {rf_model_path}")
+                with open(rf_model_path, 'rb') as f:
+                    self.model = pickle.load(f)
+                print(f"✅ Model loaded: {type(self.model).__name__}")
+            except Exception as e:
+                print(f"❌ Failed to load model: {e}")
+        else:
+            print(f"❌ Model file not found: {rf_model_path}")
         
-        # Store mapping for feature encoding
-        self.mapping = self._create_mapping_dict(mapping_df)
+        # Load category maps
+        if os.path.exists(category_maps_path):
+            try:
+                print(f"📊 Loading category maps from: {category_maps_path}")
+                with open(category_maps_path, 'rb') as f:
+                    self.cat_maps = pickle.load(f)
+                print(f"✅ Category maps loaded: {len(self.cat_maps)} columns")
+            except Exception as e:
+                print(f"❌ Failed to load category maps: {e}")
+        else:
+            print(f"❌ Category maps file not found: {category_maps_path}")
         
-        # Track ALL processed signals FOREVER (no clearing)
-        self.processed_signals = defaultdict(lambda: defaultdict(int))
+        # Setup predictions logging
+        if predictions_log_path and os.path.exists(os.path.dirname(predictions_log_path)):
+            self.csv_log_path = predictions_log_path
+        else:
+            # Default to model directory if not specified
+            model_dir = os.path.dirname(rf_model_path)
+            self.csv_log_path = os.path.join(model_dir, 'ml_predictions.csv')
         
-        # Track which hammers passed ML filter (for webhook sending)
-        self.approved_hammers = {}  # {signal_id: {timeframe: True/False}}
+        # Initialize CSV log
+        self._init_csv_log()
         
-        self.webhook_url = webhook_url
+        # For backward compatibility
         self.logger = None
         
+        # Track ML status
+        self.ml_enabled = self.model is not None and self.cat_maps is not None
+        print(f"🎯 SignalProcessor ready. ML Filtering: {'✅ ENABLED' if self.ml_enabled else '❌ DISABLED'}")
+    
     def set_logger(self, logger):
         """Allow external logger injection"""
         self.logger = logger
-        
-    def _create_mapping_dict(self, mapping_df: pd.DataFrame) -> Dict:
-        """Convert mapping DataFrame to lookup dictionary"""
-        mapping = {}
-        for _, row in mapping_df.iterrows():
-            col = row['Column']
-            val = row['Value']
-            idx = row['ID']
-            
-            if col not in mapping:
-                mapping[col] = {}
-            mapping[col][val] = idx
-        
-        return mapping
+        if self.logger:
+            self.logger.info("📊 Logger attached to SignalProcessor")
     
-    def check_and_predict(self, signal_id: str, hammer_timeframe: str, criteria: str,
-                          smt_cycle: str, smt_quarters: str, trigger_timeframe: str) -> Tuple[bool, int, int]:
+    def _init_csv_log(self):
+        """Initialize CSV log file with headers if it doesn't exist"""
+        try:
+            if not os.path.exists(self.csv_log_path):
+                os.makedirs(os.path.dirname(self.csv_log_path), exist_ok=True)
+                with open(self.csv_log_path, 'w') as f:
+                    f.write("timestamp,trade_id,prediction\n")
+                print(f"✅ Created prediction log: {self.csv_log_path}")
+            else:
+                print(f"📝 Using existing prediction log: {self.csv_log_path}")
+        except Exception as e:
+            print(f"⚠️ Could not initialize CSV log: {e}")
+    
+    def _log_prediction(self, signal_id: str, prediction: int):
+        """Log prediction to CSV file"""
+        try:
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            with open(self.csv_log_path, 'a') as f:
+                f.write(f"{timestamp},{signal_id},{prediction}\n")
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"⚠️ Failed to log prediction: {e}")
+    
+    def _clean_value(self, value):
+        """Clean a single value - remove tabs, newlines, strip whitespace"""
+        if isinstance(value, str):
+            return value.replace('\t', '').replace('\n', '').strip()
+        return value
+    
+    def _prepare_single_prediction(self, features: Dict) -> pd.DataFrame:
         """
-        Check if this is the FIRST hammer for this timeframe on this signal_id,
-        and predict if we should trade.
-        
-        Returns: (should_trade: bool, hammer_count: int, prediction: int)
+        Prepare single set of features for prediction
+        Returns: DataFrame ready for model prediction
         """
-        # Get current count for this timeframe
-        hammer_count = self.processed_signals[signal_id][hammer_timeframe]
+        # Clean all feature values
+        cleaned_features = {}
+        for key, value in features.items():
+            cleaned_key = self._clean_value(key)
+            cleaned_value = self._clean_value(value)
+            cleaned_features[cleaned_key] = [cleaned_value]  # Wrap in list for DataFrame
         
-        # Increment the count
-        self.processed_signals[signal_id][hammer_timeframe] += 1
+        # Create DataFrame
+        df = pd.DataFrame(cleaned_features)
         
-        # If model failed to load, always return True (skip filtering for now)
-        if self.learn is None:
-            if hammer_count == 0:
-                self.logger.warning(f"⚠️ ML model not loaded, defaulting to trade for first hammer")
-            return (hammer_count == 0, hammer_count, 1)  # Always trade first hammer
+        # Ensure all required columns exist (fill missing with defaults)
+        for col in self.all_columns:
+            if col not in df.columns:
+                if col in self.continuous_cols:
+                    df[col] = 0  # Default for continuous
+                else:
+                    df[col] = ''  # Default for categorical
         
-        # ONLY process ML for first hammer of this timeframe (hammer_count == 0)
-        if hammer_count == 0:
-            try:
-                # Prepare data for FastAI model
-                import pandas as pd
-                data = {
-                    'hammer_timeframe': [hammer_timeframe],
-                    'criteria': [criteria],
-                    'smt_cycle': [smt_cycle],
-                    'smt_quarters': [smt_quarters],
-                    'trigger_timeframe': [trigger_timeframe]
-                }
-                df = pd.DataFrame(data)
-                
-                # Get prediction from FastAI model
-                dl = self.learn.dls.test_dl(df)
-                preds, _ = self.learn.get_preds(dl=dl)
-                prob_success = preds[0][1].item()
-                
-                # Threshold at 0.5
-                prediction = 1 if prob_success >= 0.5 else 0
-                
-                # Store approval decision if prediction is 1
+        # Order columns exactly as model expects
+        df = df[self.all_columns]
+        
+        # Encode categorical features
+        for cat_col in self.categorical_cols:
+            if cat_col in self.cat_maps and cat_col in df.columns:
+                try:
+                    # Convert to categorical codes
+                    df[cat_col] = pd.Categorical(
+                        df[cat_col].astype(str).str.strip(), 
+                        categories=self.cat_maps[cat_col]
+                    ).codes
+                except:
+                    df[cat_col] = -1  # Unknown category
+            else:
+                df[cat_col] = -1
+        
+        # Ensure continuous columns are numeric
+        for cont_col in self.continuous_cols:
+            if cont_col in df.columns:
+                df[cont_col] = pd.to_numeric(df[cont_col], errors='coerce').fillna(0)
+        
+        return df
+    
+    def check_with_features(self, signal_id: str, features: Dict) -> int:
+        """
+        Main method: Check if we should trade based on ML model
+        
+        Args:
+            signal_id: Unique trade identifier
+            features: Dictionary with ALL 26 features as shown in your code
+            
+        Returns:
+            1 = Trade approved (model says yes)
+            0 = Trade rejected (model says no or error)
+        """
+        # If ML not enabled, default to approve (for backward compatibility)
+        if not self.ml_enabled:
+            if self.logger:
+                self.logger.warning(f"⚠️ ML disabled, auto-approving trade: {signal_id}")
+            self._log_prediction(signal_id, 1)
+            return 1
+        
+        try:
+            # Prepare features
+            df = self._prepare_single_prediction(features)
+            
+            # Make prediction
+            raw_prediction = self.model.predict(df)[0]
+            
+            # Map: -1 -> 0 (reject), 2 -> 1 (approve)
+            prediction = 1 if raw_prediction == 2 else 0
+            
+            # Log to CSV
+            self._log_prediction(signal_id, prediction)
+            
+            # Log result
+            if self.logger:
                 if prediction == 1:
-                    if signal_id not in self.approved_hammers:
-                        self.approved_hammers[signal_id] = {}
-                    self.approved_hammers[signal_id][hammer_timeframe] = True
-                
-                if self.logger:
-                    self.logger.info(f"🤖 ML Prediction: prob={prob_success:.2f}, decision={prediction}")
-                
-                return (prediction == 1, 1, prediction)
-                
-            except Exception as e:
-                if self.logger:
-                    self.logger.error(f"⚠️ ML Prediction error: {e}")
-                return (False, 1, 0)
-        else:
-            # Not first hammer - check if previously approved
-            approved = (signal_id in self.approved_hammers and 
-                       hammer_timeframe in self.approved_hammers[signal_id])
-            return (approved, hammer_count + 1, 0)
-    
-    def is_approved_for_webhook(self, signal_id: str, hammer_timeframe: str) -> bool:
-        """Check if this hammer was approved for webhook sending"""
-        return (signal_id in self.approved_hammers and 
-                hammer_timeframe in self.approved_hammers[signal_id])
-    
-    def get_hammer_stats(self, signal_id: str = None) -> Dict:
-        """Get statistics about processed hammers"""
-        if signal_id:
-            if signal_id in self.processed_signals:
-                return dict(self.processed_signals[signal_id])
-            return {}
-        else:
-            # Return all signals
-            total_signals = len(self.processed_signals)
-            total_hammers = sum(sum(tf_counts.values()) for tf_counts in self.processed_signals.values())
-            approved_trades = sum(len(tfs) for tfs in self.approved_hammers.values())
+                    self.logger.info(f"✅ ML APPROVED {signal_id} (raw: {raw_prediction})")
+                else:
+                    self.logger.info(f"⏸️ ML REJECTED {signal_id} (raw: {raw_prediction})")
             
-            return {
-                'total_signals': total_signals,
-                'total_hammers': total_hammers,
-                'approved_trades': approved_trades
-            }
+            return prediction
+            
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"❌ ML error for {signal_id}: {str(e)}")
+            
+            # Log as rejection on error (safer)
+            self._log_prediction(signal_id, 0)
+            return 0
 # ================================
 # ENHANCED TIMING MANAGER
 # ================================
