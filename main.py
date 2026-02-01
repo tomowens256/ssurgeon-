@@ -5619,6 +5619,8 @@ class HammerPatternScanner:
         self.cache_expiry = {}  # Track when cache expires
         self.cache_duration = 45  # Cache for 60 seconds
 
+        self.entry_counter = {}
+
         # Add this instead:
         self.candle_cache = CandleDataCache(
             ttl_seconds=45,      # Cache for 45 seconds
