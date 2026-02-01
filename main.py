@@ -9552,7 +9552,7 @@ class HammerPatternScanner:
         return vwap
     
     def calculate_advanced_features(self, df, candle_index):
-        """Calculate advanced features for the hammer candle - OPTIMIZED"""
+        """Calculate advanced features for the hammer candle - OPTIMIZED & FIXED"""
         try:
             if df.empty or len(df) < 100:
                 return {}
@@ -9601,49 +9601,53 @@ class HammerPatternScanner:
                     df_features[f'upper_band_{i}'] = df_features['vwap_value']
                     df_features[f'lower_band_{i}'] = df_features['vwap_value']
             
-            # Touch indicators (using the hammer candle)
+            # Initialize features dictionary
+            features = {}
+            
+            # Get hammer candle values
             try:
                 hammer_low = df_features['low'].iloc[candle_index]
                 hammer_high = df_features['high'].iloc[candle_index]
+                hammer_close = df_features['close'].iloc[candle_index]
+                
+                # Touch indicators (CORRECTED - get single values)
+                for i in range(1, 4):
+                    upper_band_val = df_features[f'upper_band_{i}'].iloc[candle_index]
+                    lower_band_val = df_features[f'lower_band_{i}'].iloc[candle_index]
+                    
+                    # CORRECT: Store single value, not entire series
+                    features[f'touches_upper_band_{i}'] = int(hammer_low <= upper_band_val <= hammer_high)
+                    features[f'touches_lower_band_{i}'] = int(hammer_low <= lower_band_val <= hammer_high)
+                
+                vwap_val = df_features['vwap_value'].iloc[candle_index]
+                features['touches_vwap'] = int(hammer_low <= vwap_val <= hammer_high)
+                
+                # Distance ratios (CORRECTED - get single values)
+                vwap_std_val = df_features['vwap_std'].iloc[candle_index] or 1e-6
                 
                 for i in range(1, 4):
                     upper_band_val = df_features[f'upper_band_{i}'].iloc[candle_index]
                     lower_band_val = df_features[f'lower_band_{i}'].iloc[candle_index]
                     
-                    touches_upper = int(hammer_low <= upper_band_val <= hammer_high)
-                    touches_lower = int(hammer_low <= lower_band_val <= hammer_high)
+                    upper_dist = abs(hammer_close - upper_band_val)
+                    lower_dist = abs(hammer_close - lower_band_val)
                     
-                    df_features[f'touches_upper_band_{i}'] = touches_upper
-                    df_features[f'touches_lower_band_{i}'] = touches_lower
+                    # CORRECT: Store single value, not entire series
+                    features[f'far_ratio_upper_band_{i}'] = float(upper_dist / vwap_std_val)
+                    features[f'far_ratio_lower_band_{i}'] = float(lower_dist / vwap_std_val)
                 
-                vwap_val = df_features['vwap_value'].iloc[candle_index]
-                touches_vwap = int(hammer_low <= vwap_val <= hammer_high)
-                df_features['touches_vwap'] = touches_vwap
-            except:
-                for i in range(1, 4):
-                    df_features[f'touches_upper_band_{i}'] = 0
-                    df_features[f'touches_lower_band_{i}'] = 0
-                df_features['touches_vwap'] = 0
-            
-            # Distance ratios
-            try:
-                hammer_close = df_features['close'].iloc[candle_index]
-                vwap_std_val = df_features['vwap_std'].iloc[candle_index] or 1e-6
+                vwap_dist = abs(hammer_close - vwap_val)
+                features['far_ratio_vwap'] = float(vwap_dist / vwap_std_val)
                 
+            except Exception as e:
+                # Set defaults if calculation fails
                 for i in range(1, 4):
-                    upper_dist = abs(hammer_close - df_features[f'upper_band_{i}'].iloc[candle_index])
-                    lower_dist = abs(hammer_close - df_features[f'lower_band_{i}'].iloc[candle_index])
-                    
-                    df_features[f'far_ratio_upper_band_{i}'] = upper_dist / vwap_std_val
-                    df_features[f'far_ratio_lower_band_{i}'] = lower_dist / vwap_std_val
-                
-                vwap_dist = abs(hammer_close - df_features['vwap_value'].iloc[candle_index])
-                df_features['far_ratio_vwap'] = vwap_dist / vwap_std_val
-            except:
-                for i in range(1, 4):
-                    df_features[f'far_ratio_upper_band_{i}'] = 0
-                    df_features[f'far_ratio_lower_band_{i}'] = 0
-                df_features['far_ratio_vwap'] = 0
+                    features[f'touches_upper_band_{i}'] = 0
+                    features[f'touches_lower_band_{i}'] = 0
+                    features[f'far_ratio_upper_band_{i}'] = 0.0
+                    features[f'far_ratio_lower_band_{i}'] = 0.0
+                features['touches_vwap'] = 0
+                features['far_ratio_vwap'] = 0.0
             
             # Bearish stack
             try:
@@ -9653,49 +9657,52 @@ class HammerPatternScanner:
                 ma_60 = df_features['ma_60'].iloc[candle_index]
                 
                 bearish = (ma_20 < ma_30) and (ma_30 < ma_40) and (ma_40 < ma_60)
-                df_features['bearish_stack'] = int(bearish)
+                features['bearish_stack'] = int(bearish)
             except:
-                df_features['bearish_stack'] = 0
+                features['bearish_stack'] = 0
             
             # Trend strength
             try:
                 trend_up = (ma_20 > ma_30) and (ma_30 > ma_40) and (ma_40 > ma_60)
                 trend_down = (ma_20 < ma_30) and (ma_30 < ma_40) and (ma_40 < ma_60)
                 
-                df_features['trend_strength_up'] = int(trend_up)
-                df_features['trend_strength_down'] = int(trend_down)
+                features['trend_strength_up'] = int(trend_up)
+                features['trend_strength_down'] = int(trend_down)
             except:
-                df_features['trend_strength_up'] = 0
-                df_features['trend_strength_down'] = 0
+                features['trend_strength_up'] = 0
+                features['trend_strength_down'] = 0
             
             # Previous volume
             try:
                 if candle_index > 0:
-                    df_features['prev_volume'] = df_features['volume'].iloc[candle_index - 1]
+                    features['prev_volume'] = float(df_features['volume'].iloc[candle_index - 1])
                 else:
-                    df_features['prev_volume'] = df_features['volume'].iloc[candle_index]
+                    features['prev_volume'] = float(df_features['volume'].iloc[candle_index])
             except:
-                df_features['prev_volume'] = 0
+                features['prev_volume'] = 0.0
             
-            # Extract values for the hammer candle
-            features = {}
-            for col in ['vwap_value', 'vwap_std', 'bearish_stack', 'trend_strength_up', 
-                       'trend_strength_down', 'prev_volume']:
-                features[col] = df_features[col].iloc[candle_index]
-            
-            for length in ma_lengths:
-                features[f'ma_{length}'] = df_features[f'ma_{length}'].iloc[candle_index]
-            
-            for i in range(1, 4):
-                features[f'upper_band_{i}'] = df_features[f'upper_band_{i}'].iloc[candle_index]
-                features[f'lower_band_{i}'] = df_features[f'lower_band_{i}'].iloc[candle_index]
-                features[f'touches_upper_band_{i}'] = df_features[f'touches_upper_band_{i}']
-                features[f'touches_lower_band_{i}'] = df_features[f'touches_lower_band_{i}']
-                features[f'far_ratio_upper_band_{i}'] = df_features[f'far_ratio_upper_band_{i}']
-                features[f'far_ratio_lower_band_{i}'] = df_features[f'far_ratio_lower_band_{i}']
-            
-            features['touches_vwap'] = df_features['touches_vwap']
-            features['far_ratio_vwap'] = df_features['far_ratio_vwap']
+            # Extract other values (CORRECTED - use .iloc[candle_index] for single value)
+            try:
+                features['vwap_value'] = float(df_features['vwap_value'].iloc[candle_index])
+                features['vwap_std'] = float(df_features['vwap_std'].iloc[candle_index])
+                
+                for length in ma_lengths:
+                    features[f'ma_{length}'] = float(df_features[f'ma_{length}'].iloc[candle_index])
+                
+                for i in range(1, 4):
+                    features[f'upper_band_{i}'] = float(df_features[f'upper_band_{i}'].iloc[candle_index])
+                    features[f'lower_band_{i}'] = float(df_features[f'lower_band_{i}'].iloc[candle_index])
+                    
+            except Exception as e:
+                self.logger.error(f"❌ Error extracting values: {str(e)}")
+                # Set defaults
+                features['vwap_value'] = 0.0
+                features['vwap_std'] = 0.0
+                for length in ma_lengths:
+                    features[f'ma_{length}'] = 0.0
+                for i in range(1, 4):
+                    features[f'upper_band_{i}'] = 0.0
+                    features[f'lower_band_{i}'] = 0.0
             
             # Store in cache
             if not hasattr(self, '_advanced_features_cache'):
