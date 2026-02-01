@@ -8611,47 +8611,47 @@ class HammerPatternScanner:
             webhook_approved = False
             
             # Zebra trades never use ML filtering
-            if trigger_type == 'zebra':
-                self.logger.info(f"🦓 Zebra trade {signal_id} - auto-approved")
-                webhook_approved = True  # Zebra trades are auto-approved
-            elif trigger_type == 'hammer':
-                # Only hammer trades use ML filtering (if available)
-                if hasattr(self, 'signal_processor') and self.signal_processor:
-                    # Extract required features for ML filter
-                    smt_cycle = signal_data.get('smt_data', {}).get('cycle', '')
-                    smt_quarters = signal_data.get('smt_data', {}).get('quarters', '')
-                    trigger_tf = trigger_data.get('trigger_timeframe', '')
+            # if trigger_type == 'zebra':
+            #     self.logger.info(f"🦓 Zebra trade {signal_id} - auto-approved")
+            #     webhook_approved = True  # Zebra trades are auto-approved
+            # elif trigger_type == 'hammer':
+            #     # Only hammer trades use ML filtering (if available)
+            #     if hasattr(self, 'signal_processor') and self.signal_processor:
+            #         # Extract required features for ML filter
+            #         smt_cycle = signal_data.get('smt_data', {}).get('cycle', '')
+            #         smt_quarters = signal_data.get('smt_data', {}).get('quarters', '')
+            #         trigger_tf = trigger_data.get('trigger_timeframe', '')
                     
-                    # Check with ML filter if we should trade
-                    should_trade, hammer_count, prediction = self.signal_processor.check_and_predict(
-                        signal_id=signal_id,
-                        hammer_timeframe=tf,
-                        criteria=criteria,
-                        smt_cycle=smt_cycle,
-                        smt_quarters=smt_quarters,
-                        trigger_timeframe=trigger_tf
-                    )
+            #         # Check with ML filter if we should trade
+            #         should_trade, hammer_count, prediction = self.signal_processor.check_and_predict(
+            #             signal_id=signal_id,
+            #             hammer_timeframe=tf,
+            #             criteria=criteria,
+            #             smt_cycle=smt_cycle,
+            #             smt_quarters=smt_quarters,
+            #             trigger_timeframe=trigger_tf
+            #         )
                     
-                    if hammer_count == 1:
-                        self.logger.info(f"🔍 Signal {signal_id} | TF: {tf} | 1st hammer | ML: {prediction}")
-                    else:
-                        self.logger.info(f"🔍 Signal {signal_id} | TF: {tf} | Hammer #{hammer_count}")
+            #         if hammer_count == 1:
+            #             self.logger.info(f"🔍 Signal {signal_id} | TF: {tf} | 1st hammer | ML: {prediction}")
+            #         else:
+            #             self.logger.info(f"🔍 Signal {signal_id} | TF: {tf} | Hammer #{hammer_count}")
                     
-                    if not should_trade:
-                        if hammer_count > 1:
-                            self.logger.info(f"⏸️ Skipping - Not 1st hammer on {tf} for signal {signal_id}")
-                        else:
-                            self.logger.info(f"⏸️ ML rejected 1st hammer on {tf} (prediction: {prediction})")
-                        return False
-                    else:
-                        webhook_approved = True  # ✅ Store the approval
-                        self.logger.info(f"✅ ML approved 1st hammer on {tf} (prediction: {prediction})")
-                else:
-                    self.logger.warning(f"⚠️ No signal_processor for hammer {signal_id}")
-                    webhook_approved = True  # Approve without ML
-            else:
-                self.logger.error(f"❌ Unknown trigger_type: {trigger_type}")
-                return False
+            #         if not should_trade:
+            #             if hammer_count > 1:
+            #                 self.logger.info(f"⏸️ Skipping - Not 1st hammer on {tf} for signal {signal_id}")
+            #             else:
+            #                 self.logger.info(f"⏸️ ML rejected 1st hammer on {tf} (prediction: {prediction})")
+            #             return False
+            #         else:
+            #             webhook_approved = True  # ✅ Store the approval
+            #             self.logger.info(f"✅ ML approved 1st hammer on {tf} (prediction: {prediction})")
+            #     else:
+            #         self.logger.warning(f"⚠️ No signal_processor for hammer {signal_id}")
+            #         webhook_approved = True  # Approve without ML
+            # else:
+            #     self.logger.error(f"❌ Unknown trigger_type: {trigger_type}")
+            #     return False
             
             # 1. SETUP PRICES BASED ON CRITERIA
             if trigger_type == 'zebra':
@@ -8933,7 +8933,79 @@ class HammerPatternScanner:
             trade_data.update(zebra_features)
     
             # 9. MODIFIED WEBHOOK SECTION
-            node_id = 0
+            # ===== EXTRACT ML FEATURES DIRECTLY FROM TRADE_DATA =====
+            webhook_approved = False
+            
+            # Zebra trades never use ML filtering
+            if trigger_type == 'zebra':
+                self.logger.info(f"🦓 Zebra trade {signal_id} - auto-approved")
+                webhook_approved = True  # Zebra trades are auto-approved
+            elif trigger_type == 'hammer':
+                # Only hammer trades use ML filtering (if available)
+                if hasattr(self, 'signal_processor') and self.signal_processor:
+                    try:
+                        # ===== EXTRACT EXACT FEATURES FROM TRADE_DATA =====
+                        ml_features = {
+                            'instrument': trade_data.get('instrument', ''),
+                            'hammer_timeframe': trade_data.get('hammer_timeframe', ''),
+                            'direction': trade_data.get('direction', '').lower(),
+                            'criteria': trade_data.get('criteria', ''),
+                            'trigger_timeframe': trade_data.get('trigger_timeframe', ''),
+                            'smt_cycle': trade_data.get('smt_cycle', ''),
+                            'smt_quarters': trade_data.get('smt_quarters', ''),
+                            'H4_open_rel': trade_data.get('H4_open_rel', ''),  # Direct from trade_data
+                            'H6_open_rel': trade_data.get('H6_open_rel', ''),  # Direct from trade_data
+                            'D_open_rel': trade_data.get('D_open_rel', ''),    # Direct from trade_data
+                            'W_open_rel': trade_data.get('W_open_rel', ''),    # Direct from trade_data
+                            '1m_zebra': trade_data.get('1m_zebra', ''),
+                            '3m_zebra': trade_data.get('3m_zebra', ''),
+                            '5m_zebra': trade_data.get('5m_zebra', ''),
+                            '15m_zebra': trade_data.get('15m_zebra', ''),
+                            'h1_zebra': trade_data.get('h1_zebra', ''),
+                            'h4_zebra': trade_data.get('h4_zebra', ''),
+                            'h6_zebra': trade_data.get('h6_zebra', ''),
+                            'd_zebra': trade_data.get('d_zebra', ''),
+                            'sl_distance_pips': trade_data.get('sl_distance_pips', 0),
+                            'rsi': trade_data.get('rsi', 50),
+                            'vwap': trade_data.get('vwap', current_price),
+                            'news_high_count': trade_data.get('news_high_count', 0),
+                            'news_medium_count': trade_data.get('news_medium_count', 0),
+                            'news_low_count': trade_data.get('news_low_count', 0),
+                            'entry_count': trade_data.get('entry_count', 1)
+                        }
+                        
+                        # Log what we're sending to ML
+                        self.logger.info(f"📊 Sending ML features for {signal_id}:")
+                        for key, value in ml_features.items():
+                            if value:  # Only log non-empty/non-zero values
+                                self.logger.info(f"   {key}: {value}")
+                        
+                        # Check with ML filter if we should trade
+                        # The signal_processor should return 1 for trade, 0 for skip
+                        should_trade = self.signal_processor.check_with_features(
+                            signal_id=signal_id,
+                            features=ml_features
+                        )
+                        
+                        if not should_trade:
+                            self.logger.info(f"⏸️ ML rejected hammer on {tf} for signal {signal_id}")
+                            return False
+                        else:
+                            webhook_approved = True
+                            self.logger.info(f"✅ ML approved hammer on {tf}")
+                            
+                    except Exception as ml_error:
+                        self.logger.error(f"❌ ML filter error: {str(ml_error)}")
+                        webhook_approved = True  # Default to approve if ML fails
+                        
+                else:
+                    self.logger.warning(f"⚠️ No signal_processor for hammer {signal_id}")
+                    webhook_approved = True  # Approve without ML
+            else:
+                self.logger.error(f"❌ Unknown trigger_type: {trigger_type}")
+                return False
+            
+            # ===== WEBHOOK SECTION =====
             webhook_sent = 0
     
             if trigger_type == 'hammer' and webhook_approved:
@@ -8963,9 +9035,9 @@ class HammerPatternScanner:
                 self.logger.info(f"🦓 Zebra trade - no webhook sent (manual execution)")
                 webhook_sent = 0
     
-            # 10. FINALIZE
+            # ===== FINALIZE =====
             trade_data['webhook_sent'] = webhook_sent
-            trade_data['ai_node'] = node_id
+            trade_data['ai_node'] = 0  # Always 0 as requested
     
             self.logger.info(f"🔄 {trigger_type.upper()} trade_data created: {signal_id}")
             
