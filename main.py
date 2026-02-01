@@ -8558,18 +8558,19 @@ class HammerPatternScanner:
                             continue
     
                         # 10. PROCESS AND JOURNAL
+                        # In run_zebra_scan method:
                         success = self._process_and_record_hammer(
                             instrument=instrument,
                             tf=tf,
                             candle=latest_candle,
                             direction=detected_dir,
                             criteria='zebra',
-                            signal_data={},
+                            signal_data={},  # Empty but still passed
                             signal_id=f"ZEB_{tf}_{int(time.time())}",
-                            trigger_data={},
+                            trigger_data={'type': 'zebra_independent'},  # Add minimal trigger data
                             zebra_entry=entry_price,
                             zebra_sl=sl_price,
-                            trigger_type='zebra'  # NEW: Add trigger_type
+                            trigger_type='zebra'
                         )
                         
                         if success:
@@ -8889,6 +8890,15 @@ class HammerPatternScanner:
             #     # For backward compatibility, keep the 0/1 flags (optional - you can remove these)
             #     # quarter_features[f'above_true_open_{cycle_type}'] = 1 if quarter_features[f'true_open_relation_{cycle_type}'] == 'up' else 0
             #     # quarter_features[f'below_true_open_{cycle_type}'] = 1 if quarter_features[f'true_open_relation_{cycle_type}'] == 'down' else 0
+
+            # Track how many trades have been made for this signal_id
+            with self.entry_counter_lock:
+                if signal_id not in self.entry_counter:
+                    self.entry_counter[signal_id] = 0
+                self.entry_counter[signal_id] += 1
+                entry_count = self.entry_counter[signal_id]
+            
+            self.logger.info(f"📊 Entry #{entry_count} for signal {signal_id}")
     
             # 8. BUILD TRADE DATA
             trade_id = self._generate_trade_id(instrument, tf) if hasattr(self, '_generate_trade_id') else f"T_{int(current_time.timestamp())}"
@@ -8901,6 +8911,7 @@ class HammerPatternScanner:
                 'timestamp': current_time.strftime('%Y-%m-%d %H:%M:%S'),
                 'signal_id': signal_id,
                 'trade_id': trade_id,
+                'entry_count': entry_count, 
                 'instrument': instrument,
                 'hammer_timeframe': tf,
                 'direction': direction.upper(),
