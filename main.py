@@ -8587,15 +8587,15 @@ class HammerPatternScanner:
     def _process_and_record_hammer(self, instrument, tf, candle, direction, criteria, 
                                signal_data, signal_id, trigger_data, 
                                zebra_entry=None, zebra_sl=None, trigger_type='hammer'):
-        """Process a single signal (Hammer or Zebra) and record it - AI SNIPER VERSION"""
+        """Process a single signal (Hammer or Zebra) and record it - FIXED VERSION"""
         try:
             # === NEW: Add trigger_type parameter ===
             trigger_criteria = trigger_data.get('type', '')  # Get original signal type
             trigger_type = trigger_type  # 'hammer' or 'zebra'
             
-            # === FIX: Properly extract signal data for Zebra when triggered by signals ===
-            if trigger_type == 'zebra' and trigger_criteria:  # Zebra triggered by a signal
-                # We have signal_data from the trigger, use it
+            # === FIXED: Properly extract signal data based on trigger type ===
+            if trigger_type == 'zebra' and trigger_criteria and trigger_criteria != 'zebra_independent':
+                # Zebra triggered by a signal (SD/FVG/CRT)
                 fvg_idea = signal_data.get('fvg_idea', {})
                 smt_data = signal_data.get('smt_data', {})
                 zone = signal_data.get('zone', {})
@@ -8603,7 +8603,7 @@ class HammerPatternScanner:
                 has_psp = signal_data.get('has_psp', False)
                 is_hp_fvg = signal_data.get('is_hp_fvg', False)
                 is_hp_zone = signal_data.get('is_hp_zone', False)
-            elif trigger_type == 'zebra' and not trigger_criteria:
+            elif trigger_type == 'zebra':
                 # Independent Zebra (no signal trigger)
                 fvg_idea, smt_data, zone, crt_signal, has_psp = {}, {}, {}, {}, False
                 is_hp_fvg, is_hp_zone = False, False
@@ -8617,54 +8617,57 @@ class HammerPatternScanner:
                 is_hp_fvg = signal_data.get('is_hp_fvg', False)
                 is_hp_zone = signal_data.get('is_hp_zone', False)
             
-            # === NEW: ML FILTER CHECK (only for hammer signals) ===
-            webhook_approved = False  # Store ML approval decisions
+            # === FIXED: ML FILTER CHECK - ONLY FOR HAMMER TRADES ===
+            webhook_approved = False
             
-            if trigger_type == 'zebra':  # Changed from criteria != 'zebra'
-                # Extract required features for ML filter
-                smt_cycle = signal_data.get('smt_data', {}).get('cycle', '')
-                smt_quarters = signal_data.get('smt_data', {}).get('quarters', '')
-                trigger_tf = trigger_data.get('trigger_timeframe', '')
-                
-                # Check with ML filter if we should trade
-                should_trade, hammer_count, prediction = self.signal_processor.check_and_predict(
-                    signal_id=signal_id,
-                    hammer_timeframe=tf,
-                    criteria=criteria,
-                    smt_cycle=smt_cycle,
-                    smt_quarters=smt_quarters,
-                    trigger_timeframe=trigger_tf
-                )
-                
-                if hammer_count == 1:
-                    self.logger.info(f"🔍 Signal {signal_id} | TF: {tf} | 1st hammer | ML: {prediction}")
-                else:
-                    self.logger.info(f"🔍 Signal {signal_id} | TF: {tf} | Hammer #{hammer_count}")
-                
-                if not should_trade:
-                    if hammer_count > 1:
-                        self.logger.info(f"⏸️ Skipping - Not 1st hammer on {tf} for signal {signal_id}")
+            # Zebra trades never use ML filtering
+            if trigger_type == 'zebra':
+                self.logger.info(f"🦓 Zebra trade {signal_id} - auto-approved")
+                webhook_approved = True  # Zebra trades are auto-approved
+            elif trigger_type == 'hammer':
+                # Only hammer trades use ML filtering (if available)
+                if hasattr(self, 'signal_processor') and self.signal_processor:
+                    # Extract required features for ML filter
+                    smt_cycle = signal_data.get('smt_data', {}).get('cycle', '')
+                    smt_quarters = signal_data.get('smt_data', {}).get('quarters', '')
+                    trigger_tf = trigger_data.get('trigger_timeframe', '')
+                    
+                    # Check with ML filter if we should trade
+                    should_trade, hammer_count, prediction = self.signal_processor.check_and_predict(
+                        signal_id=signal_id,
+                        hammer_timeframe=tf,
+                        criteria=criteria,
+                        smt_cycle=smt_cycle,
+                        smt_quarters=smt_quarters,
+                        trigger_timeframe=trigger_tf
+                    )
+                    
+                    if hammer_count == 1:
+                        self.logger.info(f"🔍 Signal {signal_id} | TF: {tf} | 1st hammer | ML: {prediction}")
                     else:
-                        self.logger.info(f"⏸️ ML rejected 1st hammer on {tf} (prediction: {prediction})")
-                    return False
+                        self.logger.info(f"🔍 Signal {signal_id} | TF: {tf} | Hammer #{hammer_count}")
+                    
+                    if not should_trade:
+                        if hammer_count > 1:
+                            self.logger.info(f"⏸️ Skipping - Not 1st hammer on {tf} for signal {signal_id}")
+                        else:
+                            self.logger.info(f"⏸️ ML rejected 1st hammer on {tf} (prediction: {prediction})")
+                        return False
+                    else:
+                        webhook_approved = True  # ✅ Store the approval
+                        self.logger.info(f"✅ ML approved 1st hammer on {tf} (prediction: {prediction})")
                 else:
-                    webhook_approved = True  # ✅ Store the approval
-                    self.logger.info(f"✅ ML approved 1st hammer on {tf} (prediction: {prediction})")
+                    self.logger.warning(f"⚠️ No signal_processor for hammer {signal_id}")
+                    webhook_approved = True  # Approve without ML
+            else:
+                self.logger.error(f"❌ Unknown trigger_type: {trigger_type}")
+                return False
             
             # 1. SETUP PRICES BASED ON CRITERIA
             if trigger_type == 'zebra':
                 current_price = zebra_entry
                 sl_price = zebra_sl
-                # Zebra signals skip some Hammer-specific signal_data extraction
-                fvg_idea, smt_data, zone, crt_signal, has_psp = {}, {}, {}, {}, False
             else:
-                # EXISTING HAMMER LOGIC
-                fvg_idea = signal_data.get('fvg_idea', {})
-                smt_data = signal_data.get('smt_data', {})
-                zone = signal_data.get('zone', {})
-                crt_signal = signal_data.get('crt_signal', {})
-                has_psp = signal_data.get('has_psp', False)
-                
                 # Get current price for entry
                 current_df = fetch_candles(instrument, tf, count=1, api_key=self.credentials['oanda_api_key'])
                 if current_df.empty:
@@ -8675,32 +8678,39 @@ class HammerPatternScanner:
             current_time = datetime.now(NY_TZ)
             pip_multiplier = 100 if 'JPY' in instrument else 10000
     
-            # 2. CALCULATE SIGNAL LATENCY (for both hammer and zebra)
+            # 2. CALCULATE SIGNAL LATENCY
             candle_close_time = candle['time']
             if isinstance(candle_close_time, str):
                 candle_close_time = datetime.strptime(candle_close_time, '%Y-%m-%d %H:%M:%S')
             signal_latency_seconds = (current_time - candle_close_time).total_seconds()
-
+    
             # === ADD QUARTER ANALYSIS HERE ===
-            signal_time = candle['time']  # Use the candle time for quarter calculation
+            signal_time = candle['time']
             
             quarter_features = {}
             for cycle_type in ['monthly', 'weekly', 'daily', '90min']:
-                true_open, current_quarter = self.get_true_open_for_cycle(instrument, cycle_type, signal_time)
-                
-                # Store features
-                quarter_features[f'current_quarter_{cycle_type}'] = current_quarter or ''
-                quarter_features[f'true_open_{cycle_type}'] = round(true_open, 5) if true_open else ''
-                
-                # Calculate relation to true open (simplified: just up/down)
-                if true_open and current_price:
-                    if current_price > true_open:
-                        quarter_features[f'true_open_relation_{cycle_type}'] = 'up'
-                    elif current_price < true_open:
-                        quarter_features[f'true_open_relation_{cycle_type}'] = 'down'
+                try:
+                    true_open, current_quarter = self.get_true_open_for_cycle(instrument, cycle_type, signal_time)
+                    
+                    # Store features
+                    quarter_features[f'current_quarter_{cycle_type}'] = current_quarter or ''
+                    quarter_features[f'true_open_{cycle_type}'] = round(true_open, 5) if true_open else ''
+                    
+                    # Calculate relation to true open
+                    if true_open and current_price:
+                        if current_price > true_open:
+                            quarter_features[f'true_open_relation_{cycle_type}'] = 'up'
+                        elif current_price < true_open:
+                            quarter_features[f'true_open_relation_{cycle_type}'] = 'down'
+                        else:
+                            quarter_features[f'true_open_relation_{cycle_type}'] = 'equal'
                     else:
-                        quarter_features[f'true_open_relation_{cycle_type}'] = 'equal'
-                else:
+                        quarter_features[f'true_open_relation_{cycle_type}'] = ''
+                        
+                except Exception as cycle_error:
+                    self.logger.error(f"❌ Error calculating {cycle_type} quarter: {str(cycle_error)}")
+                    quarter_features[f'current_quarter_{cycle_type}'] = ''
+                    quarter_features[f'true_open_{cycle_type}'] = ''
                     quarter_features[f'true_open_relation_{cycle_type}'] = ''
             
             # Log quarter analysis
@@ -8725,44 +8735,16 @@ class HammerPatternScanner:
                     self.logger.info(f"   {cycle_type.upper():8} | Q{current_quarter} | "
                                    f"True Open: {true_open:.5f} | {emoji} {relation_text}")
     
-            # 3. GET NEWS CONTEXT (same as original)
+            # 3. GET NEWS CONTEXT
             news_context = {}
             if hasattr(self, 'news_calendar') and self.news_calendar:
                 try:
-                    signal_time = datetime.now(NY_TZ)
-                    news_context = self.news_calendar.get_news_for_instrument(instrument, signal_time)
+                    news_context = self.news_calendar.get_news_for_instrument(instrument, current_time)
                 except Exception as e:
                     self.logger.error(f"❌ Error getting news from calendar: {e}")
-                    news_context = {
-                        'error': str(e),
-                        'event_count': 0,
-                        'high_impact_count': 0,
-                        'fetch_status': 'error'
-                    }
-            elif hasattr(self, 'news_cache_dir') and self.news_cache_dir:
-                try:
-                    today_str = datetime.now(NY_TZ).strftime('%Y-%m-%d')
-                    cache_file = f"{self.news_cache_dir}/news_cache_{today_str}.json"
-                    
-                    if os.path.exists(cache_file):
-                        with open(cache_file, 'r') as f:
-                            cached_news = json.load(f)
-                        # Process cached_news for your instrument
-                        news_context = self._filter_news_for_instrument(cached_news, instrument)
-                except Exception as e:
-                    self.logger.error(f"❌ Error reading news cache: {e}")
-                    news_context = {
-                        'error': str(e),
-                        'event_count': 0,
-                        'high_impact_count': 0,
-                        'fetch_status': 'error'
-                    }
+                    news_context = {'fetch_status': 'error'}
             else:
-                news_context = {
-                    'event_count': 0,
-                    'high_impact_count': 0,
-                    'fetch_status': 'disabled'
-                }
+                news_context = {'fetch_status': 'disabled'}
             
             # Extract news data safely
             safe_news_data = self._get_safe_news_data(news_context, instrument)
@@ -8791,7 +8773,7 @@ class HammerPatternScanner:
                     tp_1_4_price = current_price + (4 * (current_price - sl_price))
                     tp_1_2_price = current_price + (2 * (current_price - sl_price))
     
-            # 5. CALCULATE TP LEVELS (Universal for both)
+            # 5. CALCULATE TP LEVELS
             tp_prices = {}
             for i in range(1, 11):
                 if direction.lower() in ['bearish', 'sell']:
@@ -8802,7 +8784,7 @@ class HammerPatternScanner:
             sl_distance_pips = abs(current_price - sl_price) * pip_multiplier
             tp_distances = {f'tp_1_{i}_distance': round(sl_distance_pips * i, 1) for i in range(1, 11)}
             
-            # Calculate position sizes for risk management
+            # Calculate position sizes
             risk_10_lots, risk_100_lots = self.calculate_position_sizes(
                 instrument, 
                 sl_distance_pips, 
@@ -8814,7 +8796,6 @@ class HammerPatternScanner:
                 instrument, direction, current_price, sl_price
             )
             
-            # FIX: Handle the tuple return properly
             if open_tp_data and open_tp_data[0] is not None:
                 open_tp_price, open_tp_rr, open_tp_type = open_tp_data
             else:
@@ -8844,7 +8825,7 @@ class HammerPatternScanner:
                 second_swing_time = swings_list[1]['time'] if len(swings_list) > 1 else None
                 
                 if formation_time and second_swing_time:
-                    zone_timeframe = tf  # Use hammer timeframe for swing detection
+                    zone_timeframe = tf
                     inducement_count = self.calculate_inducement(
                         instrument, direction, trigger_data.get('fib_zones', []),
                         formation_time, second_swing_time, zone_timeframe
@@ -8864,34 +8845,8 @@ class HammerPatternScanner:
             timeframe_data = self.fetch_all_timeframe_data(instrument)
             higher_tf_features = self.calculate_higher_tf_features(instrument, current_price, candle['time'], timeframe_data)
             zebra_features = self.calculate_zebra_features(instrument, candle['time'], timeframe_data)
-
-            # # === NEW: GET QUARTER FEATURES ===
-            # signal_time = candle['time']  # Use the candle time for quarter calculation
-            
-            # quarter_features = {}
-            # for cycle_type in ['monthly', 'weekly', 'daily', '90min']:
-            #     true_open, current_quarter = self.get_true_open_for_cycle(instrument, cycle_type, signal_time)
-                
-            #     # Store basic features
-            #     quarter_features[f'current_quarter_{cycle_type}'] = current_quarter or ''
-            #     quarter_features[f'true_open_{cycle_type}'] = round(true_open, 5) if true_open else ''
-                
-            #     # Calculate relation to true open (simplified: just up/down)
-            #     if true_open and current_price:
-            #         if current_price > true_open:
-            #             quarter_features[f'true_open_relation_{cycle_type}'] = 'up'
-            #         elif current_price < true_open:
-            #             quarter_features[f'true_open_relation_{cycle_type}'] = 'down'
-            #         else:
-            #             quarter_features[f'true_open_relation_{cycle_type}'] = 'equal'
-            #     else:
-            #         quarter_features[f'true_open_relation_{cycle_type}'] = ''
-                
-            #     # For backward compatibility, keep the 0/1 flags (optional - you can remove these)
-            #     # quarter_features[f'above_true_open_{cycle_type}'] = 1 if quarter_features[f'true_open_relation_{cycle_type}'] == 'up' else 0
-            #     # quarter_features[f'below_true_open_{cycle_type}'] = 1 if quarter_features[f'true_open_relation_{cycle_type}'] == 'down' else 0
-
-            # Track how many trades have been made for this signal_id
+    
+            # === ENTRY COUNT FEATURE ===
             with self.entry_counter_lock:
                 if signal_id not in self.entry_counter:
                     self.entry_counter[signal_id] = 0
@@ -8911,7 +8866,7 @@ class HammerPatternScanner:
                 'timestamp': current_time.strftime('%Y-%m-%d %H:%M:%S'),
                 'signal_id': signal_id,
                 'trade_id': trade_id,
-                'entry_count': entry_count, 
+                'entry_count': entry_count,
                 'instrument': instrument,
                 'hammer_timeframe': tf,
                 'direction': direction.upper(),
@@ -8925,23 +8880,27 @@ class HammerPatternScanner:
                 'signal_latency_seconds': round(signal_latency_seconds, 2),
                 'hammer_volume': int(candle.get('volume', 0)),
                 'inducement_count': inducement_count,
-                # NEW: Add trigger_type field
-                'trigger_type': trigger_type,  # 'hammer' or 'zebra'
-                # Initialize TP results and times
-                'tp_1_1_result': '', 'tp_1_1_time_seconds': 0,
-                'tp_1_2_result': '', 'tp_1_2_time_seconds': 0,
-                'tp_1_3_result': '', 'tp_1_3_time_seconds': 0,
-                'tp_1_4_result': '', 'tp_1_4_time_seconds': 0,
-                'tp_1_5_result': '', 'tp_1_5_time_seconds': 0,
-                'tp_1_6_result': '', 'tp_1_6_time_seconds': 0,
-                'tp_1_7_result': '', 'tp_1_7_time_seconds': 0,
-                'tp_1_8_result': '', 'tp_1_8_time_seconds': 0,
-                'tp_1_9_result': '', 'tp_1_9_time_seconds': 0,
-                'tp_1_10_result': '', 'tp_1_10_time_seconds': 0,
-                'open_tp_result': '',
-                'open_tp_time_seconds': 0,
-                'criteria': criteria,
-                'trigger_criteria': trigger_criteria,  # Store original signal type
+                'trigger_type': trigger_type,
+                
+                # NEW QUARTER FEATURES
+                'current_quarter_monthly': quarter_features.get('current_quarter_monthly', ''),
+                'true_open_monthly': quarter_features.get('true_open_monthly', ''),
+                'true_open_relation_monthly': quarter_features.get('true_open_relation_monthly', ''),
+                
+                'current_quarter_weekly': quarter_features.get('current_quarter_weekly', ''),
+                'true_open_weekly': quarter_features.get('true_open_weekly', ''),
+                'true_open_relation_weekly': quarter_features.get('true_open_relation_weekly', ''),
+                
+                'current_quarter_daily': quarter_features.get('current_quarter_daily', ''),
+                'true_open_daily': quarter_features.get('true_open_daily', ''),
+                'true_open_relation_daily': quarter_features.get('true_open_relation_daily', ''),
+                
+                'current_quarter_90min': quarter_features.get('current_quarter_90min', ''),
+                'true_open_90min': quarter_features.get('true_open_90min', ''),
+                'true_open_relation_90min': quarter_features.get('true_open_relation_90min', ''),
+                
+                # Continue with rest of fields...
+                'trigger_criteria': trigger_criteria,
                 'trigger_timeframe': trigger_data.get('trigger_timeframe', ''),
                 'fvg_formation_time': fvg_idea.get('formation_time', '').strftime('%Y-%m-%d %H:%M:%S') if fvg_idea.get('formation_time') else '',
                 'sd_formation_time': zone.get('formation_time', '').strftime('%Y-%m-%d %H:%M:%S') if zone.get('formation_time') else '',
@@ -8949,32 +8908,14 @@ class HammerPatternScanner:
                 'smt_cycle': smt_data.get('cycle', ''),
                 'smt_quarters': smt_data.get('quarters', ''),
                 'has_psp': 1 if has_psp else 0,
-                'is_hp_fvg': 1 if signal_data.get('is_hp_fvg') else 0,
-                'is_hp_zone': 1 if signal_data.get('is_hp_zone') else 0,
+                'is_hp_fvg': 1 if is_hp_fvg else 0,
+                'is_hp_zone': 1 if is_hp_zone else 0,
                 'rsi': indicators.get('rsi', 50),
                 'vwap': indicators.get('vwap', current_price),
                 'exit_time': '',
                 'time_to_exit_seconds': 0,
                 'tp_level_hit': 0,
-                # NEW SIMPLIFIED QUARTER FEATURES
-                'current_quarter_monthly': quarter_features.get('current_quarter_monthly', ''),
-                'true_open_monthly': quarter_features.get('true_open_monthly', ''),
-                'true_open_relation_monthly': quarter_features.get('true_open_relation_monthly', ''),  # 'up' or 'down'
-                
-                'current_quarter_weekly': quarter_features.get('current_quarter_weekly', ''),
-                'true_open_weekly': quarter_features.get('true_open_weekly', ''),
-                'true_open_relation_weekly': quarter_features.get('true_open_relation_weekly', ''),  # 'up' or 'down'
-                
-                'current_quarter_daily': quarter_features.get('current_quarter_daily', ''),
-                'true_open_daily': quarter_features.get('true_open_daily', ''),
-                'true_open_relation_daily': quarter_features.get('true_open_relation_daily', ''),  # 'up' or 'down'
-                
-                'current_quarter_90min': quarter_features.get('current_quarter_90min', ''),
-                'true_open_90min': quarter_features.get('true_open_90min', ''),
-                'true_open_relation_90min': quarter_features.get('true_open_relation_90min', ''),  # 'up' or 'down'
-                # Webhook status
-                'webhook_sent': 0,  # Will be updated later
-                # News data
+                'webhook_sent': 0,
                 'news_context_json': safe_news_data.get('news_context_json', ''),
                 'news_high_count': safe_news_data.get('news_high_count', 0),
                 'news_medium_count': safe_news_data.get('news_medium_count', 0),
@@ -9001,13 +8942,12 @@ class HammerPatternScanner:
             trade_data.update(higher_tf_features)
             trade_data.update(zebra_features)
     
-            # 9. MODIFIED WEBHOOK SECTION (REPLACING AI BLOCK)
+            # 9. MODIFIED WEBHOOK SECTION
             node_id = 0
             webhook_sent = 0
-            
-            if trigger_type == 'hammer' and webhook_approved:  # Only for ML-approved hammers
+    
+            if trigger_type == 'hammer' and webhook_approved:
                 try:
-                    # Use TP2 (tp_1_2_price) - which is already in trade_data
                     target_tp_level = 2  # Always use TP2
                     
                     webhook_sent = self.send_webhook_signal(
@@ -9015,9 +8955,9 @@ class HammerPatternScanner:
                         direction=direction, 
                         entry_price=current_price,
                         sl_price=sl_price, 
-                        tp_price=tp_prices[target_tp_level],  # Use TP2 from tp_prices dict
+                        tp_price=tp_prices[target_tp_level],
                         signal_id=signal_id, 
-                        trade_id=trade_id,  # Use trade_id variable
+                        trade_id=trade_id,
                         timeframe=tf,
                         criteria=criteria, 
                         risk_usd=50.0
@@ -9027,16 +8967,19 @@ class HammerPatternScanner:
                 except Exception as webhook_err:
                     self.logger.error(f"⚠️ Webhook error: {webhook_err}")
                     webhook_sent = 0
-            elif trigger_type == 'hammer':
+            elif trigger_type == 'hammer' and not webhook_approved:
                 self.logger.info(f"⏸️ Skipping webhook - ML prediction was not approved")
+            elif trigger_type == 'zebra':
+                self.logger.info(f"🦓 Zebra trade - no webhook sent (manual execution)")
+                webhook_sent = 0
     
             # 10. FINALIZE
             trade_data['webhook_sent'] = webhook_sent
-            trade_data['ai_node'] = node_id  # Keep this field but always 0
+            trade_data['ai_node'] = node_id
     
             self.logger.info(f"🔄 {trigger_type.upper()} trade_data created: {signal_id}")
             
-            self.send_hammer_signal(trade_data, trigger_data)  # Telegram
+            self.send_hammer_signal(trade_data, trigger_data)
             self.save_trade_to_csv(trade_data)
             self._start_tp_monitoring(trade_data)
             
