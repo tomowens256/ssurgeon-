@@ -6609,7 +6609,7 @@ class HammerPatternScanner:
         self.csv_base_path = csv_base_path.rstrip('_')
         self.csv_file_path = f"{self.csv_base_path}.csv"
         self.init_csv_storage()
-        self.tp_monitor = TPMonitoringManager(
+        self.tp_monitor = SafeTPMonitoringManager(
             csv_path=self.csv_file_path,
             api_key=self.credentials['oanda_api_key'],  # Pass API key directly!
             logger=self.logger
