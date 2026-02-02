@@ -11002,7 +11002,7 @@ class ZebraManager:
         self.instruments_dict = instruments_dict or ZEBRA_INSTRUMENTS
         self.running = False
         self.quarter_manager = RobustQuarterManager()
-        self.signal_processor = SignalProcessor()
+        # self.signal_processor = SignalProcessor()
         
         # Set up logger
         if logger:
