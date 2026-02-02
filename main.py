@@ -11057,667 +11057,667 @@ class HammerPatternScanner:
             except Exception as e:
                 self.logger.error(f"❌ Reconciliation error for {csv_path}: {e}")
     
-    def _safe_csv_reconciliation(self, csv_path):
-        """Safe reconciliation that avoids conflicts with live monitoring"""
+    # def _safe_csv_reconciliation(self, csv_path):
+    #     """Safe reconciliation that avoids conflicts with live monitoring"""
         
-        # Check if file exists
-        if not os.path.exists(csv_path):
-            self.logger.warning(f"📁 CSV not found: {csv_path}")
-            return
+    #     # Check if file exists
+    #     if not os.path.exists(csv_path):
+    #         self.logger.warning(f"📁 CSV not found: {csv_path}")
+    #         return
         
-        try:
-            # Read CSV
-            df = pd.read_csv(csv_path).fillna('')
+    #     try:
+    #         # Read CSV
+    #         df = pd.read_csv(csv_path).fillna('')
             
-            # SAFE: Only process trades that are COMPLETELY missing results
-            # This avoids interfering with partially completed trades
-            def is_completely_orphaned(row):
-                """Check if trade has NO TP results and NO exit time"""
-                # Has exit_time? Not an orphan
-                if row.get('exit_time') and str(row['exit_time']).strip():
-                    return False
+    #         # SAFE: Only process trades that are COMPLETELY missing results
+    #         # This avoids interfering with partially completed trades
+    #         def is_completely_orphaned(row):
+    #             """Check if trade has NO TP results and NO exit time"""
+    #             # Has exit_time? Not an orphan
+    #             if row.get('exit_time') and str(row['exit_time']).strip():
+    #                 return False
                 
-                # Check if ANY TP has been recorded
-                for i in range(1, 11):
-                    result = row.get(f'tp_1_{i}_result', '')
-                    if str(result).strip() and result != '':
-                        return False
+    #             # Check if ANY TP has been recorded
+    #             for i in range(1, 11):
+    #                 result = row.get(f'tp_1_{i}_result', '')
+    #                 if str(result).strip() and result != '':
+    #                     return False
                 
-                # Check open TP
-                open_tp_result = row.get('open_tp_result', '')
-                if str(open_tp_result).strip() and open_tp_result != '':
-                    return False
+    #             # Check open TP
+    #             open_tp_result = row.get('open_tp_result', '')
+    #             if str(open_tp_result).strip() and open_tp_result != '':
+    #                 return False
                 
-                # Has entry and SL? Then it's an orphan
-                if pd.isna(row.get('entry_price')) or pd.isna(row.get('sl_price')):
-                    return False
+    #             # Has entry and SL? Then it's an orphan
+    #             if pd.isna(row.get('entry_price')) or pd.isna(row.get('sl_price')):
+    #                 return False
                 
-                return True
+    #             return True
             
-            # Find completely orphaned trades
-            orphan_mask = df.apply(is_completely_orphaned, axis=1)
-            orphaned_trades = df[orphan_mask]
+    #         # Find completely orphaned trades
+    #         orphan_mask = df.apply(is_completely_orphaned, axis=1)
+    #         orphaned_trades = df[orphan_mask]
             
-            if orphaned_trades.empty:
-                self.logger.info(f"✅ No completely orphaned trades in {os.path.basename(csv_path)}")
-                return
+    #         if orphaned_trades.empty:
+    #             self.logger.info(f"✅ No completely orphaned trades in {os.path.basename(csv_path)}")
+    #             return
             
-            self.logger.info(f"🔍 Found {len(orphaned_trades)} orphaned trades in {os.path.basename(csv_path)}")
+    #         self.logger.info(f"🔍 Found {len(orphaned_trades)} orphaned trades in {os.path.basename(csv_path)}")
             
-            # Track which trades we're reconciling to avoid duplicates
-            reconciling_ids = []
+    #         # Track which trades we're reconciling to avoid duplicates
+    #         reconciling_ids = []
             
-            for _, row in orphaned_trades.iterrows():
-                trade_data = row.to_dict()
-                trade_id = trade_data['trade_id']
+    #         for _, row in orphaned_trades.iterrows():
+    #             trade_data = row.to_dict()
+    #             trade_id = trade_data['trade_id']
                 
-                # SAFE CHECK: Skip if this trade is already being monitored
-                # Check if there's already a thread for this trade
-                if self._is_trade_being_monitored(trade_id):
-                    self.logger.info(f"⏭️ Trade {trade_id} already being monitored, skipping")
-                    continue
+    #             # SAFE CHECK: Skip if this trade is already being monitored
+    #             # Check if there's already a thread for this trade
+    #             if self._is_trade_being_monitored(trade_id):
+    #                 self.logger.info(f"⏭️ Trade {trade_id} already being monitored, skipping")
+    #                 continue
                 
-                reconciling_ids.append(trade_id)
+    #             reconciling_ids.append(trade_id)
                 
-                # Process the trade
-                self._process_single_orphaned_trade(trade_data, csv_path)
+    #             # Process the trade
+    #             self._process_single_orphaned_trade(trade_data, csv_path)
             
-            self.logger.info(f"✅ SAFE reconciliation complete for {os.path.basename(csv_path)}")
+    #         self.logger.info(f"✅ SAFE reconciliation complete for {os.path.basename(csv_path)}")
             
-        except Exception as e:
-            self.logger.error(f"❌ Error in safe reconciliation: {e}")
-            import traceback
-            self.logger.error(f"❌ Traceback: {traceback.format_exc()}")
+    #     except Exception as e:
+    #         self.logger.error(f"❌ Error in safe reconciliation: {e}")
+    #         import traceback
+    #         self.logger.error(f"❌ Traceback: {traceback.format_exc()}")
     
-    def _is_trade_being_monitored(self, trade_id):
-        """Check if a trade is already being monitored by main bot"""
-        # Check active threads
-        for thread in threading.enumerate():
-            if f"TPMonitor_{trade_id}" in thread.name:
-                return True
-        return False
+    # def _is_trade_being_monitored(self, trade_id):
+    #     """Check if a trade is already being monitored by main bot"""
+    #     # Check active threads
+    #     for thread in threading.enumerate():
+    #         if f"TPMonitor_{trade_id}" in thread.name:
+    #             return True
+    #     return False
     
-    def _process_single_orphaned_trade(self, trade_data, csv_path):
-        """Process a single orphaned trade without interfering with main bot"""
-        try:
-            trade_id = trade_data['trade_id']
+    # def _process_single_orphaned_trade(self, trade_data, csv_path):
+    #     """Process a single orphaned trade without interfering with main bot"""
+    #     try:
+    #         trade_id = trade_data['trade_id']
             
-            # Parse entry_time safely
-            entry_time_str = trade_data['entry_time']
-            if pd.isna(entry_time_str) or not entry_time_str:
-                self.logger.warning(f"⚠️ Missing entry_time for {trade_id}")
-                return
+    #         # Parse entry_time safely
+    #         entry_time_str = trade_data['entry_time']
+    #         if pd.isna(entry_time_str) or not entry_time_str:
+    #             self.logger.warning(f"⚠️ Missing entry_time for {trade_id}")
+    #             return
             
-            entry_time = pd.to_datetime(entry_time_str)
-            if entry_time.tz is None:
-                entry_time = entry_time.tz_localize(NY_TZ)
-            else:
-                entry_time = entry_time.tz_convert(NY_TZ)
+    #         entry_time = pd.to_datetime(entry_time_str)
+    #         if entry_time.tz is None:
+    #             entry_time = entry_time.tz_localize(NY_TZ)
+    #         else:
+    #             entry_time = entry_time.tz_convert(NY_TZ)
             
-            # Check if replayable
-            if not self.is_trade_replayable(trade_data):
-                self.logger.warning(f"⏭️ Unreplayable trade {trade_id}")
-                return
+    #         # Check if replayable
+    #         if not self.is_trade_replayable(trade_data):
+    #             self.logger.warning(f"⏭️ Unreplayable trade {trade_id}")
+    #             return
             
-            instrument = trade_data['instrument']
-            self.logger.info(f"🔁 Replaying {trade_id} from {entry_time}")
+    #         instrument = trade_data['instrument']
+    #         self.logger.info(f"🔁 Replaying {trade_id} from {entry_time}")
             
-            # Fetch candles
-            candles = self.cached_fetch_candles(
-                instrument,
-                'M5',
-                count=5000,
-                force_fetch=True
-            )
+    #         # Fetch candles
+    #         candles = self.cached_fetch_candles(
+    #             instrument,
+    #             'M5',
+    #             count=5000,
+    #             force_fetch=True
+    #         )
             
-            if candles.empty:
-                self.logger.warning(f"⚠️ No candles for {instrument}")
-                return
+    #         if candles.empty:
+    #             self.logger.warning(f"⚠️ No candles for {instrument}")
+    #             return
             
-            # Filter candles
-            if 'time' in candles.columns:
-                # Convert candle times
-                if candles['time'].dt.tz is None:
-                    candles['time'] = pd.to_datetime(candles['time']).dt.tz_localize('UTC').dt.tz_convert(NY_TZ)
-                candles = candles[candles['time'] >= entry_time].copy()
+    #         # Filter candles
+    #         if 'time' in candles.columns:
+    #             # Convert candle times
+    #             if candles['time'].dt.tz is None:
+    #                 candles['time'] = pd.to_datetime(candles['time']).dt.tz_localize('UTC').dt.tz_convert(NY_TZ)
+    #             candles = candles[candles['time'] >= entry_time].copy()
             
-            if candles.empty:
-                self.logger.info(f"ℹ️ No candles after entry for {trade_id}")
-                return
+    #         if candles.empty:
+    #             self.logger.info(f"ℹ️ No candles after entry for {trade_id}")
+    #             return
             
-            # Use a SEPARATE monitoring function that doesn't conflict
-            self._replay_orphaned_trade(trade_data, candles, csv_path)
+    #         # Use a SEPARATE monitoring function that doesn't conflict
+    #         self._replay_orphaned_trade(trade_data, candles, csv_path)
             
-        except Exception as e:
-            self.logger.error(f"❌ Error processing trade {trade_data.get('trade_id', 'UNKNOWN')}: {e}")
+    #     except Exception as e:
+    #         self.logger.error(f"❌ Error processing trade {trade_data.get('trade_id', 'UNKNOWN')}: {e}")
     
-    def _replay_orphaned_trade(self, trade_data, replay_candles, csv_path):
-        """
-        Special replay function for orphaned trades only
-        Doesn't start new threads, just replays historical data
-        """
-        try:
-            trade_id = trade_data['trade_id']
+    # def _replay_orphaned_trade(self, trade_data, replay_candles, csv_path):
+    #     """
+    #     Special replay function for orphaned trades only
+    #     Doesn't start new threads, just replays historical data
+    #     """
+    #     try:
+    #         trade_id = trade_data['trade_id']
             
-            # Extract trade info
-            instrument = trade_data['instrument']
-            direction = trade_data['direction'].lower()
+    #         # Extract trade info
+    #         instrument = trade_data['instrument']
+    #         direction = trade_data['direction'].lower()
             
-            try:
-                entry_price = float(trade_data['entry_price'])
-                sl_price = float(trade_data['sl_price'])
-            except (ValueError, TypeError) as e:
-                self.logger.error(f"❌ Invalid prices for {trade_id}: {e}")
-                return
+    #         try:
+    #             entry_price = float(trade_data['entry_price'])
+    #             sl_price = float(trade_data['sl_price'])
+    #         except (ValueError, TypeError) as e:
+    #             self.logger.error(f"❌ Invalid prices for {trade_id}: {e}")
+    #             return
             
-            # Calculate TP prices
-            tp_prices = self._calculate_tp_prices_for_recovery(trade_data)
+    #         # Calculate TP prices
+    #         tp_prices = self._calculate_tp_prices_for_recovery(trade_data)
             
-            # Track hits
-            hit_tps = set()
-            exit_time = None
-            exit_reason = None
-            highest_tp_hit = 0
+    #         # Track hits
+    #         hit_tps = set()
+    #         exit_time = None
+    #         exit_reason = None
+    #         highest_tp_hit = 0
             
-            # Process each candle in replay data
-            for _, candle in replay_candles.iterrows():
-                candle_time = candle['time']
-                candle_high = candle['high']
-                candle_low = candle['low']
+    #         # Process each candle in replay data
+    #         for _, candle in replay_candles.iterrows():
+    #             candle_time = candle['time']
+    #             candle_high = candle['high']
+    #             candle_low = candle['low']
                 
-                # Check SL
-                if direction == 'bearish' and candle_high >= sl_price:
-                    exit_time = candle_time
-                    exit_reason = 'SL'
-                    break
-                elif direction == 'bullish' and candle_low <= sl_price:
-                    exit_time = candle_time
-                    exit_reason = 'SL'
-                    break
+    #             # Check SL
+    #             if direction == 'bearish' and candle_high >= sl_price:
+    #                 exit_time = candle_time
+    #                 exit_reason = 'SL'
+    #                 break
+    #             elif direction == 'bullish' and candle_low <= sl_price:
+    #                 exit_time = candle_time
+    #                 exit_reason = 'SL'
+    #                 break
                 
-                # Check TPs
-                for i in range(1, 11):
-                    if i in hit_tps:
-                        continue
+    #             # Check TPs
+    #             for i in range(1, 11):
+    #                 if i in hit_tps:
+    #                     continue
                         
-                    tp_hit = False
-                    if direction == 'bearish' and candle_low <= tp_prices[i]:
-                        tp_hit = True
-                    elif direction == 'bullish' and candle_high >= tp_prices[i]:
-                        tp_hit = True
+    #                 tp_hit = False
+    #                 if direction == 'bearish' and candle_low <= tp_prices[i]:
+    #                     tp_hit = True
+    #                 elif direction == 'bullish' and candle_high >= tp_prices[i]:
+    #                     tp_hit = True
                     
-                    if tp_hit:
-                        hit_tps.add(i)
-                        highest_tp_hit = max(highest_tp_hit, i)
-                        trade_data[f'tp_1_{i}_result'] = f"+{i}"
-                        # Calculate time in seconds
-                        entry_time = pd.to_datetime(trade_data['entry_time'])
-                        if entry_time.tz is None:
-                            entry_time = entry_time.tz_localize(NY_TZ)
-                        time_diff = (candle_time - entry_time).total_seconds()
-                        trade_data[f'tp_1_{i}_time_seconds'] = int(time_diff)
+    #                 if tp_hit:
+    #                     hit_tps.add(i)
+    #                     highest_tp_hit = max(highest_tp_hit, i)
+    #                     trade_data[f'tp_1_{i}_result'] = f"+{i}"
+    #                     # Calculate time in seconds
+    #                     entry_time = pd.to_datetime(trade_data['entry_time'])
+    #                     if entry_time.tz is None:
+    #                         entry_time = entry_time.tz_localize(NY_TZ)
+    #                     time_diff = (candle_time - entry_time).total_seconds()
+    #                     trade_data[f'tp_1_{i}_time_seconds'] = int(time_diff)
                         
-                        # If this is the highest TP hit, update exit info
-                        if i > trade_data.get('tp_level_hit', 0):
-                            trade_data['tp_level_hit'] = i
-                            trade_data['time_to_exit_seconds'] = int(time_diff)
-                            exit_time = candle_time
-                            exit_reason = f'TP_{i}'
+    #                     # If this is the highest TP hit, update exit info
+    #                     if i > trade_data.get('tp_level_hit', 0):
+    #                         trade_data['tp_level_hit'] = i
+    #                         trade_data['time_to_exit_seconds'] = int(time_diff)
+    #                         exit_time = candle_time
+    #                         exit_reason = f'TP_{i}'
             
-            # Update exit info if trade was closed
-            if exit_time:
-                trade_data['exit_time'] = exit_time.strftime('%Y-%m-%d %H:%M:%S')
-                if exit_reason == 'SL':
-                    # Mark all unhit TPs as -1
-                    for i in range(1, 11):
-                        if i not in hit_tps:
-                            trade_data[f'tp_1_{i}_result'] = "-1"
-                    trade_data['open_tp_result'] = "-1"
-                    trade_data['tp_level_hit'] = -1
+    #         # Update exit info if trade was closed
+    #         if exit_time:
+    #             trade_data['exit_time'] = exit_time.strftime('%Y-%m-%d %H:%M:%S')
+    #             if exit_reason == 'SL':
+    #                 # Mark all unhit TPs as -1
+    #                 for i in range(1, 11):
+    #                     if i not in hit_tps:
+    #                         trade_data[f'tp_1_{i}_result'] = "-1"
+    #                 trade_data['open_tp_result'] = "-1"
+    #                 trade_data['tp_level_hit'] = -1
             
-            # Update CSV
-            self._safe_update_csv(trade_data, csv_path)
+    #         # Update CSV
+    #         self._safe_update_csv(trade_data, csv_path)
             
-            # If still open, let main bot handle live monitoring
-            if not exit_time:
-                self.logger.info(f"📝 Trade {trade_id} still open after replay - main bot will monitor")
+    #         # If still open, let main bot handle live monitoring
+    #         if not exit_time:
+    #             self.logger.info(f"📝 Trade {trade_id} still open after replay - main bot will monitor")
             
-            self.logger.info(f"✅ Replay complete for {trade_id}")
+    #         self.logger.info(f"✅ Replay complete for {trade_id}")
             
-        except Exception as e:
-            self.logger.error(f"❌ Replay error for {trade_data.get('trade_id', 'UNKNOWN')}: {e}")
+    #     except Exception as e:
+    #         self.logger.error(f"❌ Replay error for {trade_data.get('trade_id', 'UNKNOWN')}: {e}")
     
-    def _safe_update_csv(self, trade_data, csv_path):
-        """Update CSV without interfering with main bot's file operations"""
-        try:
-            # Add a small delay to avoid file lock conflicts
-            time.sleep(0.1)
+    # def _safe_update_csv(self, trade_data, csv_path):
+    #     """Update CSV without interfering with main bot's file operations"""
+    #     try:
+    #         # Add a small delay to avoid file lock conflicts
+    #         time.sleep(0.1)
             
-            # Read current file
-            if not os.path.exists(csv_path):
-                return False
+    #         # Read current file
+    #         if not os.path.exists(csv_path):
+    #             return False
             
-            df = pd.read_csv(csv_path)
+    #         df = pd.read_csv(csv_path)
             
-            # Find and update the row
-            trade_id = trade_data['trade_id']
-            mask = df['trade_id'] == trade_id
+    #         # Find and update the row
+    #         trade_id = trade_data['trade_id']
+    #         mask = df['trade_id'] == trade_id
             
-            if mask.any():
-                # Update only the columns that exist in both
-                for col in trade_data.keys():
-                    if col in df.columns:
-                        df.loc[mask, col] = trade_data[col]
+    #         if mask.any():
+    #             # Update only the columns that exist in both
+    #             for col in trade_data.keys():
+    #                 if col in df.columns:
+    #                     df.loc[mask, col] = trade_data[col]
                 
-                # Save back
-                df.to_csv(csv_path, index=False)
-                self.logger.info(f"💾 Updated {trade_id} in {os.path.basename(csv_path)}")
-                return True
+    #             # Save back
+    #             df.to_csv(csv_path, index=False)
+    #             self.logger.info(f"💾 Updated {trade_id} in {os.path.basename(csv_path)}")
+    #             return True
             
-            return False
+    #         return False
             
-        except Exception as e:
-            self.logger.error(f"❌ Safe CSV update failed: {e}")
-            return False
+    #     except Exception as e:
+    #         self.logger.error(f"❌ Safe CSV update failed: {e}")
+    #         return False
 
 
-    def _calculate_tp_prices_for_recovery(self, trade_data):
-        """Helper to get TP prices without redundant code"""
-        tp_prices = {}
-        instrument = trade_data['instrument']
-        entry_price = float(trade_data['entry_price'])  # CONVERT TO FLOAT
-        direction = trade_data['direction'].lower()
-        pip_multiplier = 100 if 'JPY' in instrument else 10000
+    # def _calculate_tp_prices_for_recovery(self, trade_data):
+    #     """Helper to get TP prices without redundant code"""
+    #     tp_prices = {}
+    #     instrument = trade_data['instrument']
+    #     entry_price = float(trade_data['entry_price'])  # CONVERT TO FLOAT
+    #     direction = trade_data['direction'].lower()
+    #     pip_multiplier = 100 if 'JPY' in instrument else 10000
         
-        for i in range(1, 11):
-            # Get TP distance in pips from trade data AND CONVERT TO FLOAT
-            try:
-                dist = float(trade_data.get(f'tp_1_{i}_distance', 0))
-            except (ValueError, TypeError):
-                dist = 0.0
+    #     for i in range(1, 11):
+    #         # Get TP distance in pips from trade data AND CONVERT TO FLOAT
+    #         try:
+    #             dist = float(trade_data.get(f'tp_1_{i}_distance', 0))
+    #         except (ValueError, TypeError):
+    #             dist = 0.0
             
-            if direction == 'bearish':
-                tp_prices[i] = entry_price - (dist / pip_multiplier)
-            else:
-                tp_prices[i] = entry_price + (dist / pip_multiplier)
-        return tp_prices
+    #         if direction == 'bearish':
+    #             tp_prices[i] = entry_price - (dist / pip_multiplier)
+    #         else:
+    #             tp_prices[i] = entry_price + (dist / pip_multiplier)
+    #     return tp_prices
 
-    def _start_tp_monitoring(self, trade_data):
-        """Start monitoring TPs in background thread"""
-        try:
-            thread = threading.Thread(
-                target=self._monitor_tp_levels,
-                args=(trade_data,),
-                name=f"TPMonitor_{trade_data['trade_id']}",
-                daemon=True
-            )
-            thread.start()
-            self.logger.info(f"📊 Started TP monitoring for {trade_data['trade_id']}")
-        except Exception as e:
-            self.logger.error(f"❌ Error starting TP monitoring: {str(e)}")
+    # def _start_tp_monitoring(self, trade_data):
+    #     """Start monitoring TPs in background thread"""
+    #     try:
+    #         thread = threading.Thread(
+    #             target=self._monitor_tp_levels,
+    #             args=(trade_data,),
+    #             name=f"TPMonitor_{trade_data['trade_id']}",
+    #             daemon=True
+    #         )
+    #         thread.start()
+    #         self.logger.info(f"📊 Started TP monitoring for {trade_data['trade_id']}")
+    #     except Exception as e:
+    #         self.logger.error(f"❌ Error starting TP monitoring: {str(e)}")
     
-    def _monitor_tp_levels(self, trade_data, replay_candles=None):
-        """Monitor and record TP hits in background with PROPER BE tracking"""
-        try:
-            # Extract basic trade information
-            instrument = trade_data['instrument']
-            direction = trade_data['direction'].lower()
+    # def _monitor_tp_levels(self, trade_data, replay_candles=None):
+    #     """Monitor and record TP hits in background with PROPER BE tracking"""
+    #     try:
+    #         # Extract basic trade information
+    #         instrument = trade_data['instrument']
+    #         direction = trade_data['direction'].lower()
             
-            # Convert entry_price and sl_price to float
-            try:
-                entry_price = float(trade_data['entry_price'])
-            except (ValueError, TypeError):
-                self.logger.error(f"❌ Invalid entry_price: {trade_data.get('entry_price')}")
-                return
+    #         # Convert entry_price and sl_price to float
+    #         try:
+    #             entry_price = float(trade_data['entry_price'])
+    #         except (ValueError, TypeError):
+    #             self.logger.error(f"❌ Invalid entry_price: {trade_data.get('entry_price')}")
+    #             return
             
-            try:
-                sl_price = float(trade_data['sl_price'])
-            except (ValueError, TypeError):
-                self.logger.error(f"❌ Invalid sl_price: {trade_data.get('sl_price')}")
-                return
+    #         try:
+    #             sl_price = float(trade_data['sl_price'])
+    #         except (ValueError, TypeError):
+    #             self.logger.error(f"❌ Invalid sl_price: {trade_data.get('sl_price')}")
+    #             return
             
-            # Calculate TP prices for levels 1-10 based on pip distance
-            tp_prices = {}
-            pip_multiplier = 100 if 'JPY' in instrument else 10000
+    #         # Calculate TP prices for levels 1-10 based on pip distance
+    #         tp_prices = {}
+    #         pip_multiplier = 100 if 'JPY' in instrument else 10000
             
-            for i in range(1, 11):
-                # Get TP distance in pips from trade data AND CONVERT TO FLOAT
-                try:
-                    distance_pips = float(trade_data.get(f'tp_1_{i}_distance', 0))
-                except (ValueError, TypeError):
-                    distance_pips = 0.0  # Default to 0 if conversion fails
+    #         for i in range(1, 11):
+    #             # Get TP distance in pips from trade data AND CONVERT TO FLOAT
+    #             try:
+    #                 distance_pips = float(trade_data.get(f'tp_1_{i}_distance', 0))
+    #             except (ValueError, TypeError):
+    #                 distance_pips = 0.0  # Default to 0 if conversion fails
                 
-                # Calculate TP price based on direction
-                if direction == 'bearish':
-                    tp_price = entry_price - (distance_pips / pip_multiplier)
-                else:
-                    tp_price = entry_price + (distance_pips / pip_multiplier)
+    #             # Calculate TP price based on direction
+    #             if direction == 'bearish':
+    #                 tp_price = entry_price - (distance_pips / pip_multiplier)
+    #             else:
+    #                 tp_price = entry_price + (distance_pips / pip_multiplier)
                 
-                tp_prices[i] = tp_price
+    #             tp_prices[i] = tp_price
             
-            # Get optional open TP price (for trailing or flexible TP)
-            open_tp_price = trade_data.get('open_tp_price')
+    #         # Get optional open TP price (for trailing or flexible TP)
+    #         open_tp_price = trade_data.get('open_tp_price')
     
-            # Initialize break-even tracking for each TP level (1-10)
-            be_tracking = {
-                i: {
-                    'state': 'waiting',           # waiting, tracking, completed
-                    'price_returned_to_entry': False,  # Did price return to entry after TP hit?
-                    'next_tp_hit': False,         # Was the next TP level hit?
-                    'sl_hit': False,              # Was SL hit after this TP?
-                    'outcome': 'pending'          # pending, hit, miss, incomplete
-                }
-                for i in range(1, 11)
-            }
+    #         # Initialize break-even tracking for each TP level (1-10)
+    #         be_tracking = {
+    #             i: {
+    #                 'state': 'waiting',           # waiting, tracking, completed
+    #                 'price_returned_to_entry': False,  # Did price return to entry after TP hit?
+    #                 'next_tp_hit': False,         # Was the next TP level hit?
+    #                 'sl_hit': False,              # Was SL hit after this TP?
+    #                 'outcome': 'pending'          # pending, hit, miss, incomplete
+    #             }
+    #             for i in range(1, 11)
+    #         }
             
-            # Track which TP levels have been hit
-            hit_tps = set()
+    #         # Track which TP levels have been hit
+    #         hit_tps = set()
             
-            # Set monitoring parameters
-            start_time = datetime.now(NY_TZ)
-            monitor_duration = timedelta(hours=24)  # Monitor for 24 hours
-            check_interval = 1  # Check every 1 second
+    #         # Set monitoring parameters
+    #         start_time = datetime.now(NY_TZ)
+    #         monitor_duration = timedelta(hours=24)  # Monitor for 24 hours
+    #         check_interval = 1  # Check every 1 second
             
-            # Variable to avoid processing the same candle multiple times
-            last_candle_time = None
+    #         # Variable to avoid processing the same candle multiple times
+    #         last_candle_time = None
             
-            # ============================================================================
-            # MAIN MONITORING LOOP: Monitor trade for 24 hours
-            # ============================================================================
+    #         # ============================================================================
+    #         # MAIN MONITORING LOOP: Monitor trade for 24 hours
+    #         # ============================================================================
             
-            while datetime.now(NY_TZ) - start_time < monitor_duration:
-                # Get current M1 candle data
-                if replay_candles is not None:
-                    # For replay mode (reconciliation)
-                    if replay_candles.empty:
-                        break
-                    df = replay_candles.iloc[:2]
-                    replay_candles = replay_candles.iloc[1:]
-                else:
-                    # Live monitoring
-                    df = self.cached_fetch_candles(instrument, 'M1', count=2, force_fetch=True)
+    #         while datetime.now(NY_TZ) - start_time < monitor_duration:
+    #             # Get current M1 candle data
+    #             if replay_candles is not None:
+    #                 # For replay mode (reconciliation)
+    #                 if replay_candles.empty:
+    #                     break
+    #                 df = replay_candles.iloc[:2]
+    #                 replay_candles = replay_candles.iloc[1:]
+    #             else:
+    #                 # Live monitoring
+    #                 df = self.cached_fetch_candles(instrument, 'M1', count=2, force_fetch=True)
                     
-                if df.empty:
-                    time.sleep(check_interval)
-                    continue
+    #             if df.empty:
+    #                 time.sleep(check_interval)
+    #                 continue
                 
-                # Get the latest candle
-                current_candle = df.iloc[-1]
-                current_time = current_candle['time']
+    #             # Get the latest candle
+    #             current_candle = df.iloc[-1]
+    #             current_time = current_candle['time']
                 
-                # Skip if we've already processed this candle (avoid duplicate work)
-                if last_candle_time and current_time == last_candle_time:
-                    time.sleep(check_interval)
-                    continue
+    #             # Skip if we've already processed this candle (avoid duplicate work)
+    #             if last_candle_time and current_time == last_candle_time:
+    #                 time.sleep(check_interval)
+    #                 continue
                 
-                # Update last processed candle time
-                last_candle_time = current_time
+    #             # Update last processed candle time
+    #             last_candle_time = current_time
                 
-                # Extract OHLC data from current candle
-                candle_open = current_candle['open']
-                candle_high = current_candle['high']
-                candle_low = current_candle['low']
-                candle_close = current_candle['close']
+    #             # Extract OHLC data from current candle
+    #             candle_open = current_candle['open']
+    #             candle_high = current_candle['high']
+    #             candle_low = current_candle['low']
+    #             candle_close = current_candle['close']
                 
-                # ========================================================================
-                # CHECK 1: STOP LOSS HIT
-                # Using candle extremes (high/low) for accurate SL detection
-                # ========================================================================
+    #             # ========================================================================
+    #             # CHECK 1: STOP LOSS HIT
+    #             # Using candle extremes (high/low) for accurate SL detection
+    #             # ========================================================================
                 
-                sl_hit = False
-                if direction == 'bearish':
-                    # For bearish trade, check if price went up to SL
-                    if candle_high >= sl_price:
-                        sl_hit = True
-                        self._record_tp_result(trade_data, 'SL', -1, current_time)
+    #             sl_hit = False
+    #             if direction == 'bearish':
+    #                 # For bearish trade, check if price went up to SL
+    #                 if candle_high >= sl_price:
+    #                     sl_hit = True
+    #                     self._record_tp_result(trade_data, 'SL', -1, current_time)
                         
-                elif direction == 'bullish':
-                    # For bullish trade, check if price went down to SL
-                    if candle_low <= sl_price:
-                        sl_hit = True
-                        self._record_tp_result(trade_data, 'SL', -1, current_time)
+    #             elif direction == 'bullish':
+    #                 # For bullish trade, check if price went down to SL
+    #                 if candle_low <= sl_price:
+    #                     sl_hit = True
+    #                     self._record_tp_result(trade_data, 'SL', -1, current_time)
                 
-                # If SL hit, process BE tracking and exit monitoring
-                if sl_hit:
-                    # Check all TPs that were in tracking mode
-                    for tp_level in hit_tps:
-                        if be_tracking[tp_level]['state'] == 'tracking':
-                            # RULE: If SL hit after TP, it's ALWAYS a HIT for BE
-                            be_tracking[tp_level]['outcome'] = 'hit'
-                            be_tracking[tp_level]['sl_hit'] = True
-                            trade_data[f'if_BE_TP{tp_level}'] = 'hit'
+    #             # If SL hit, process BE tracking and exit monitoring
+    #             if sl_hit:
+    #                 # Check all TPs that were in tracking mode
+    #                 for tp_level in hit_tps:
+    #                     if be_tracking[tp_level]['state'] == 'tracking':
+    #                         # RULE: If SL hit after TP, it's ALWAYS a HIT for BE
+    #                         be_tracking[tp_level]['outcome'] = 'hit'
+    #                         be_tracking[tp_level]['sl_hit'] = True
+    #                         trade_data[f'if_BE_TP{tp_level}'] = 'hit'
                     
-                    # Update CSV with results
-                    self._update_trade_in_csv(trade_data)
-                    self.logger.info(f"🛑 SL HIT for trade {trade_data['trade_id']} at {current_time}")
-                    break  # Exit monitoring loop
+    #                 # Update CSV with results
+    #                 self._update_trade_in_csv(trade_data)
+    #                 self.logger.info(f"🛑 SL HIT for trade {trade_data['trade_id']} at {current_time}")
+    #                 break  # Exit monitoring loop
                 
-                # ========================================================================
-                # CHECK 2: REGULAR TP LEVELS (1-10)
-                # Using candle extremes for accurate TP detection
-                # ========================================================================
+    #             # ========================================================================
+    #             # CHECK 2: REGULAR TP LEVELS (1-10)
+    #             # Using candle extremes for accurate TP detection
+    #             # ========================================================================
                 
-                for i in range(1, 11):
-                    tp_result_key = f'tp_1_{i}_result'
+    #             for i in range(1, 11):
+    #                 tp_result_key = f'tp_1_{i}_result'
                     
-                    # Only check if this TP hasn't been recorded yet
-                    if trade_data.get(tp_result_key) == '':
-                        tp_hit = False
+    #                 # Only check if this TP hasn't been recorded yet
+    #                 if trade_data.get(tp_result_key) == '':
+    #                     tp_hit = False
                         
-                        if direction == 'bearish':
-                            # For bearish, TP is below entry - check if candle low touched TP
-                            if candle_low <= tp_prices[i]:
-                                tp_hit = True
-                        elif direction == 'bullish':
-                            # For bullish, TP is above entry - check if candle high touched TP
-                            if candle_high >= tp_prices[i]:
-                                tp_hit = True
+    #                     if direction == 'bearish':
+    #                         # For bearish, TP is below entry - check if candle low touched TP
+    #                         if candle_low <= tp_prices[i]:
+    #                             tp_hit = True
+    #                     elif direction == 'bullish':
+    #                         # For bullish, TP is above entry - check if candle high touched TP
+    #                         if candle_high >= tp_prices[i]:
+    #                             tp_hit = True
                         
-                        # If TP hit, record it and start BE tracking
-                        if tp_hit:
-                            time_seconds = (current_time - start_time).total_seconds()
-                            self._record_tp_result(trade_data, f'TP_{i}', i, current_time, time_seconds)
+    #                     # If TP hit, record it and start BE tracking
+    #                     if tp_hit:
+    #                         time_seconds = (current_time - start_time).total_seconds()
+    #                         self._record_tp_result(trade_data, f'TP_{i}', i, current_time, time_seconds)
                             
-                            # Start BE tracking for this TP level
-                            if i not in hit_tps:
-                                hit_tps.add(i)
-                                be_tracking[i]['state'] = 'tracking'
-                                be_tracking[i]['price_returned_to_entry'] = False
-                                be_tracking[i]['next_tp_hit'] = False
+    #                         # Start BE tracking for this TP level
+    #                         if i not in hit_tps:
+    #                             hit_tps.add(i)
+    #                             be_tracking[i]['state'] = 'tracking'
+    #                             be_tracking[i]['price_returned_to_entry'] = False
+    #                             be_tracking[i]['next_tp_hit'] = False
                 
-                # ========================================================================
-                # CHECK 3: OPEN TP (if specified)
-                # Optional flexible TP level
-                # ========================================================================
+    #             # ========================================================================
+    #             # CHECK 3: OPEN TP (if specified)
+    #             # Optional flexible TP level
+    #             # ========================================================================
                 
-                if open_tp_price and trade_data.get('open_tp_result') == '':
-                    open_tp_hit = False
+    #             if open_tp_price and trade_data.get('open_tp_result') == '':
+    #                 open_tp_hit = False
                     
-                    if direction == 'bearish' and candle_low <= open_tp_price:
-                        open_tp_hit = True
-                    elif direction == 'bullish' and candle_high >= open_tp_price:
-                        open_tp_hit = True
+    #                 if direction == 'bearish' and candle_low <= open_tp_price:
+    #                     open_tp_hit = True
+    #                 elif direction == 'bullish' and candle_high >= open_tp_price:
+    #                     open_tp_hit = True
                     
-                    if open_tp_hit:
-                        time_seconds = (current_time - start_time).total_seconds()
-                        self._record_tp_result(trade_data, 'OPEN_TP', 
-                                              trade_data.get('open_tp_rr', 0), 
-                                              current_time, time_seconds)
+    #                 if open_tp_hit:
+    #                     time_seconds = (current_time - start_time).total_seconds()
+    #                     self._record_tp_result(trade_data, 'OPEN_TP', 
+    #                                           trade_data.get('open_tp_rr', 0), 
+    #                                           current_time, time_seconds)
                 
-                # ========================================================================
-                # UPDATE BREAK-EVEN TRACKING FOR EACH HIT TP
-                # ========================================================================
+    #             # ========================================================================
+    #             # UPDATE BREAK-EVEN TRACKING FOR EACH HIT TP
+    #             # ========================================================================
                 
-                for tp_level in list(hit_tps):
-                    # Skip TPs not in tracking mode or already completed
-                    if be_tracking[tp_level]['state'] != 'tracking':
-                        continue
-                    if be_tracking[tp_level]['outcome'] != 'pending':
-                        continue
+    #             for tp_level in list(hit_tps):
+    #                 # Skip TPs not in tracking mode or already completed
+    #                 if be_tracking[tp_level]['state'] != 'tracking':
+    #                     continue
+    #                 if be_tracking[tp_level]['outcome'] != 'pending':
+    #                     continue
                     
-                    # RULE 1: Check if price returned to entry (within tolerance)
-                    entry_tolerance = 0.0001  # Adjust based on instrument precision
+    #                 # RULE 1: Check if price returned to entry (within tolerance)
+    #                 entry_tolerance = 0.0001  # Adjust based on instrument precision
                     
-                    # Check if entry price is within current candle range
-                    # OR if closing price is very close to entry
-                    if (candle_low <= entry_price <= candle_high) or \
-                       abs(candle_close - entry_price) <= entry_tolerance:
-                        be_tracking[tp_level]['price_returned_to_entry'] = True
+    #                 # Check if entry price is within current candle range
+    #                 # OR if closing price is very close to entry
+    #                 if (candle_low <= entry_price <= candle_high) or \
+    #                    abs(candle_close - entry_price) <= entry_tolerance:
+    #                     be_tracking[tp_level]['price_returned_to_entry'] = True
                     
-                    # RULE 2: Check if next TP is hit
-                    next_tp_hit = False
+    #                 # RULE 2: Check if next TP is hit
+    #                 next_tp_hit = False
                     
-                    if tp_level < 10:  # There's a next TP (1-9)
-                        next_tp_result_key = f'tp_1_{tp_level + 1}_result'
-                        if trade_data.get(next_tp_result_key) != '':
-                            next_tp_hit = True
-                    else:  # For TP10, check if open TP is hit
-                        if open_tp_price and trade_data.get('open_tp_result') != '':
-                            next_tp_hit = True
+    #                 if tp_level < 10:  # There's a next TP (1-9)
+    #                     next_tp_result_key = f'tp_1_{tp_level + 1}_result'
+    #                     if trade_data.get(next_tp_result_key) != '':
+    #                         next_tp_hit = True
+    #                 else:  # For TP10, check if open TP is hit
+    #                     if open_tp_price and trade_data.get('open_tp_result') != '':
+    #                         next_tp_hit = True
                     
-                    # If next TP hit, determine BE outcome
-                    if next_tp_hit:
-                        be_tracking[tp_level]['next_tp_hit'] = True
+    #                 # If next TP hit, determine BE outcome
+    #                 if next_tp_hit:
+    #                     be_tracking[tp_level]['next_tp_hit'] = True
                         
-                        # DETERMINE OUTCOME:
-                        if be_tracking[tp_level]['price_returned_to_entry']:
-                            # Price returned to entry before next TP → MISS
-                            be_tracking[tp_level]['outcome'] = 'miss'
-                            trade_data[f'if_BE_TP{tp_level}'] = 'miss'
-                        else:
-                            # Price went directly to next TP → HIT
-                            be_tracking[tp_level]['outcome'] = 'hit'
-                            trade_data[f'if_BE_TP{tp_level}'] = 'hit'
+    #                     # DETERMINE OUTCOME:
+    #                     if be_tracking[tp_level]['price_returned_to_entry']:
+    #                         # Price returned to entry before next TP → MISS
+    #                         be_tracking[tp_level]['outcome'] = 'miss'
+    #                         trade_data[f'if_BE_TP{tp_level}'] = 'miss'
+    #                     else:
+    #                         # Price went directly to next TP → HIT
+    #                         be_tracking[tp_level]['outcome'] = 'hit'
+    #                         trade_data[f'if_BE_TP{tp_level}'] = 'hit'
                         
-                        # Update CSV and mark as completed
-                        self._update_trade_in_csv(trade_data)
-                        be_tracking[tp_level]['state'] = 'completed'
+    #                     # Update CSV and mark as completed
+    #                     self._update_trade_in_csv(trade_data)
+    #                     be_tracking[tp_level]['state'] = 'completed'
                 
-                # Wait before next check
-                if replay_candles is None:
-                    time.sleep(check_interval)
+    #             # Wait before next check
+    #             if replay_candles is None:
+    #                 time.sleep(check_interval)
             
-            # ============================================================================
-            # POST-MONITORING CLEANUP
-            # Handle TPs still in tracking mode when monitoring ends
-            # ============================================================================
+    #         # ============================================================================
+    #         # POST-MONITORING CLEANUP
+    #         # Handle TPs still in tracking mode when monitoring ends
+    #         # ============================================================================
             
-            for tp_level in hit_tps:
-                if be_tracking[tp_level]['state'] == 'tracking' and be_tracking[tp_level]['outcome'] == 'pending':
-                    # Monitoring ended without next TP or SL → mark as incomplete
-                    trade_data[f'if_BE_TP{tp_level}'] = 'incomplete'
+    #         for tp_level in hit_tps:
+    #             if be_tracking[tp_level]['state'] == 'tracking' and be_tracking[tp_level]['outcome'] == 'pending':
+    #                 # Monitoring ended without next TP or SL → mark as incomplete
+    #                 trade_data[f'if_BE_TP{tp_level}'] = 'incomplete'
             
-            # Log final results
-            self.logger.info(f"📊 TP monitoring completed for {trade_data['trade_id']}")
-            be_results = [f'TP{i}:{be_tracking[i].get("outcome", "N/A")}' for i in hit_tps]
-            self.logger.info(f"   BE Results: {be_results}")
+    #         # Log final results
+    #         self.logger.info(f"📊 TP monitoring completed for {trade_data['trade_id']}")
+    #         be_results = [f'TP{i}:{be_tracking[i].get("outcome", "N/A")}' for i in hit_tps]
+    #         self.logger.info(f"   BE Results: {be_results}")
             
-        except Exception as e:
-            self.logger.error(f"❌ Error in TP monitoring: {str(e)}")
-            import traceback
-            self.logger.error(f"❌ Traceback: {traceback.format_exc()}")
+    #     except Exception as e:
+    #         self.logger.error(f"❌ Error in TP monitoring: {str(e)}")
+    #         import traceback
+    #         self.logger.error(f"❌ Traceback: {traceback.format_exc()}")
     
-    def _record_tp_result(self, trade_data, tp_type, result_value, hit_time, time_seconds=None):
-        """Record TP result to CSV with RR values"""
-        try:
-            # Ensure hit_time is timezone-aware
-            if hasattr(hit_time, 'tz') and hit_time.tz is None:
-                hit_time = hit_time.tz_localize(NY_TZ)
+    # def _record_tp_result(self, trade_data, tp_type, result_value, hit_time, time_seconds=None):
+    #     """Record TP result to CSV with RR values"""
+    #     try:
+    #         # Ensure hit_time is timezone-aware
+    #         if hasattr(hit_time, 'tz') and hit_time.tz is None:
+    #             hit_time = hit_time.tz_localize(NY_TZ)
             
-            # Update trade_data
-            if tp_type.startswith('TP_'):
-                tp_num = int(tp_type.split('_')[1])
-                trade_data[f'tp_1_{tp_num}_result'] = f"+{result_value}"
-                if time_seconds:
-                    trade_data[f'tp_1_{tp_num}_time_seconds'] = int(time_seconds)
+    #         # Update trade_data
+    #         if tp_type.startswith('TP_'):
+    #             tp_num = int(tp_type.split('_')[1])
+    #             trade_data[f'tp_1_{tp_num}_result'] = f"+{result_value}"
+    #             if time_seconds:
+    #                 trade_data[f'tp_1_{tp_num}_time_seconds'] = int(time_seconds)
                 
-                # Update highest RR achieved (TP number = RR multiple)
-                current_highest_rr = trade_data.get('tp_level_hit', 0)
-                if tp_num > current_highest_rr:
-                    trade_data['tp_level_hit'] = tp_num
-                    trade_data['time_to_exit_seconds'] = int(time_seconds) if time_seconds else 0
-                    trade_data['exit_time'] = hit_time.strftime('%Y-%m-%d %H:%M:%S')
+    #             # Update highest RR achieved (TP number = RR multiple)
+    #             current_highest_rr = trade_data.get('tp_level_hit', 0)
+    #             if tp_num > current_highest_rr:
+    #                 trade_data['tp_level_hit'] = tp_num
+    #                 trade_data['time_to_exit_seconds'] = int(time_seconds) if time_seconds else 0
+    #                 trade_data['exit_time'] = hit_time.strftime('%Y-%m-%d %H:%M:%S')
                     
-            elif tp_type == 'OPEN_TP':
-                trade_data['open_tp_result'] = f"+{result_value}"
-                if time_seconds:
-                    trade_data['open_tp_time_seconds'] = int(time_seconds)
+    #         elif tp_type == 'OPEN_TP':
+    #             trade_data['open_tp_result'] = f"+{result_value}"
+    #             if time_seconds:
+    #                 trade_data['open_tp_time_seconds'] = int(time_seconds)
                 
-                # For open TP, we store the RR value from open_tp_rr
-                if trade_data.get('tp_level_hit', 0) == 0:
-                    open_tp_rr = trade_data.get('open_tp_rr', 0)
-                    trade_data['tp_level_hit'] = open_tp_rr
-                    trade_data['time_to_exit_seconds'] = int(time_seconds) if time_seconds else 0
-                    trade_data['exit_time'] = hit_time.strftime('%Y-%m-%d %H:%M:%S')
+    #             # For open TP, we store the RR value from open_tp_rr
+    #             if trade_data.get('tp_level_hit', 0) == 0:
+    #                 open_tp_rr = trade_data.get('open_tp_rr', 0)
+    #                 trade_data['tp_level_hit'] = open_tp_rr
+    #                 trade_data['time_to_exit_seconds'] = int(time_seconds) if time_seconds else 0
+    #                 trade_data['exit_time'] = hit_time.strftime('%Y-%m-%d %H:%M:%S')
                     
-            elif tp_type == 'SL':
-                # Record -1 for all TPs that weren't hit
-                for i in range(1, 11):
-                    if trade_data.get(f'tp_1_{i}_result') == '':
-                        trade_data[f'tp_1_{i}_result'] = "-1"
-                if trade_data.get('open_tp_result') == '':
-                    trade_data['open_tp_result'] = "-1"
+    #         elif tp_type == 'SL':
+    #             # Record -1 for all TPs that weren't hit
+    #             for i in range(1, 11):
+    #                 if trade_data.get(f'tp_1_{i}_result') == '':
+    #                     trade_data[f'tp_1_{i}_result'] = "-1"
+    #             if trade_data.get('open_tp_result') == '':
+    #                 trade_data['open_tp_result'] = "-1"
                 
-                # ✅ CRITICAL FIX: Only set -1 if NO TP was hit yet
-                tp_was_hit = False
-                for i in range(1, 11):
-                    if trade_data.get(f'tp_1_{i}_result', '').startswith('+'):
-                        tp_was_hit = True
-                        break
+    #             # ✅ CRITICAL FIX: Only set -1 if NO TP was hit yet
+    #             tp_was_hit = False
+    #             for i in range(1, 11):
+    #                 if trade_data.get(f'tp_1_{i}_result', '').startswith('+'):
+    #                     tp_was_hit = True
+    #                     break
                 
-                if not tp_was_hit and trade_data.get('open_tp_result', '').startswith('+'):
-                    tp_was_hit = True
+    #             if not tp_was_hit and trade_data.get('open_tp_result', '').startswith('+'):
+    #                 tp_was_hit = True
                 
-                # Only set tp_level_hit to -1 if NO TP was hit
-                if not tp_was_hit:
-                    trade_data['tp_level_hit'] = -1
+    #             # Only set tp_level_hit to -1 if NO TP was hit
+    #             if not tp_was_hit:
+    #                 trade_data['tp_level_hit'] = -1
                 
-                trade_data['time_to_exit_seconds'] = int(time_seconds) if time_seconds else 0
-                trade_data['exit_time'] = hit_time.strftime('%Y-%m-%d %H:%M:%S')
+    #             trade_data['time_to_exit_seconds'] = int(time_seconds) if time_seconds else 0
+    #             trade_data['exit_time'] = hit_time.strftime('%Y-%m-%d %H:%M:%S')
             
-        except Exception as e:
-            self.logger.error(f"❌ Error recording TP result: {str(e)}")
+    #     except Exception as e:
+    #         self.logger.error(f"❌ Error recording TP result: {str(e)}")
     
-    def _update_trade_in_csv(self, trade_data, csv_path=None):
-        if csv_path is None:
-            csv_path = self.csv_file_path
-        try:
-            if not os.path.exists(self.csv_file_path):
-                return False
+    # def _update_trade_in_csv(self, trade_data, csv_path=None):
+    #     if csv_path is None:
+    #         csv_path = self.csv_file_path
+    #     try:
+    #         if not os.path.exists(self.csv_file_path):
+    #             return False
             
-            # Read all data
-            rows = []
-            with open(self.csv_file_path, 'r', newline='') as f:
-                reader = csv.DictReader(f)
-                fieldnames = reader.fieldnames
-                rows = list(reader)
+    #         # Read all data
+    #         rows = []
+    #         with open(self.csv_file_path, 'r', newline='') as f:
+    #             reader = csv.DictReader(f)
+    #             fieldnames = reader.fieldnames
+    #             rows = list(reader)
             
-            # Find and update the trade
-            updated = False
-            for i, row in enumerate(rows):
-                if row.get('trade_id') == trade_data['trade_id']:
-                    # Update the row with new data
-                    for key, value in trade_data.items():
-                        if key in fieldnames:
-                            rows[i][key] = value
-                    updated = True
-                    break
+    #         # Find and update the trade
+    #         updated = False
+    #         for i, row in enumerate(rows):
+    #             if row.get('trade_id') == trade_data['trade_id']:
+    #                 # Update the row with new data
+    #                 for key, value in trade_data.items():
+    #                     if key in fieldnames:
+    #                         rows[i][key] = value
+    #                 updated = True
+    #                 break
             
-            if updated:
-                # Write back to CSV
-                with open(self.csv_file_path, 'w', newline='') as f:
-                    writer = csv.DictWriter(f, fieldnames=fieldnames)
-                    writer.writeheader()
-                    writer.writerows(rows)
+    #         if updated:
+    #             # Write back to CSV
+    #             with open(self.csv_file_path, 'w', newline='') as f:
+    #                 writer = csv.DictWriter(f, fieldnames=fieldnames)
+    #                 writer.writeheader()
+    #                 writer.writerows(rows)
                 
-                self.logger.info(f"💾 Updated trade {trade_data['trade_id']} in CSV")
-                return True
+    #             self.logger.info(f"💾 Updated trade {trade_data['trade_id']} in CSV")
+    #             return True
             
-            return False
+    #         return False
             
-        except Exception as e:
-            self.logger.error(f"❌ Error updating CSV: {str(e)}")
-            return False
+    #     except Exception as e:
+    #         self.logger.error(f"❌ Error updating CSV: {str(e)}")
+    #         return False
 
 
 
