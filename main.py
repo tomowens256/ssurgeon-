@@ -5768,8 +5768,24 @@ class TPMonitoringManager:
         Call the global fetch_candles function with our API key
         """
         try:
-            # Import the global function (adjust import as needed)
-            from your_module import fetch_candles as global_fetch_candles
+            # Import the global function from main module
+            # Get the fetch_candles function that's defined at module level
+            import sys
+            import __main__ as main_module
+            
+            # Check if fetch_candles exists in main_module
+            if hasattr(main_module, 'fetch_candles'):
+                global_fetch_candles = main_module.fetch_candles
+            else:
+                # Try to find it in sys.modules
+                for module_name in ['__main__', 'main']:
+                    if module_name in sys.modules:
+                        module = sys.modules[module_name]
+                        if hasattr(module, 'fetch_candles'):
+                            global_fetch_candles = module.fetch_candles
+                            break
+                else:
+                    raise ImportError("Could not find fetch_candles function")
             
             # Case 1: Historical replay (needs start_time to now)
             if start_time and end_time:
@@ -5822,7 +5838,6 @@ class TPMonitoringManager:
             self._log(f"❌ Error fetching candles for {instrument} {timeframe}: {e}", 'error')
             import pandas as pd
             return pd.DataFrame()
-
     def _run_periodic_checks(self):
         """Run periodic maintenance checks"""
         while not self.shutdown_flag.is_set():
