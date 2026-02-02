@@ -6598,11 +6598,7 @@ class HammerPatternScanner:
             api_key=self.credentials['oanda_api_key'],  # Pass API key directly!
             logger=self.logger
         )
-        self.periodic_check_thread = threading.Thread(
-            target=self._run_periodic_checks,
-            daemon=True
-        )
-        self.periodic_check_thread.start()
+        
         # Use shared news calendar if provided, otherwise create one
         self.news_calendar = news_calendar
         if not self.news_calendar:
