@@ -11140,50 +11140,50 @@ class HammerPatternScanner:
         
     #     self.logger.info("🔨 Hammer Pattern Scanner started")
     #     return True
-    def is_orphan_row(self, row):
-        # Skip if we don’t even know entry or SL
-        if pd.isna(row.get("entry_price")) or pd.isna(row.get("sl_price")):
-            return False
+    # def is_orphan_row(self, row):
+    #     # Skip if we don’t even know entry or SL
+    #     if pd.isna(row.get("entry_price")) or pd.isna(row.get("sl_price")):
+    #         return False
     
-        orphan_fields = [
-            'tp_1_1_result', 'tp_1_1_time_seconds',
-            'tp_1_2_result', 'tp_1_2_time_seconds',
-            'tp_1_3_result', 'tp_1_3_time_seconds',
-            'tp_1_4_result', 'tp_1_4_time_seconds',
-            'tp_1_5_result', 'tp_1_5_time_seconds',
-            'tp_1_6_result', 'tp_1_6_time_seconds',
-            'tp_1_7_result', 'tp_1_7_time_seconds',
-            'tp_1_8_result', 'tp_1_8_time_seconds',
-            'tp_1_9_result', 'tp_1_9_time_seconds',
-            'tp_1_10_result', 'tp_1_10_time_seconds',
-            'open_tp_rr',
-            'open_tp_result',
-            'open_tp_time_seconds',
-        ]
+    #     orphan_fields = [
+    #         'tp_1_1_result', 'tp_1_1_time_seconds',
+    #         'tp_1_2_result', 'tp_1_2_time_seconds',
+    #         'tp_1_3_result', 'tp_1_3_time_seconds',
+    #         'tp_1_4_result', 'tp_1_4_time_seconds',
+    #         'tp_1_5_result', 'tp_1_5_time_seconds',
+    #         'tp_1_6_result', 'tp_1_6_time_seconds',
+    #         'tp_1_7_result', 'tp_1_7_time_seconds',
+    #         'tp_1_8_result', 'tp_1_8_time_seconds',
+    #         'tp_1_9_result', 'tp_1_9_time_seconds',
+    #         'tp_1_10_result', 'tp_1_10_time_seconds',
+    #         'open_tp_rr',
+    #         'open_tp_result',
+    #         'open_tp_time_seconds',
+    #     ]
     
-        for field in orphan_fields:
-            val = row.get(field)
-            if pd.isna(val) or val == 0 or val == "":
-                return True
+    #     for field in orphan_fields:
+    #         val = row.get(field)
+    #         if pd.isna(val) or val == 0 or val == "":
+    #             return True
     
-        return False
-    def reconcile_and_resume_trades(self, csv_paths=None):
-        """
-        SAFE reconciliation - doesn't interfere with main bot operations
-        Only processes trades that are COMPLETELY orphaned (no monitoring)
-        """
-        if csv_paths is None:
-            csv_paths = [
-                '/content/drive/My Drive/hammer_trades.csv',
-                '/content/drive/My Drive/hammer_trades/zebra.csv'
-            ]
+    #     return False
+    # def reconcile_and_resume_trades(self, csv_paths=None):
+    #     """
+    #     SAFE reconciliation - doesn't interfere with main bot operations
+    #     Only processes trades that are COMPLETELY orphaned (no monitoring)
+    #     """
+    #     if csv_paths is None:
+    #         csv_paths = [
+    #             '/content/drive/My Drive/hammer_trades.csv',
+    #             '/content/drive/My Drive/hammer_trades/zebra.csv'
+    #         ]
         
-        for csv_path in csv_paths:
-            self.logger.info(f"🔧 SAFE reconciling from: {os.path.basename(csv_path)}")
-            try:
-                self._safe_csv_reconciliation(csv_path)
-            except Exception as e:
-                self.logger.error(f"❌ Reconciliation error for {csv_path}: {e}")
+    #     for csv_path in csv_paths:
+    #         self.logger.info(f"🔧 SAFE reconciling from: {os.path.basename(csv_path)}")
+    #         try:
+    #             self._safe_csv_reconciliation(csv_path)
+    #         except Exception as e:
+    #             self.logger.error(f"❌ Reconciliation error for {csv_path}: {e}")
     
     # def _safe_csv_reconciliation(self, csv_path):
     #     """Safe reconciliation that avoids conflicts with live monitoring"""
