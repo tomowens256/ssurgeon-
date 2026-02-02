@@ -5671,12 +5671,14 @@ class HammerPatternScanner:
         self.quarter_manager = RobustQuarterManager()
         self.true_open_cache = {}  # Format: {instrument: {cycle: {quarter: price}}}
         self.true_open_lock = threading.Lock()  # For thread safety
+        
         # Add caching for API calls
         self.data_cache = {}
         self.cache_expiry = {}  # Track when cache expires
         self.cache_duration = 45  # Cache for 60 seconds
 
         self.entry_counter = {}
+        self.entry_counter_lock = threading.Lock() 
 
         # Add this instead:
         self.candle_cache = CandleDataCache(
