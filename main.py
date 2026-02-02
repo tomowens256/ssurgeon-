@@ -5725,34 +5725,43 @@ class TPMonitoringManager:
             print(f"[{datetime.now()}] {message}")
     
     def _ensure_csv_columns(self):
-        """Ensure CSV has required monitoring columns"""
+        """Ensure CSV has required monitoring & BE tracking columns"""
         try:
-            if os.path.exists(self.csv_path):
-                df = pd.read_csv(self.csv_path)
-                
-                # Add monitoring columns if missing
-                new_columns = {
-                    'monitoring_status': 'not_started',
-                    'last_heartbeat': '',
-                    'monitoring_notes': '',
-                    'reconciliation_attempts': 0
-                }
-                
-                # Add BE tracking columns
-                for i in range(1, 11):
-                    new_columns[f'if_BE_TP{i}'] = ''
-                
-                for col, default_val in new_columns.items():
-                    if col not in df.columns:
-                        df[col] = default_val
-                
-                # Save if columns were added
-                if any(col not in df.columns for col in new_columns.keys()):
-                    df.to_csv(self.csv_path, index=False)
-                    self._log(f"✅ Added monitoring columns to CSV")
-                    
+            if not os.path.exists(self.csv_path):
+                self._log("❌ CSV file does not exist", "error")
+                return
+    
+            df = pd.read_csv(self.csv_path)
+    
+            # Track if we modify the CSV
+            columns_added = False
+    
+            # Core monitoring columns
+            new_columns = {
+                "monitoring_status": "not_started",
+                "last_heartbeat": "",
+                "monitoring_notes": "",
+                "reconciliation_attempts": 0,
+            }
+    
+            # Add BE tracking columns
+            for i in range(1, 11):
+                new_columns[f"if_BE_TP{i}"] = ""
+    
+            # Add missing columns
+            for col, default_val in new_columns.items():
+                if col not in df.columns:
+                    df[col] = default_val
+                    columns_added = True
+    
+            # Save only if we actually changed something
+            if columns_added:
+                df.to_csv(self.csv_path, index=False)
+                self._log("✅ Monitoring & BE columns ensured in CSV")
+    
         except Exception as e:
-            self._log(f"❌ Error ensuring CSV columns: {e}", 'error')
+            self._log(f"❌ Error ensuring CSV columns: {e}", "error")
+
     
     def _fetch_candles(self, instrument: str, timeframe: str, start_time=None, end_time=None, count=None):
         """
