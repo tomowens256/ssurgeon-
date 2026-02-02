@@ -5690,6 +5690,21 @@ class TPMonitoringManager:
         
         # Ensure CSV has required columns
         self._ensure_csv_columns()
+        # Start periodic checks thread for orphan reconciliation
+        self.periodic_check_thread = threading.Thread(
+            target=self._run_periodic_checks_loop,
+            daemon=True,
+            name="TPMonitor_PeriodicChecks"
+        )
+        self.periodic_check_thread.start()
+        
+        # Also run immediate reconciliation on startup
+        startup_thread = threading.Thread(
+            target=self._run_startup_reconciliation,
+            daemon=True,
+            name="TPMonitor_StartupRecon"
+        )
+        startup_thread.start()
         # Start periodic check thread
         self.periodic_check_thread = threading.Thread(
             target=self._run_periodic_checks,
@@ -5916,6 +5931,25 @@ class TPMonitoringManager:
             self._log(f"❌ Monitoring crashed for {trade_id}: {e}", 'error')
             self._update_csv_monitoring_status(trade_id, 'failed')
             self._cleanup_trade_monitoring(trade_id, 'failed')
+
+    def _run_periodic_checks_loop(self):
+        """Background thread that runs periodic checks every 5 minutes"""
+        self._log("🔄 Starting periodic checks loop (runs every 5 minutes)")
+        
+        while not self.shutdown_flag.is_set():
+            try:
+                self.run_periodic_checks()
+                time.sleep(300)  # Check every 5 minutes
+            except Exception as e:
+                self._log(f"⚠️ Error in periodic checks loop: {e}", 'warning')
+                time.sleep(60)
+
+    def _run_startup_reconciliation(self):
+        """Run reconciliation immediately on startup"""
+        self._log("🚀 Running immediate startup reconciliation...")
+        time.sleep(5)  # Wait a bit for everything to initialize
+        self.reconcile_orphaned_trades()
+        self._log("✅ Startup reconciliation complete")
     
     def _needs_historical_replay(self, trade_data: Dict, current_state: Dict) -> bool:
         """Check if we need to replay historical candles"""
