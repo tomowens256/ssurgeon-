@@ -5733,7 +5733,7 @@ class TPMonitoringManager:
     
             df = pd.read_csv(self.csv_path)
     
-            # Track if we modify the CSV
+            # Track if we modify the CSVs
             columns_added = False
     
             # Core monitoring columns
