@@ -5690,6 +5690,12 @@ class TPMonitoringManager:
         
         # Ensure CSV has required columns
         self._ensure_csv_columns()
+        # Start periodic check thread
+        self.periodic_check_thread = threading.Thread(
+            target=self._run_periodic_checks,
+            daemon=True
+        )
+        self.periodic_check_thread.start()
     
     def _log(self, message: str, level: str = 'info'):
         """Log message with appropriate level"""
@@ -5792,6 +5798,16 @@ class TPMonitoringManager:
             self._log(f"❌ Error fetching candles for {instrument} {timeframe}: {e}", 'error')
             import pandas as pd
             return pd.DataFrame()
+
+    def _run_periodic_checks(self):
+        """Run periodic maintenance checks"""
+        while not self.shutdown_flag.is_set():
+            try:
+                self.run_periodic_checks()
+                time.sleep(300)  # Run every 5 minutes
+            except Exception as e:
+                self._log(f"⚠️ Error in periodic checks: {e}", 'warning')
+                time.sleep(60)
     
     def start_monitoring(self, trade_data: Dict):
         """Start monitoring a new trade"""
