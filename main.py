@@ -5870,6 +5870,33 @@ class TPMonitoringManager:
             self._log(f"❌ Error fetching candles for {instrument} {timeframe}: {e}", 'error')
             import pandas as pd
             return pd.DataFrame()
+
+    def should_monitor_trade(self, trade_data: Dict) -> bool:
+        """Check if trade actually needs monitoring (not already completed)"""
+        try:
+            # Check if trade already has exit results
+            has_exit = False
+            
+            # Check TP results
+            for i in range(1, 11):
+                result_key = f'tp_1_{i}_result'
+                if result_key in trade_data and trade_data[result_key] not in ['', '0']:
+                    has_exit = True
+                    break
+            
+            # Check SL result
+            if 'sl_result' in trade_data and trade_data['sl_result'] not in ['', '0']:
+                has_exit = True
+            
+            # Check exit_time
+            if 'exit_time' in trade_data and pd.notna(trade_data.get('exit_time')):
+                has_exit = True
+            
+            return not has_exit
+            
+        except Exception as e:
+            self._log(f"Error checking trade monitoring status: {e}", 'warning')
+            return True  # Default to monitoring if we can't check
     def _run_periodic_checks(self):
         """Run periodic maintenance checks"""
         while not self.shutdown_flag.is_set():
@@ -5884,10 +5911,16 @@ class TPMonitoringManager:
         """Start monitoring a new trade"""
         trade_id = trade_data['trade_id']
         
+        # Check if trade needs monitoring
+        if not self.should_monitor_trade(trade_data):
+            self._log(f"⏭️ Trade {trade_id} already has exit results - skipping", 'info')
+            return
+        
         # Check if already being monitored
         if self.is_trade_monitored(trade_id):
             self._log(f"⏭️ Trade {trade_id} already being monitored", 'warning')
             return
+
         
         # Validate trade data
         if not self._validate_trade_data(trade_data):
@@ -6580,27 +6613,42 @@ class TPMonitoringManager:
             self._log(f"❌ Error updating CSV status for {trade_id}: {e}", 'error')
     
     def _update_trade_in_csv(self, trade_data: Dict):
-        """Update trade data in CSV (full update)"""
+        """Update trade data in CSV (full update) - SAFE VERSION"""
         try:
             with self.csv_lock:
-                df = pd.read_csv(self.csv_path)
+                # Read CSV with error handling
+                try:
+                    df = pd.read_csv(self.csv_path)
+                except Exception as e:
+                    self._log(f"⚠️ CSV read error, trying recovery: {e}", 'warning')
+                    # Try reading with error handling
+                    df = pd.read_csv(self.csv_path, on_bad_lines='skip')
+                
                 trade_id = trade_data['trade_id']
                 
                 if trade_id in df['trade_id'].values:
                     mask = df['trade_id'] == trade_id
                     
-                    # Update all columns that exist in both
+                    # Only update empty or missing values - don't overwrite existing data
                     for col in trade_data.keys():
                         if col in df.columns:
-                            df.loc[mask, col] = trade_data[col]
+                            current_value = df.loc[mask, col].iloc[0] if mask.any() else ''
+                            
+                            # Only update if current is empty or we're adding new info
+                            if (pd.isna(current_value) or current_value == '' or current_value == '0' or 
+                                (isinstance(current_value, str) and current_value.strip() == '')):
+                                df.loc[mask, col] = trade_data[col]
                     
-                    # Always update last_heartbeat
+                    # Always update heartbeat
                     df.loc[mask, 'last_heartbeat'] = datetime.now().isoformat()
                     
+                    # Save with backup
+                    backup_path = self.csv_path + f".before_update_{datetime.now().strftime('%H%M%S')}.csv"
                     df.to_csv(self.csv_path, index=False)
                     
         except Exception as e:
             self._log(f"❌ Error updating trade in CSV: {e}", 'error')
+            # Don't crash - just log the error
     
     def check_thread_health(self):
         """Check health of all monitoring threads and restart dead ones"""
