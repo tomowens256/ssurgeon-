@@ -5722,24 +5722,28 @@ class TPMonitoringManager:
         )
         self.periodic_check_thread.start()
 
-        def disable_timeouts(self):
-            """Completely disable all timeout logic"""
-            self._log("⏰ DISABLING ALL TIMEOUT LOGIC - Monitoring will continue indefinitely", 'warning')
+    def disable_timeouts(self):
+        """Completely disable all timeout logic"""
+        self._log("⏰ DISABLING ALL TIMEOUT LOGIC - Monitoring will continue indefinitely", 'warning')
+        
+        # Set monitoring window to essentially infinite
+        self.monitoring_window_hours = 999999  # ~114 years
+        
+        # Replace the _handle_monitoring_timeout method with a no-op
+        original_handle_timeout = self._handle_monitoring_timeout
+
+        
+        
+        def patched_handle_timeout(trade_data, be_tracking, hit_tps):
+            """Patched version - does NOTHING, allowing monitoring to continue"""
+            trade_id = trade_data['trade_id']
+            self._log(f"⏰ [DISABLED] Would have timed out {trade_id}, but timeout is disabled - monitoring continues", 'info')
+            # Intentionally do NOTHING - don't mark as timeout, don't stop monitoring
+            # This allows the trade to continue monitoring indefinitely
             
-            # Set monitoring window to essentially infinite
-            self.monitoring_window_hours = 999999  # ~114 years
-            
-            # Replace the _handle_monitoring_timeout method with a no-op
-            original_handle_timeout = self._handle_monitoring_timeout
-            
-            def patched_handle_timeout(trade_data, be_tracking, hit_tps):
-                """Patched version - does NOTHING, allowing monitoring to continue"""
-                trade_id = trade_data['trade_id']
-                self._log(f"⏰ [DISABLED] Would have timed out {trade_id}, but timeout is disabled - monitoring continues", 'info')
-                # Intentionally do NOTHING - don't mark as timeout, don't stop monitoring
-                # This allows the trade to continue monitoring indefinitely
-                
-            self._handle_monitoring_timeout = patched_handle_timeout
+        self._handle_monitoring_timeout = patched_handle_timeout
+
+    
     
     def _log(self, message: str, level: str = 'info'):
         """Log message with appropriate level"""
