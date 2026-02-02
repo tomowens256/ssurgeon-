@@ -5699,6 +5699,7 @@ class TPMonitoringManager:
         
         # Ensure CSV has required columns
         self._ensure_csv_columns()
+        self.repair_csv()
         # Start periodic checks thread for orphan reconciliation
         self.periodic_check_thread = threading.Thread(
             target=self._run_periodic_checks_loop,
@@ -5927,7 +5928,51 @@ class TPMonitoringManager:
         
         thread = self.active_threads[trade_id]
         return thread.is_alive()
-    
+    def repair_csv(self):
+        """Repair corrupted CSV file"""
+        try:
+            import shutil
+            from datetime import datetime
+            
+            if not os.path.exists(self.csv_path):
+                self._log(f"❌ CSV file not found: {self.csv_path}", 'error')
+                return False
+            
+            # Create backup
+            backup_path = self.csv_path + f".repair_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            shutil.copy2(self.csv_path, backup_path)
+            self._log(f"✅ Created backup: {backup_path}")
+            
+            # Read with error handling
+            try:
+                df = pd.read_csv(self.csv_path, on_bad_lines='skip')
+            except:
+                # If that fails, try reading as text
+                with open(self.csv_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    lines = f.readlines()
+                
+                # Remove obviously corrupted lines
+                clean_lines = []
+                for line in lines:
+                    if '\\x00' in line or '�' in line:
+                        continue
+                    clean_lines.append(line)
+                
+                # Write back and read
+                with open(self.csv_path, 'w', encoding='utf-8') as f:
+                    f.writelines(clean_lines)
+                
+                df = pd.read_csv(self.csv_path, on_bad_lines='skip')
+            
+            # Ensure required columns
+            self._ensure_csv_columns()
+            
+            self._log(f"✅ CSV repaired: {len(df)} trades")
+            return True
+            
+        except Exception as e:
+            self._log(f"❌ Failed to repair CSV: {e}", 'error')
+            return False
     def _validate_trade_data(self, trade_data: Dict) -> bool:
         """Validate that trade has required data for monitoring"""
         required = ['trade_id', 'instrument', 'direction', 'entry_price', 'sl_price']
