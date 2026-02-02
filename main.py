@@ -5633,6 +5633,8 @@ class TimeframeScanner:
         except Exception as e:
             self.logger.error(f"❌ Error in {self.timeframe} scanner: {str(e)}")
             return 0
+
+
 import pandas as pd
 import numpy as np
 import threading
@@ -5652,40 +5654,40 @@ class TPMonitoringManager:
     4. Crash recovery and thread management
     """
     
-    def __init__(self, csv_path: str, api_client, logger=None, max_workers: int = 50):
+    def __init__(self, csv_path: str, api_key: str, logger=None, max_workers: int = 50):
         """
         Args:
             csv_path: Path to CSV file with trades
-            api_client: Object with candle fetching methods
+            api_key: OANDA API key for candle fetching
             logger: Logger instance
             max_workers: Maximum concurrent monitoring threads
         """
         self.csv_path = csv_path
-        self.api = api_client
+        self.api_key = api_key  # Store API key directly
         self.logger = logger
         self.max_workers = max_workers
         
         # Thread management
-        self.active_threads = {}  # trade_id -> thread
-        self.thread_states = {}  # trade_id -> monitoring state
-        self.thread_locks = defaultdict(threading.Lock)  # Per-trade locks
+        self.active_threads = {}
+        self.thread_states = {}
+        self.thread_locks = defaultdict(threading.Lock)
         
         # Control flags
         self.shutdown_flag = threading.Event()
-        self.csv_lock = threading.RLock()  # For CSV file access
+        self.csv_lock = threading.RLock()
         
         # Performance tracking
         self.heartbeat_times = {}
         self.monitoring_start_times = {}
         
         # Runtime configuration
-        self.monitoring_window_hours = 24  # Monitor trades for 24 hours
-        self.check_interval_live = 2  # Seconds between live checks
-        self.heartbeat_interval = 60  # Log heartbeat every 60 seconds
+        self.monitoring_window_hours = 24
+        self.check_interval_live = 2
+        self.heartbeat_interval = 60
         
         # Candle fetching configuration
         self.primary_timeframe = 'M1'
-        self.fallback_timeframes = ['M5', 'M15', 'H1']  # If M1 has too many candles
+        self.fallback_timeframes = ['M5', 'M15', 'H1']
         
         # Ensure CSV has required columns
         self._ensure_csv_columns()
@@ -5701,6 +5703,55 @@ class TPMonitoringManager:
                 self.logger.info(message)
         else:
             print(f"[{datetime.now()}] {message}")
+
+    def _fetch_candles(self, instrument: str, timeframe: str, start_time=None, end_time=None, count=None):
+        """
+        Call the global fetch_candles function with our API key
+        Handles both historical (with start_time) and live (with count) cases
+        """
+        try:
+            # Import the global function (adjust import as needed)
+            # If fetch_candles is in the same module, you can just import it
+            # If it's in a different module, import from there
+            from your_module import fetch_candles as global_fetch_candles
+            
+            # Case 1: Historical replay (needs start_time to now)
+            if start_time and end_time:
+                # Calculate approximate count needed
+                # We'll fetch max 5000 candles (OANDA limit) which should cover more than 24h
+                return global_fetch_candles(
+                    instrument=instrument,
+                    timeframe=timeframe,
+                    count=5000,  # Max allowed
+                    api_key=self.api_key,
+                    since=start_time,
+                    use_cache=True
+                )
+            
+            # Case 2: Live monitoring (count provided)
+            elif count:
+                return global_fetch_candles(
+                    instrument=instrument,
+                    timeframe=timeframe,
+                    count=count,
+                    api_key=self.api_key,
+                    use_cache=True
+                )
+            
+            # Default case
+            else:
+                return global_fetch_candles(
+                    instrument=instrument,
+                    timeframe=timeframe,
+                    count=100,
+                    api_key=self.api_key,
+                    use_cache=True
+                )
+                
+        except Exception as e:
+            self._log(f"❌ Error fetching candles for {instrument} {timeframe}: {e}", 'error')
+            import pandas as pd
+            return pd.DataFrame()  # Return empty DataFrame on error
     
     def _ensure_csv_columns(self):
         """Ensure CSV has required monitoring columns"""
@@ -5884,7 +5935,7 @@ class TPMonitoringManager:
         
         try:
             # Fetch historical candles
-            candles = self.api.fetch_candles(
+            candles = self._fetch_candles(
                 instrument=instrument,
                 timeframe=timeframe,
                 start_time=entry_time,
@@ -6114,10 +6165,10 @@ class TPMonitoringManager:
                     break
                 
                 # Get latest candle (M1 for accuracy)
-                candles = self.api.fetch_candles(
+                candles = self._fetch_candles(
                     instrument=instrument,
                     timeframe='M1',
-                    count=2  # Last 2 candles for safety
+                    count=2
                 )
                 
                 if not candles.empty:
