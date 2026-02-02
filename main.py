@@ -6764,7 +6764,7 @@ class HammerPatternScanner:
                 
                 # Result Tracking
                 'exit_time', 'time_to_exit_seconds',
-                'trigger_type'
+                'trigger_type','entry_count'
                 
             ]
             
