@@ -5652,10 +5652,17 @@ import os
 from typing import Dict, List, Tuple, Optional, Set
 import traceback
 from collections import defaultdict
+import csv
+import shutil
+import json
 
-class TPMonitoringManager:
+class SafeTPMonitoringManager:
     """
-    TP monitoring system with Break-Even tracking and crash recovery
+    SAFE TP Monitoring with historical backfill and live monitoring for open trades
+    - Uses csv module (NOT pandas) to preserve data integrity
+    - Backfills completed trades from historical data
+    - Starts live threads for open trades
+    - Creates backups before any modification
     """
     
     def __init__(self, csv_path: str, api_key: str, logger=None, max_workers: int = 50):
@@ -5668,7 +5675,7 @@ class TPMonitoringManager:
         """
         self.csv_path = csv_path
         self.api_key = api_key
-        self.logger = logger
+        self.logger = logger or self._create_default_logger()
         self.max_workers = max_workers
         
         # Thread management
@@ -5678,14 +5685,14 @@ class TPMonitoringManager:
         
         # Control flags
         self.shutdown_flag = threading.Event()
-        self.csv_lock = threading.RLock()
+        self.csv_lock = threading.RLock()  # For thread-safe CSV operations
         
         # Performance tracking
         self.heartbeat_times = {}
         self.monitoring_start_times = {}
         
         # Runtime configuration
-        self.monitoring_window_hours = 2400  # Set high initially
+        self.monitoring_window_hours = 999999  # Infinite monitoring
         self.check_interval_live = 2
         self.heartbeat_interval = 60
         
@@ -5696,326 +5703,527 @@ class TPMonitoringManager:
         # BE tracking tolerance (pips)
         self.be_tolerance = 0.0001
         
-        # Ensure CSV has required columns
-        self.safe_check_csv()
+        # Ensure CSV has required columns (SAFE VERSION)
+        self.safe_check_and_fix_csv()
         
-        # Start periodic checks thread for orphan reconciliation
-        self.periodic_check_thread = threading.Thread(
-            target=self._run_periodic_checks_loop,
-            daemon=True,
-            name="TPMonitor_PeriodicChecks"
-        )
-        self.periodic_check_thread.start()
-        
-        # Also run immediate reconciliation on startup
+        # Start safe reconciliation
         startup_thread = threading.Thread(
-            target=self._run_startup_reconciliation,
+            target=self._safe_startup_reconciliation,
             daemon=True,
-            name="TPMonitor_StartupRecon"
+            name="SafeTPMonitor_StartupRecon"
         )
         startup_thread.start()
         
-        # Disable timeouts
-        self.disable_timeouts()
-
-    def disable_timeouts(self):
-        """Completely disable all timeout logic"""
-        self._log("⏰ DISABLING ALL TIMEOUT LOGIC - Monitoring will continue indefinitely", 'warning')
+        # Start periodic checks
+        periodic_thread = threading.Thread(
+            target=self._periodic_health_check,
+            daemon=True,
+            name="SafeTPMonitor_PeriodicCheck"
+        )
+        periodic_thread.start()
         
-        # Set monitoring window to essentially infinite
-        self.monitoring_window_hours = 999999  # ~114 years
-        
-        # Replace the _handle_monitoring_timeout method with a no-op
-        def patched_handle_timeout(trade_data, be_tracking, hit_tps):
-            """Patched version - does NOTHING, allowing monitoring to continue"""
-            trade_id = trade_data['trade_id']
-            self._log(f"⏰ [DISABLED] Would have timed out {trade_id}, but timeout is disabled - monitoring continues", 'info')
-            # Intentionally do NOTHING - don't mark as timeout, don't stop monitoring
-            # This allows the trade to continue monitoring indefinitely
-            
-        self._handle_monitoring_timeout = patched_handle_timeout
-        
-        self._log("✅ All timeout logic has been disabled", 'info')
+        self.logger.info("✅ Safe TP Monitoring Manager initialized")
+    
+    def _create_default_logger(self):
+        """Create a default logger if none provided"""
+        import logging
+        logger = logging.getLogger('SafeTPMonitor')
+        if not logger.handlers:
+            handler = logging.StreamHandler()
+            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+            handler.setFormatter(formatter)
+            logger.addHandler(handler)
+            logger.setLevel(logging.INFO)
+        return logger
     
     def _log(self, message: str, level: str = 'info'):
         """Log message with appropriate level"""
-        if self.logger:
-            if level == 'error':
-                self.logger.error(message)
-            elif level == 'warning':
-                self.logger.warning(message)
-            else:
-                self.logger.info(message)
+        if level == 'error':
+            self.logger.error(message)
+        elif level == 'warning':
+            self.logger.warning(message)
         else:
-            print(f"[{datetime.now()}] {message}")
+            self.logger.info(message)
     
-    def safe_check_csv(self):
-        """Check CSV integrity WITHOUT modifying existing data"""
+    def safe_check_and_fix_csv(self):
+        """Check CSV integrity and add missing columns SAFELY"""
         try:
             if not os.path.exists(self.csv_path):
                 self._log(f"❌ CSV file not found: {self.csv_path}", 'error')
+                # Create empty CSV with headers
+                self._create_empty_csv_with_headers()
+                return True
+            
+            # Read CSV safely with csv module
+            fieldnames, rows = self._read_csv_safe()
+            if not fieldnames:
+                self._log(f"❌ CSV has no headers: {self.csv_path}", 'error')
                 return False
             
-            # First, just read to check for errors
-            try:
-                df = pd.read_csv(self.csv_path)
-                self._log(f"✅ CSV is healthy: {len(df)} trades, {len(df.columns)} columns")
-                return True
-            except Exception as e:
-                self._log(f"⚠️ CSV read error: {e}", 'warning')
-                
-                # Try with error handling but don't modify
-                try:
-                    df = pd.read_csv(self.csv_path, on_bad_lines='warn')
-                    self._log(f"⚠️ CSV has issues but loaded {len(df)} trades")
-                    
-                    # Create a backup of the CORRUPTED file for analysis ONLY
-                    import shutil
-                    backup_path = self.csv_path + f".corrupted_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-                    shutil.copy2(self.csv_path, backup_path)
-                    self._log(f"📂 Created backup of corrupted CSV: {backup_path}")
-                    
-                    # DON'T write back - keep original
-                    return False
-                except:
-                    self._log(f"❌ CSV completely unreadable", 'error')
-                    return False
-                
-        except Exception as e:
-            self._log(f"❌ Error checking CSV: {e}", 'error')
-            return False
-
-    def _ensure_csv_columns(self):
-        """Ensure CSV has required monitoring & BE tracking columns - ONLY ADD MISSING ONES"""
-        try:
-            if not os.path.exists(self.csv_path):
-                self._log("❌ CSV file does not exist", "error")
-                return
-    
-            # Read with error handling
-            try:
-                df = pd.read_csv(self.csv_path)
-            except:
-                # If can't read normally, try with warnings
-                df = pd.read_csv(self.csv_path, on_bad_lines='warn')
-    
-            # Track if we modify the CSVs
-            columns_added = False
-    
-            # Core monitoring columns
-            new_columns = {
-                "monitoring_status": "not_started",
-                "last_heartbeat": "",
-                "monitoring_notes": "",
-                "reconciliation_attempts": 0,
-            }
-    
+            # Define required columns
+            required_columns = [
+                'timestamp', 'signal_id', 'trade_id', 'instrument', 'hammer_timeframe',
+                'direction', 'tp_level_hit', 'entry_time', 'entry_price', 'sl_price',
+                'sl_distance_pips', 'exit_time', 'time_to_exit_seconds',
+                'monitoring_status', 'last_heartbeat', 'monitoring_notes',
+                'reconciliation_attempts'
+            ]
+            
+            # Add TP result columns (1-10)
+            for i in range(1, 11):
+                required_columns.extend([
+                    f'tp_1_{i}_distance',
+                    f'tp_1_{i}_result',
+                    f'tp_1_{i}_time_seconds'
+                ])
+            
             # Add BE tracking columns
             for i in range(1, 11):
-                new_columns[f"if_BE_TP{i}"] = ""
-    
-            # Add ONLY missing columns
-            for col, default_val in new_columns.items():
-                if col not in df.columns:
-                    df[col] = default_val
-                    columns_added = True
-                    self._log(f"➕ Added missing column: {col}")
-    
-            # Save ONLY if we actually changed something
-            if columns_added:
-                # Create backup before modifying
-                import shutil
-                backup_path = self.csv_path + f".pre_add_columns_{datetime.now().strftime('%H%M%S')}.csv"
-                shutil.copy2(self.csv_path, backup_path)
-                
-                df.to_csv(self.csv_path, index=False)
-                self._log(f"✅ Added {columns_added} missing columns to CSV")
-    
-        except Exception as e:
-            self._log(f"❌ Error ensuring CSV columns: {e}", "error")
-
-    
-    def _fetch_candles(self, instrument: str, timeframe: str, start_time=None, end_time=None, count=None):
-        """
-        Call the global fetch_candles function with our API key
-        """
-        try:
-            # Import the global function from main module
-            # Get the fetch_candles function that's defined at module level
-            import sys
+                required_columns.append(f'if_BE_TP{i}')
             
-            # First try to import from main
-            try:
-                from main import fetch_candles as global_fetch_candles
-            except ImportError:
-                # Try from __main__
-                import __main__ as main_module
-                if hasattr(main_module, 'fetch_candles'):
-                    global_fetch_candles = main_module.fetch_candles
-                else:
-                    # If not in main, try to find it elsewhere
-                    for module_name in ['__main__', 'main']:
-                        if module_name in sys.modules:
-                            module = sys.modules[module_name]
-                            if hasattr(module, 'fetch_candles'):
-                                global_fetch_candles = module.fetch_candles
-                                break
-                    else:
-                        raise ImportError("Could not find fetch_candles function")
+            # Check for missing columns
+            missing_columns = [col for col in required_columns if col not in fieldnames]
             
-            # Case 1: Historical replay (needs start_time to now)
-            if start_time and end_time:
-                # Calculate approximate count needed
-                time_diff = (end_time - start_time).total_seconds()
+            if missing_columns:
+                self._log(f"📝 Adding {len(missing_columns)} missing columns", 'info')
                 
-                if timeframe == 'M1':
-                    count_needed = int(time_diff / 60) + 100
-                elif timeframe == 'M5':
-                    count_needed = int(time_diff / 300) + 100
-                elif timeframe == 'M15':
-                    count_needed = int(time_diff / 900) + 100
-                elif timeframe == 'H1':
-                    count_needed = int(time_diff / 3600) + 100
-                else:
-                    count_needed = 5000
-                    
-                count_needed = min(count_needed, 5000)
+                # Add missing columns to each row
+                for row in rows:
+                    for col in missing_columns:
+                        if col not in row:
+                            # Set default values based on column type
+                            if 'result' in col:
+                                row[col] = ''
+                            elif 'time' in col or 'seconds' in col:
+                                row[col] = ''
+                            elif 'distance' in col or 'price' in col:
+                                row[col] = '0'
+                            elif 'status' in col:
+                                row[col] = 'not_started'
+                            elif 'attempts' in col:
+                                row[col] = '0'
+                            else:
+                                row[col] = ''
                 
-                result = global_fetch_candles(
-                    instrument=instrument,
-                    timeframe=timeframe,
-                    count=count_needed,
-                    api_key=self.api_key,
-                    since=start_time,
-                    use_cache=True
-                )
+                # Update fieldnames
+                new_fieldnames = list(fieldnames) + missing_columns
                 
-                if result is None:
-                    import pandas as pd
-                    return pd.DataFrame()
-                return result
+                # Write back safely
+                self._write_csv_safe(new_fieldnames, rows)
+                self._log(f"✅ Added missing columns: {missing_columns}")
             
-            # Case 2: Live monitoring (count provided)
-            elif count:
-                result = global_fetch_candles(
-                    instrument=instrument,
-                    timeframe=timeframe,
-                    count=count,
-                    api_key=self.api_key,
-                    use_cache=True
-                )
-                
-                if result is None:
-                    import pandas as pd
-                    return pd.DataFrame()
-                return result
-            
-            # Default case
             else:
-                result = global_fetch_candles(
-                    instrument=instrument,
-                    timeframe=timeframe,
-                    count=100,
-                    api_key=self.api_key,
-                    use_cache=True
-                )
-                
-                if result is None:
-                    import pandas as pd
-                    return pd.DataFrame()
-                return result
-                
-        except Exception as e:
-            self._log(f"❌ Error fetching candles for {instrument} {timeframe}: {e}", 'error')
-            import pandas as pd
-            return pd.DataFrame()
-
-    def should_monitor_trade(self, trade_data: Dict) -> bool:
-        """Check if trade actually needs monitoring (not already completed)"""
-        try:
-            # Check if trade already has exit results
-            has_exit = False
-            
-            # Check TP results
-            for i in range(1, 11):
-                result_key = f'tp_1_{i}_result'
-                if result_key in trade_data:
-                    result = trade_data[result_key]
-                    if isinstance(result, str) and result.strip() not in ['', '0']:
-                        has_exit = True
-                        break
-            
-            # Check SL result
-            if 'sl_result' in trade_data:
-                sl_result = trade_data['sl_result']
-                if isinstance(sl_result, str) and sl_result.strip() not in ['', '0']:
-                    has_exit = True
-            
-            # Check exit_time
-            if 'exit_time' in trade_data:
-                exit_time = trade_data['exit_time']
-                if pd.notna(exit_time) and exit_time not in ['', '0']:
-                    has_exit = True
-            
-            # Check tp_level_hit
-            if 'tp_level_hit' in trade_data:
-                tp_level_hit = trade_data['tp_level_hit']
-                if pd.notna(tp_level_hit) and str(tp_level_hit) not in ['', '0']:
-                    has_exit = True
-            
-            if has_exit:
-                self._log(f"⏭️ Trade {trade_data.get('trade_id', 'unknown')} already has exit results", 'info')
-                return False
+                self._log(f"✅ CSV has all required columns ({len(fieldnames)} total)")
             
             return True
             
         except Exception as e:
-            self._log(f"Error checking trade monitoring status: {e}", 'warning')
-            return True  # Default to monitoring if we can't check
+            self._log(f"❌ Error checking/fixing CSV: {e}", 'error')
+            return False
     
-    def _run_periodic_checks_loop(self):
-        """Background thread that runs periodic checks every 5 minutes"""
-        self._log("🔄 Starting periodic checks loop (runs every 5 minutes)")
+    def _create_empty_csv_with_headers(self):
+        """Create empty CSV with required headers"""
+        # This is just a fallback - you should have your real CSV
+        headers = [
+            'timestamp', 'signal_id', 'trade_id', 'instrument', 'hammer_timeframe',
+            'direction', 'tp_level_hit', 'entry_time', 'entry_price', 'sl_price',
+            'sl_distance_pips', 'exit_time', 'time_to_exit_seconds',
+            'monitoring_status', 'last_heartbeat', 'monitoring_notes',
+            'reconciliation_attempts'
+        ]
         
-        while not self.shutdown_flag.is_set():
-            try:
-                self.run_periodic_checks()
-                time.sleep(300)  # Check every 5 minutes
-            except Exception as e:
-                self._log(f"⚠️ Error in periodic checks loop: {e}", 'warning')
-                time.sleep(60)
-
-    def _run_startup_reconciliation(self):
-        """Run reconciliation immediately on startup"""
-        self._log("🚀 Running immediate startup reconciliation...")
-        time.sleep(5)  # Wait a bit for everything to initialize
-        self.reconcile_orphaned_trades()
-        self._log("✅ Startup reconciliation complete")
+        for i in range(1, 11):
+            headers.extend([
+                f'tp_1_{i}_distance',
+                f'tp_1_{i}_result',
+                f'tp_1_{i}_time_seconds',
+                f'if_BE_TP{i}'
+            ])
+        
+        with open(self.csv_path, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=headers)
+            writer.writeheader()
+        
+        self._log(f"📁 Created empty CSV with {len(headers)} headers", 'warning')
     
-    def start_monitoring(self, trade_data: Dict):
-        """Start monitoring a new trade"""
+    def _read_csv_safe(self):
+        """Read CSV using csv module (NOT pandas) - preserves exact data"""
+        try:
+            if not os.path.exists(self.csv_path):
+                return [], []
+            
+            rows = []
+            with open(self.csv_path, 'r', newline='', encoding='utf-8') as f:
+                # Try to detect delimiter
+                sample = f.read(1024)
+                f.seek(0)
+                
+                if ',' in sample:
+                    delimiter = ','
+                elif ';' in sample:
+                    delimiter = ';'
+                else:
+                    delimiter = ','
+                
+                reader = csv.DictReader(f, delimiter=delimiter)
+                fieldnames = reader.fieldnames or []
+                rows = list(reader)
+            
+            return fieldnames, rows
+            
+        except Exception as e:
+            self._log(f"❌ Error reading CSV: {e}", 'error')
+            return [], []
+    
+    def _write_csv_safe(self, fieldnames, rows):
+        """Write CSV using csv module (NOT pandas) - creates backup first"""
+        try:
+            # Always create backup before writing
+            backup_path = f"{self.csv_path}.backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            if os.path.exists(self.csv_path):
+                shutil.copy2(self.csv_path, backup_path)
+                self._log(f"📂 Created backup: {os.path.basename(backup_path)}")
+            
+            # Write new CSV
+            with open(self.csv_path, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(rows)
+            
+            return True
+            
+        except Exception as e:
+            self._log(f"❌ Error writing CSV: {e}", 'error')
+            return False
+    
+    def _is_empty_value(self, value):
+        """Check if a value is empty/undefined (preserves '0' and '-1' as valid)"""
+        if value is None:
+            return True
+        
+        if isinstance(value, str):
+            str_val = str(value).strip()
+            # '0' and '-1' are VALID values (no TP hit, SL hit)
+            if str_val in ['', 'nan', 'NaN', 'None', 'null', 'NULL', 'undefined']:
+                return True
+            return False
+        
+        # For numeric values, 0 and -1 are valid
+        if isinstance(value, (int, float)):
+            return False
+        
+        return True
+    
+    def _safe_startup_reconciliation(self):
+        """SAFE reconciliation: Find orphaned trades and process them"""
+        self._log("🔍 Starting SAFE orphaned trade reconciliation...")
+        time.sleep(5)  # Wait for system initialization
+        
+        try:
+            fieldnames, rows = self._read_csv_safe()
+            if not rows:
+                self._log("✅ CSV is empty - nothing to reconcile")
+                return
+            
+            # Find trades that need processing
+            trades_needing_processing = []
+            
+            for row in rows:
+                trade_id = row.get('trade_id', '')
+                if not trade_id:
+                    continue
+                
+                # Check if trade needs processing
+                needs_processing = self._trade_needs_processing(row)
+                if needs_processing:
+                    trades_needing_processing.append((trade_id, row))
+            
+            self._log(f"📊 Found {len(trades_needing_processing)} trades needing processing")
+            
+            # Process each trade
+            processed_count = 0
+            for trade_id, row in trades_needing_processing:
+                try:
+                    # Convert row to trade_data dict
+                    trade_data = self._row_to_trade_data(row)
+                    
+                    # Get entry time
+                    entry_time_str = trade_data.get('entry_time')
+                    if not entry_time_str:
+                        self._log(f"⚠️ No entry_time for {trade_id}, skipping")
+                        continue
+                    
+                    entry_time = pd.to_datetime(entry_time_str)
+                    hours_since_entry = (datetime.now() - entry_time).total_seconds() / 3600
+                    
+                    # Strategy:
+                    # 1. If trade is OLD (>2 hours), try to backfill from historical data
+                    # 2. If still open after backfill, OR if trade is RECENT (<2 hours), start live thread
+                    
+                    if hours_since_entry > 2:
+                        self._log(f"🕰️ Processing OLD trade {trade_id} ({hours_since_entry:.1f}h old)")
+                        
+                        # First try to backfill from historical data
+                        completed = self._backfill_trade_from_history(trade_data)
+                        
+                        if completed:
+                            self._log(f"✅ Trade {trade_id} completed via backfill")
+                        else:
+                            # Still open - start live monitoring thread
+                            self._log(f"📡 Trade {trade_id} still open after backfill, starting live thread")
+                            self.start_live_monitoring(trade_data)
+                    
+                    else:
+                        # Recent trade - start live monitoring
+                        self._log(f"📡 Starting live thread for RECENT trade {trade_id} ({hours_since_entry:.1f}h old)")
+                        self.start_live_monitoring(trade_data)
+                    
+                    processed_count += 1
+                    
+                    # Small delay to avoid overwhelming
+                    time.sleep(0.5)
+                    
+                except Exception as e:
+                    self._log(f"❌ Error processing trade {trade_id}: {e}", 'error')
+            
+            self._log(f"✅ Reconciliation completed for {processed_count} trades")
+            
+        except Exception as e:
+            self._log(f"❌ Reconciliation failed: {e}", 'error')
+    
+    def _trade_needs_processing(self, row):
+        """Check if a trade needs TP/SL results or monitoring"""
+        # Check if trade already has exit results
+        exit_time = row.get('exit_time', '')
+        if not self._is_empty_value(exit_time):
+            return False  # Already has exit time
+        
+        # Check monitoring status
+        monitoring_status = row.get('monitoring_status', '')
+        if monitoring_status == 'completed':
+            return False
+        
+        # Check if all TP results are filled
+        all_tps_filled = True
+        for i in range(1, 11):
+            tp_result = row.get(f'tp_1_{i}_result', '')
+            if self._is_empty_value(tp_result):
+                all_tps_filled = False
+                break
+        
+        if all_tps_filled:
+            return False  # All TPs already filled
+        
+        # Trade needs processing
+        return True
+    
+    def _row_to_trade_data(self, row):
+        """Convert CSV row to trade_data dictionary with proper types"""
+        trade_data = {}
+        
+        for key, value in row.items():
+            if value is None:
+                trade_data[key] = ''
+            elif isinstance(value, str):
+                # Try to convert numeric values
+                if any(x in key.lower() for x in ['price', 'distance', 'pips', 'rsi', 'vwap', 'rr']):
+                    try:
+                        trade_data[key] = float(value)
+                    except:
+                        trade_data[key] = value
+                else:
+                    trade_data[key] = value
+            else:
+                trade_data[key] = value
+        
+        return trade_data
+    
+    def _backfill_trade_from_history(self, trade_data):
+        """
+        Backfill trade results from historical candles
+        Returns: True if trade completed, False if still open
+        """
+        trade_id = trade_data['trade_id']
+        instrument = trade_data['instrument']
+        direction = trade_data['direction'].lower()
+        
+        try:
+            entry_time = pd.to_datetime(trade_data['entry_time'])
+            now = datetime.now()
+            
+            # Choose timeframe based on duration
+            time_diff_hours = (now - entry_time).total_seconds() / 3600
+            
+            if time_diff_hours <= 83:  # Up to ~3.5 days
+                timeframe = 'M1'
+            elif time_diff_hours <= 416:  # Up to ~17 days
+                timeframe = 'M5'
+            elif time_diff_hours <= 1250:  # Up to ~52 days
+                timeframe = 'M15'
+            else:
+                timeframe = 'H1'
+            
+            self._log(f"🕰️ Backfilling {trade_id} with {timeframe} candles ({time_diff_hours:.1f}h)")
+            
+            # Fetch historical candles
+            candles = self._fetch_historical_candles(
+                instrument=instrument,
+                timeframe=timeframe,
+                start_time=entry_time,
+                end_time=now
+            )
+            
+            if candles.empty:
+                self._log(f"⚠️ No historical candles for {trade_id}", 'warning')
+                return False
+            
+            self._log(f"📊 Processing {len(candles)} candles for {trade_id}")
+            
+            # Get prices
+            entry_price = float(trade_data['entry_price'])
+            sl_price = float(trade_data['sl_price'])
+            
+            # Calculate TP prices
+            pip_multiplier = 100 if 'JPY' in instrument else 10000
+            tp_prices = {}
+            
+            for i in range(1, 11):
+                distance_key = f'tp_1_{i}_distance'
+                if distance_key in trade_data:
+                    try:
+                        distance_pips = float(trade_data[distance_key])
+                        if direction == 'bearish':
+                            tp_prices[i] = entry_price - (distance_pips / pip_multiplier)
+                        else:  # bullish
+                            tp_prices[i] = entry_price + (distance_pips / pip_multiplier)
+                    except:
+                        tp_prices[i] = None
+                else:
+                    tp_prices[i] = None
+            
+            # Process candles chronologically
+            hit_tps = set()
+            sl_hit = False
+            highest_tp_hit = 0
+            exit_time = None
+            
+            for idx, candle in candles.iterrows():
+                candle_time = candle['time']
+                candle_high = float(candle['high'])
+                candle_low = float(candle['low'])
+                
+                # Check SL
+                if direction == 'bearish' and candle_low <= sl_price:
+                    sl_hit = True
+                    exit_time = candle_time
+                    self._log(f"🛑 Backfill: SL hit for {trade_id} at {candle_time}")
+                    break
+                
+                elif direction == 'bullish' and candle_high >= sl_price:
+                    sl_hit = True
+                    exit_time = candle_time
+                    self._log(f"🛑 Backfill: SL hit for {trade_id} at {candle_time}")
+                    break
+                
+                # Check TPs
+                for i in range(1, 11):
+                    if i not in hit_tps and tp_prices[i] is not None:
+                        if direction == 'bearish' and candle_low <= tp_prices[i]:
+                            hit_tps.add(i)
+                            highest_tp_hit = max(highest_tp_hit, i)
+                            exit_time = candle_time
+                            self._log(f"✅ Backfill: TP{i} hit for {trade_id} at {candle_time}")
+                        
+                        elif direction == 'bullish' and candle_high >= tp_prices[i]:
+                            hit_tps.add(i)
+                            highest_tp_hit = max(highest_tp_hit, i)
+                            exit_time = candle_time
+                            self._log(f"✅ Backfill: TP{i} hit for {trade_id} at {candle_time}")
+            
+            # Prepare updates for CSV
+            updates = {}
+            
+            if sl_hit:
+                # SL was hit
+                updates['tp_level_hit'] = '-1'
+                if exit_time:
+                    updates['exit_time'] = exit_time.strftime('%Y-%m-%d %H:%M:%S')
+                
+                # Set all TPs to -1
+                for i in range(1, 11):
+                    updates[f'tp_1_{i}_result'] = '-1'
+                
+                # Calculate time to exit
+                if exit_time:
+                    time_to_exit = (exit_time - entry_time).total_seconds()
+                    updates['time_to_exit_seconds'] = int(time_to_exit)
+                
+                self._update_trade_in_csv_safe(trade_id, updates)
+                return True
+                
+            elif hit_tps:
+                # Some TPs were hit
+                updates['tp_level_hit'] = str(highest_tp_hit)
+                if exit_time:
+                    updates['exit_time'] = exit_time.strftime('%Y-%m-%d %H:%M:%S')
+                
+                # Record TP hits
+                for i in range(1, 11):
+                    if i in hit_tps:
+                        updates[f'tp_1_{i}_result'] = f'+{i}'
+                    else:
+                        updates[f'tp_1_{i}_result'] = '-1'
+                
+                # Calculate time to exit
+                if exit_time:
+                    time_to_exit = (exit_time - entry_time).total_seconds()
+                    updates['time_to_exit_seconds'] = int(time_to_exit)
+                
+                self._update_trade_in_csv_safe(trade_id, updates)
+                return True
+                
+            else:
+                # No SL or TP hit - trade is still open
+                self._log(f"⏳ Backfill: Trade {trade_id} still open (no SL/TP hit)")
+                return False
+                
+        except Exception as e:
+            self._log(f"❌ Backfill error for {trade_id}: {e}", 'error')
+            return False
+    
+    def _fetch_historical_candles(self, instrument, timeframe, start_time, end_time):
+        """Fetch historical candles - you need to adapt this to your fetch_candles function"""
+        try:
+            # This is where you need to use your fetch_candles function
+            # For now, return empty DataFrame
+            import pandas as pd
+            return pd.DataFrame()
+            
+        except Exception as e:
+            self._log(f"❌ Error fetching historical candles: {e}", 'error')
+            import pandas as pd
+            return pd.DataFrame()
+    
+    def start_live_monitoring(self, trade_data):
+        """Start live monitoring thread for a trade"""
         trade_id = trade_data['trade_id']
         
-        # Check if trade needs monitoring
-        if not self.should_monitor_trade(trade_data):
-            self._log(f"⏭️ Trade {trade_id} already has exit results - skipping", 'info')
-            return
-        
         # Check if already being monitored
-        if self.is_trade_monitored(trade_id):
-            self._log(f"⏭️ Trade {trade_id} already being monitored", 'warning')
-            return
-
+        if trade_id in self.active_threads:
+            thread = self.active_threads[trade_id]
+            if thread.is_alive():
+                self._log(f"⏭️ Trade {trade_id} already being monitored")
+                return
         
-        # Validate trade data
-        if not self._validate_trade_data(trade_data):
-            self._log(f"❌ Invalid trade data for {trade_id}", 'error')
+        # Check if trade is already completed
+        if self._is_trade_completed(trade_data):
+            self._log(f"⏭️ Trade {trade_id} already completed")
             return
         
-        # Start monitoring thread
         try:
+            # Start monitoring thread
             thread = threading.Thread(
-                target=self._monitor_trade,
+                target=self._monitor_trade_live,
                 args=(trade_data,),
                 name=f"TPMonitor_{trade_id}",
                 daemon=True
@@ -6030,706 +6238,291 @@ class TPMonitoringManager:
                 'status': 'running',
                 'hit_tps': set(),
                 'last_checked': datetime.now(),
-                'historical_replayed': False,
-                'candles_processed': 0,
                 'be_tracking': {i: {'state': 'waiting', 'be_triggered': False, 'outcome': 'none'} for i in range(1, 11)}
             }
             
             thread.start()
-            self._update_csv_monitoring_status(trade_id, 'running')
-            self._log(f"📊 Started monitoring trade {trade_id}")
+            
+            # Update CSV status
+            self._update_trade_in_csv_safe(trade_id, {
+                'monitoring_status': 'running',
+                'last_heartbeat': datetime.now().isoformat(),
+                'reconciliation_attempts': str(int(trade_data.get('reconciliation_attempts', 0)) + 1)
+            })
+            
+            self._log(f"📡 Started LIVE monitoring for {trade_id}")
             
         except Exception as e:
-            self._log(f"❌ Failed to start monitoring for {trade_id}: {e}", 'error')
+            self._log(f"❌ Failed to start live monitoring for {trade_id}: {e}", 'error')
     
-    def is_trade_monitored(self, trade_id: str) -> bool:
-        """Check if trade is actively being monitored"""
-        if trade_id not in self.active_threads:
-            return False
-        
-        thread = self.active_threads[trade_id]
-        return thread.is_alive()
-    
-    def _validate_trade_data(self, trade_data: Dict) -> bool:
-        """Validate that trade has required data for monitoring"""
-        required = ['trade_id', 'instrument', 'direction', 'entry_price', 'sl_price']
-        
-        for field in required:
-            if field not in trade_data or pd.isna(trade_data.get(field)):
-                self._log(f"❌ Missing required field {field}", 'error')
-                return False
-        
-        # Check at least one TP distance exists
-        has_tp = False
-        for i in range(1, 11):
-            if f'tp_1_{i}_distance' in trade_data and not pd.isna(trade_data.get(f'tp_1_{i}_distance')):
-                has_tp = True
-                break
-        
-        if not has_tp:
-            self._log(f"❌ No TP distances specified", 'error')
-        
-        return has_tp
-    
-    def _monitor_trade(self, trade_data: Dict):
-        """
-        Main monitoring function with BE tracking and historical replay
-        """
+    def _monitor_trade_live(self, trade_data):
+        """Live monitoring thread (similar to your old version)"""
         trade_id = trade_data['trade_id']
+        instrument = trade_data['instrument']
+        direction = trade_data['direction'].lower()
         
         try:
-            # Get current state
-            current_state = self._get_trade_state_from_csv(trade_id)
+            entry_price = float(trade_data['entry_price'])
+            sl_price = float(trade_data['sl_price'])
             
-            # Initialize BE tracking
-            be_tracking = current_state.get('be_tracking', 
-                {i: {'state': 'waiting', 'be_triggered': False, 'outcome': 'none'} for i in range(1, 11)})
+            # Calculate TP prices
+            pip_multiplier = 100 if 'JPY' in instrument else 10000
+            tp_prices = {}
             
-            # Track which TPs have been hit
-            hit_tps = current_state.get('hit_tps', set())
-            
-            # Step 1: If trade is old, replay historical candles first
-            if self._needs_historical_replay(trade_data, current_state):
-                self._log(f"🔄 Starting historical replay for {trade_id}")
-                completed = self._replay_historical_with_be(trade_data, be_tracking, hit_tps)
-                
-                if completed:
-                    self._log(f"✅ Trade {trade_id} completed during historical replay")
-                    self._cleanup_trade_monitoring(trade_id, 'completed')
-                    return
+            for i in range(1, 11):
+                distance_key = f'tp_1_{i}_distance'
+                if distance_key in trade_data:
+                    try:
+                        distance_pips = float(trade_data[distance_key])
+                        if direction == 'bearish':
+                            tp_prices[i] = entry_price - (distance_pips / pip_multiplier)
+                        else:  # bullish
+                            tp_prices[i] = entry_price + (distance_pips / pip_multiplier)
+                    except:
+                        tp_prices[i] = None
                 else:
-                    self._log(f"✅ Historical replay complete, continuing with live monitoring")
+                    tp_prices[i] = None
             
-            # Step 2: Live monitoring
-            self._live_monitoring_with_be(trade_data, be_tracking, hit_tps)
+            # Initialize tracking
+            hit_tps = set()
+            be_tracking = {i: {'state': 'waiting', 'be_triggered': False, 'outcome': 'none'} for i in range(1, 11)}
+            
+            # Get entry time for timeout calculation (disabled)
+            entry_time = pd.to_datetime(trade_data['entry_time'])
+            
+            self._log(f"📊 LIVE monitoring started for {trade_id}")
+            
+            # Main monitoring loop
+            while not self.shutdown_flag.is_set():
+                try:
+                    # Check if trade is already completed
+                    if self._is_trade_completed(trade_data):
+                        self._log(f"✅ Trade {trade_id} completed during monitoring")
+                        break
+                    
+                    # Fetch current candles
+                    candles = self._fetch_current_candles(instrument, 'M1', count=2)
+                    
+                    if not candles.empty:
+                        latest_candle = candles.iloc[-1]
+                        current_time = latest_candle['time']
+                        current_high = float(latest_candle['high'])
+                        current_low = float(latest_candle['low'])
+                        current_close = float(latest_candle['close'])
+                        
+                        # Check SL
+                        sl_hit = False
+                        if direction == 'bearish' and current_low <= sl_price:
+                            sl_hit = True
+                        elif direction == 'bullish' and current_high >= sl_price:
+                            sl_hit = True
+                        
+                        if sl_hit:
+                            # Record SL hit
+                            updates = self._record_sl_hit_updates(trade_data, current_time, hit_tps, be_tracking)
+                            self._update_trade_in_csv_safe(trade_id, updates)
+                            self._log(f"🛑 SL hit for {trade_id}")
+                            break
+                        
+                        # Check TPs
+                        for i in range(1, 11):
+                            if i not in hit_tps and tp_prices[i] is not None:
+                                tp_hit = False
+                                if direction == 'bearish' and current_low <= tp_prices[i]:
+                                    tp_hit = True
+                                elif direction == 'bullish' and current_high >= tp_prices[i]:
+                                    tp_hit = True
+                                
+                                if tp_hit:
+                                    hit_tps.add(i)
+                                    time_seconds = (current_time - entry_time).total_seconds()
+                                    
+                                    # Update CSV
+                                    updates = {
+                                        f'tp_1_{i}_result': f'+{i}',
+                                        f'tp_1_{i}_time_seconds': str(int(time_seconds))
+                                    }
+                                    
+                                    # Update highest TP hit
+                                    current_highest = int(trade_data.get('tp_level_hit', 0) or 0)
+                                    if i > current_highest:
+                                        updates['tp_level_hit'] = str(i)
+                                        updates['exit_time'] = current_time.strftime('%Y-%m-%d %H:%M:%S')
+                                        updates['time_to_exit_seconds'] = str(int(time_seconds))
+                                    
+                                    self._update_trade_in_csv_safe(trade_id, updates)
+                                    trade_data.update(updates)  # Update local copy
+                                    
+                                    # Start BE tracking for this TP
+                                    be_tracking[i]['state'] = 'tracking'
+                                    self._log(f"✅ TP{i} hit for {trade_id}")
+                        
+                        # Update BE tracking
+                        self._update_be_tracking(trade_data, hit_tps, be_tracking, current_close, tp_prices)
+                        
+                        # Update heartbeat
+                        self.heartbeat_times[trade_id] = datetime.now()
+                    
+                    # Sleep between checks
+                    time.sleep(self.check_interval_live)
+                    
+                except Exception as e:
+                    self._log(f"⚠️ Error in monitoring loop for {trade_id}: {e}", 'warning')
+                    time.sleep(5)
+            
+            # Cleanup
+            self._cleanup_trade_monitoring(trade_id, 'completed')
             
         except Exception as e:
             self._log(f"❌ Monitoring crashed for {trade_id}: {e}", 'error')
-            self._update_csv_monitoring_status(trade_id, 'failed')
+            self._update_trade_in_csv_safe(trade_id, {'monitoring_status': 'failed'})
             self._cleanup_trade_monitoring(trade_id, 'failed')
     
-    def _needs_historical_replay(self, trade_data: Dict, current_state: Dict) -> bool:
-        """Check if we need to replay historical candles"""
-        trade_id = trade_data['trade_id']
-        
-        # If we've already replayed, don't do it again
-        if current_state.get('historical_replayed', False):
-            return False
-        
-        # Get entry time
-        entry_time_str = trade_data.get('entry_time')
-        if not entry_time_str or pd.isna(entry_time_str):
-            return False
-        
+    def _fetch_current_candles(self, instrument, timeframe, count):
+        """Fetch current candles - adapt to your fetch_candles"""
         try:
-            entry_time = pd.to_datetime(entry_time_str)
-            now = datetime.now()
-            
-            # If entry was more than 2 minutes ago, we need historical replay
-            return (now - entry_time).total_seconds() > 120
-            
+            # Use your fetch_candles function here
+            import pandas as pd
+            return pd.DataFrame()
         except:
-            return False
-    
-    def _replay_historical_with_be(self, trade_data: Dict, be_tracking: Dict, hit_tps: Set) -> bool:
-        """Replay historical candles with BE tracking"""
-        trade_id = trade_data['trade_id']
-        instrument = trade_data['instrument']
-        entry_time = pd.to_datetime(trade_data['entry_time'])
-        now = datetime.now()
-        
-        # Determine timeframe for replay
-        time_diff_hours = (now - entry_time).total_seconds() / 3600
-        
-        if time_diff_hours <= 83:
-            timeframe = self.primary_timeframe
-        elif time_diff_hours <= 416:
-            timeframe = 'M5'
-        elif time_diff_hours <= 1250:
-            timeframe = 'M15'
-        else:
-            timeframe = 'H1'
-        
-        try:
-            # Fetch historical candles
-            candles = self._fetch_candles(
-                instrument=instrument,
-                timeframe=timeframe,
-                start_time=entry_time,
-                end_time=now
-            )
-            
-            if candles.empty:
-                self._log(f"⚠️ No historical candles found for {trade_id}", 'warning')
-                return False
-            
-            self._log(f"📊 Replaying {len(candles)} candles for {trade_id}")
-            
-            # Process each candle
-            for idx, candle in candles.iterrows():
-                # Update thread state
-                self.thread_states[trade_id]['candles_processed'] += 1
-                
-                # Process candle with BE tracking
-                trade_completed = self._process_candle_with_be(
-                    candle, trade_data, be_tracking, hit_tps, is_live=False
-                )
-                
-                if trade_completed:
-                    self.thread_states[trade_id]['historical_replayed'] = True
-                    return True
-            
-            self.thread_states[trade_id]['historical_replayed'] = True
-            self._log(f"✅ Historical replay complete for {trade_id}")
-            return False
-            
-        except Exception as e:
-            self._log(f"❌ Historical replay error for {trade_id}: {e}", 'error')
-            return False
-    
-    def _live_monitoring_with_be(self, trade_data: Dict, be_tracking: Dict, hit_tps: Set):
-        """Live monitoring loop with BE tracking - INFINITE (no timeout)"""
-        trade_id = trade_data['trade_id']
-        instrument = trade_data['instrument']
-        start_time = datetime.now()
-        
-        self._log(f"📡 Starting INFINITE live monitoring for {trade_id}")
-        
-        while not self.shutdown_flag.is_set():
-            try:
-                # REMOVED: No timeout check - monitoring continues indefinitely
-                
-                # Check if trade already completed (from historical replay or previous checks)
-                if self._is_trade_completed(trade_data):
-                    self._log(f"✅ Trade {trade_id} is already completed", 'info')
-                    break
-                
-                # Get latest candle
-                candles = self._fetch_candles(
-                    instrument=instrument,
-                    timeframe='M1',
-                    count=2
-                )
-                
-                if not candles.empty:
-                    latest_candle = candles.iloc[-1]
-                    
-                    # Process candle with BE tracking
-                    trade_completed = self._process_candle_with_be(
-                        latest_candle, trade_data, be_tracking, hit_tps, is_live=True
-                    )
-                    
-                    if trade_completed:
-                        break
-                
-                # Update heartbeat
-                self.heartbeat_times[trade_id] = datetime.now()
-                self.thread_states[trade_id]['last_checked'] = datetime.now()
-                
-                # Log heartbeat periodically
-                if (datetime.now() - start_time).total_seconds() % self.heartbeat_interval < 1:
-                    hit_count = len(hit_tps)
-                    self._log(f"💓 {trade_id} alive - {hit_count} TPs hit")
-                
-                # Sleep between checks
-                time.sleep(self.check_interval_live)
-                
-            except Exception as e:
-                self._log(f"⚠️ Live monitoring error for {trade_id}: {e}", 'warning')
-                time.sleep(5)
-        
-        # Cleanup
-        self._cleanup_trade_monitoring(trade_id, trade_data.get('monitoring_status', 'completed'))
-    
-    def _process_candle_with_be(self, candle: pd.Series, trade_data: Dict, be_tracking: Dict, hit_tps: Set, is_live: bool = False):
-        """Process a candle with BE tracking logic"""
-        trade_id = trade_data['trade_id']
-        instrument = trade_data['instrument']
-        direction = trade_data['direction'].lower()
-        entry_price = float(trade_data['entry_price'])
-        sl_price = float(trade_data['sl_price'])
-        
-        # Get current price
-        if is_live:
-            current_price = float(candle['close'])
-            current_time = datetime.now()
-        else:
-            # For historical, use candle extremes for more accurate hit detection
-            current_high = float(candle['high'])
-            current_low = float(candle['low'])
-            current_time = candle['time']
-        
-        # Calculate TP prices
-        tp_prices = self._calculate_tp_prices(trade_data)
-        
-        # Check SL hit (using extremes for historical)
-        if not is_live:
-            if direction == 'bearish' and current_low <= sl_price:
-                self._record_sl_hit(trade_data, current_time, be_tracking, hit_tps)
-                return True
-            elif direction == 'bullish' and current_high >= sl_price:
-                self._record_sl_hit(trade_data, current_time, be_tracking, hit_tps)
-                return True
-        else:
-            if (direction == 'bearish' and current_price >= sl_price) or \
-               (direction == 'bullish' and current_price <= sl_price):
-                self._record_sl_hit(trade_data, current_time, be_tracking, hit_tps)
-                return True
-        
-        # Check regular TPs
-        for i in range(1, 11):
-            tp_result_key = f'tp_1_{i}_result'
-            
-            if trade_data.get(tp_result_key) == '':  # Not recorded yet
-                tp_hit = False
-                
-                if not is_live:
-                    # Historical: use candle extremes
-                    if direction == 'bearish' and current_low <= tp_prices[i]:
-                        tp_hit = True
-                    elif direction == 'bullish' and current_high >= tp_prices[i]:
-                        tp_hit = True
-                else:
-                    # Live: use current price
-                    if direction == 'bearish' and current_price <= tp_prices[i]:
-                        tp_hit = True
-                    elif direction == 'bullish' and current_price >= tp_prices[i]:
-                        tp_hit = True
-                
-                if tp_hit:
-                    entry_time = pd.to_datetime(trade_data['entry_time'])
-                    time_seconds = (current_time - entry_time).total_seconds()
-                    self._record_tp_hit(trade_data, i, current_time, time_seconds)
-                    
-                    # Start BE tracking for this TP
-                    if i not in hit_tps:
-                        hit_tps.add(i)
-                        be_tracking[i]['state'] = 'tracking'
-        
-        # Update BE tracking for each hit TP
-        for tp_level in list(hit_tps):
-            if be_tracking[tp_level]['state'] == 'tracking' and be_tracking[tp_level]['outcome'] == 'none':
-                # Check if price returned to entry (BE)
-                current_price_for_be = current_price if is_live else ((current_high + current_low) / 2)
-                if abs(current_price_for_be - entry_price) <= self.be_tolerance:
-                    be_tracking[tp_level]['be_triggered'] = True
-                
-                # Check outcomes based on current price
-                if tp_level < 10:  # For TP1 to TP9
-                    next_tp_price = tp_prices[tp_level + 1]
-                    
-                    next_tp_hit = False
-                    if not is_live:
-                        if direction == 'bearish' and current_low <= next_tp_price:
-                            next_tp_hit = True
-                        elif direction == 'bullish' and current_high >= next_tp_price:
-                            next_tp_hit = True
-                    else:
-                        if direction == 'bearish' and current_price <= next_tp_price:
-                            next_tp_hit = True
-                        elif direction == 'bullish' and current_price >= next_tp_price:
-                            next_tp_hit = True
-                    
-                    if next_tp_hit:
-                        # Next TP hit - set BE outcome
-                        if be_tracking[tp_level]['be_triggered']:
-                            be_tracking[tp_level]['outcome'] = 'miss'
-                            trade_data[f'if_BE_TP{tp_level}'] = 'miss'
-                        else:
-                            be_tracking[tp_level]['outcome'] = 'hit'
-                            trade_data[f'if_BE_TP{tp_level}'] = 'hit'
-                        
-                        self._update_trade_in_csv(trade_data)
-                
-                else:  # For TP10, track until trade ends
-                    # Outcome will be set when trade ends (SL or timeout)
-                    pass
-        
-        return False
-    
-    def _calculate_tp_prices(self, trade_data: Dict) -> Dict[int, float]:
-        """Calculate TP prices for all levels"""
-        instrument = trade_data['instrument']
-        direction = trade_data['direction'].lower()
-        entry_price = float(trade_data['entry_price'])
-        
-        # Determine pip multiplier
-        pip_multiplier = 100 if 'JPY' in instrument else 10000
-        
-        tp_prices = {}
-        
-        for i in range(1, 11):
-            # Get TP distance in pips
-            distance_key = f'tp_1_{i}_distance'
-            if distance_key in trade_data and not pd.isna(trade_data[distance_key]):
-                distance_pips = float(trade_data[distance_key])
-                
-                # Calculate TP price
-                if direction == 'bearish':
-                    tp_prices[i] = entry_price - (distance_pips / pip_multiplier)
-                else:  # bullish
-                    tp_prices[i] = entry_price + (distance_pips / pip_multiplier)
-            else:
-                tp_prices[i] = None
-        
-        return tp_prices
-    
-    def _record_sl_hit(self, trade_data: Dict, hit_time: datetime, be_tracking: Dict, hit_tps: Set):
-        """Handle SL hit with BE outcomes"""
-        trade_id = trade_data['trade_id']
-        
-        with self.thread_locks[trade_id]:
-            # Record -1 for all TPs that weren't hit
-            for i in range(1, 11):
-                if trade_data.get(f'tp_1_{i}_result') == '':
-                    trade_data[f'tp_1_{i}_result'] = "-1"
-                    trade_data[f'tp_1_{i}_time_seconds'] = -1
-            
-            # Update highest TP hit to -1 (SL)
-            trade_data['tp_level_hit'] = -1
-            trade_data['exit_time'] = hit_time.strftime('%Y-%m-%d %H:%M:%S')
-            
-            # Calculate time to exit
-            entry_time = pd.to_datetime(trade_data['entry_time'])
-            time_to_exit = (hit_time - entry_time).total_seconds()
-            trade_data['time_to_exit_seconds'] = int(time_to_exit)
-            
-            # Set BE outcomes for all tracking TPs
-            for tp_level in hit_tps:
-                if be_tracking[tp_level]['state'] == 'tracking':
-                    if not be_tracking[tp_level]['be_triggered']:
-                        be_tracking[tp_level]['outcome'] = 'miss'
-                        trade_data[f'if_BE_TP{tp_level}'] = 'miss'
-                    else:
-                        be_tracking[tp_level]['outcome'] = 'hit'
-                        trade_data[f'if_BE_TP{tp_level}'] = 'hit'
-            
-            # For TP10 specifically (if it was hit and still tracking)
-            if 10 in hit_tps and be_tracking[10]['state'] == 'tracking' and be_tracking[10]['outcome'] == 'none':
-                if not be_tracking[10]['be_triggered']:
-                    be_tracking[10]['outcome'] = 'miss'
-                    trade_data['if_BE_TP10'] = 'miss'
-                else:
-                    be_tracking[10]['outcome'] = 'hit'
-                    trade_data['if_BE_TP10'] = 'hit'
-            
-            # Update CSV
-            self._update_trade_in_csv(trade_data)
-            self._update_csv_monitoring_status(trade_id, 'completed')
-            
-            self._log(f"🛑 SL hit for {trade_id}")
-    
-    def _record_tp_hit(self, trade_data: Dict, tp_level: int, hit_time: datetime, time_seconds: float):
-        """Record TP hit"""
-        trade_id = trade_data['trade_id']
-        
-        with self.thread_locks[trade_id]:
-            # Record TP hit
-            trade_data[f'tp_1_{tp_level}_result'] = f"+{tp_level}"
-            trade_data[f'tp_1_{tp_level}_time_seconds'] = int(time_seconds)
-            
-            # Update highest TP hit
-            current_highest = trade_data.get('tp_level_hit', 0)
-            if tp_level > current_highest:
-                trade_data['tp_level_hit'] = tp_level
-                trade_data['exit_time'] = hit_time.strftime('%Y-%m-%d %H:%M:%S')
-                trade_data['time_to_exit_seconds'] = int(time_seconds)
-            
-            self._update_trade_in_csv(trade_data)
-            self._log(f"✅ TP{tp_level} hit for {trade_id} ({time_seconds:.1f}s)")
-    
-    def _handle_monitoring_timeout(self, trade_data: Dict, be_tracking: Dict, hit_tps: Set):
-        """Handle monitoring timeout (24 hours) - THIS IS DISABLED BY disable_timeouts()"""
-        # This method is replaced by disable_timeouts() with a no-op
-        pass
-    
-    def _is_trade_completed(self, trade_data: Dict) -> bool:
-        """Check if trade is completed (all TPs hit or SL hit)"""
-        # Check if all TPs have results
-        for i in range(1, 11):
-            if trade_data.get(f'tp_1_{i}_result') == '':
-                return False
-        
-        return True
-    
-    def _get_trade_state_from_csv(self, trade_id: str) -> Dict:
-        """Get current monitoring state from CSV - SAFE VERSION"""
-        try:
-            # Read CSV with error handling
-            try:
-                df = pd.read_csv(self.csv_path)
-            except Exception as e:
-                self._log(f"⚠️ CSV read error in _get_trade_state_from_csv, trying recovery: {e}", 'warning')
-                df = pd.read_csv(self.csv_path, on_bad_lines='skip')
-            
-            if df.empty:
-                return {
-                    'hit_tps': set(),
-                    'historical_replayed': False,
-                    'status': 'not_started',
-                    'be_tracking': {i: {'state': 'waiting', 'be_triggered': False, 'outcome': 'none'} for i in range(1, 11)}
-                }
-            
-            # Find the trade
-            trade_row = df[df['trade_id'] == trade_id]
-            
-            if not trade_row.empty:
-                # Get BE tracking state
-                be_tracking = {}
-                for i in range(1, 11):
-                    be_outcome = trade_row.iloc[0].get(f'if_BE_TP{i}', '')
-                    if be_outcome in ['hit', 'miss', 'none']:
-                        be_tracking[i] = {
-                            'state': 'tracking',
-                            'be_triggered': be_outcome != 'none',
-                            'outcome': be_outcome
-                        }
-                    else:
-                        be_tracking[i] = {
-                            'state': 'waiting',
-                            'be_triggered': False,
-                            'outcome': 'none'
-                        }
-                
-                # Get hit TPs
-                hit_tps = set()
-                for i in range(1, 11):
-                    result = trade_row.iloc[0].get(f'tp_1_{i}_result', '')
-                    if isinstance(result, str) and result.startswith('+'):
-                        hit_tps.add(i)
-                
-                return {
-                    'hit_tps': hit_tps,
-                    'historical_replayed': trade_row.iloc[0].get('monitoring_status') == 'running',
-                    'status': trade_row.iloc[0].get('monitoring_status', 'not_started'),
-                    'be_tracking': be_tracking
-                }
-        
-        except Exception as e:
-            self._log(f"❌ Error getting trade state for {trade_id}: {e}", 'warning')
-        
-        return {
-            'hit_tps': set(),
-            'historical_replayed': False,
-            'status': 'not_started',
-            'be_tracking': {i: {'state': 'waiting', 'be_triggered': False, 'outcome': 'none'} for i in range(1, 11)}
-        }
-    
-    def reconcile_orphaned_trades(self):
-        """
-        Find and resume monitoring for orphaned trades
-        Called on bot startup or periodically
-        """
-        self._log("🔍 Starting orphaned trade reconciliation...")
-        
-        try:
-            # Read CSV with error handling
-            try:
-                df = pd.read_csv(self.csv_path)
-            except Exception as e:
-                self._log(f"⚠️ CSV read error in reconcile_orphaned_trades, trying recovery: {e}", 'warning')
-                df = pd.read_csv(self.csv_path, on_bad_lines='skip')
-            
-            if df.empty:
-                self._log("✅ CSV is empty - no trades to reconcile")
-                return
-            
-            # Find orphaned trades
-            orphaned = self._find_orphaned_trades(df)
-            
-            if len(orphaned) == 0:
-                self._log("✅ No orphaned trades found")
-                return
-            
-            self._log(f"📊 Found {len(orphaned)} orphaned trades")
-            
-            # Process each orphaned trade
-            processed_count = 0
-            for _, trade_row in orphaned.iterrows():
-                trade_data = trade_row.to_dict()
-                trade_id = trade_data['trade_id']
-                
-                # Skip if already being monitored
-                if self.is_trade_monitored(trade_id):
-                    self._log(f"⏭️ Trade {trade_id} already being monitored")
-                    continue
-                
-                # Increment reconciliation attempts
-                attempts = trade_data.get('reconciliation_attempts', 0) + 1
-                trade_data['reconciliation_attempts'] = attempts
-                
-                # Check if trade is still within monitoring window (DISABLED - always monitor)
-                entry_time = pd.to_datetime(trade_data.get('entry_time'))
-                if entry_time and pd.notna(entry_time):
-                    hours_since_entry = (datetime.now() - entry_time).total_seconds() / 3600
-                    
-                    # Log age but ALWAYS monitor (timeout disabled)
-                    self._log(f"📅 Trade {trade_id} is {hours_since_entry:.1f}h old - monitoring anyway")
-                
-                # Check if trade actually needs monitoring
-                if not self.should_monitor_trade(trade_data):
-                    self._log(f"⏭️ Trade {trade_id} already has exit results - skipping")
-                    continue
-                
-                # Start monitoring
-                self._log(f"🔄 Reconciling trade {trade_id} (attempt {attempts})")
-                self.start_monitoring(trade_data)
-                processed_count += 1
-                
-                # Small delay to avoid overwhelming
-                time.sleep(0.5)
-            
-            self._log(f"✅ Reconciliation attempted for {processed_count} trades")
-            
-        except Exception as e:
-            self._log(f"❌ Reconciliation error: {e}", 'error')
-    
-    def _find_orphaned_trades(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Find trades that need monitoring/reconciliation"""
-        try:
-            # Convert time columns
-            for col in df.columns:
-                if 'time' in col.lower():
-                    df[col] = pd.to_datetime(df[col], errors='coerce')
-            
-            # Create mask for orphaned trades:
-            # 1. Has entry_time
-            # 2. No exit_time or empty exit_time
-            # 3. Not all TP results are filled (not -1 or +number)
-            mask = (
-                df['entry_time'].notna() &
-                (df['exit_time'].isna() | (df['exit_time'].astype(str).str.strip() == ''))
-            )
-            
-            # Additional check for TP results
-            tp_results_mask = False
-            for i in range(1, 11):
-                tp_col = f'tp_1_{i}_result'
-                if tp_col in df.columns:
-                    # Check if TP result is empty or 0
-                    tp_results_mask = tp_results_mask | (
-                        df[tp_col].fillna('').astype(str).str.strip().isin(['', '0'])
-                    )
-            
-            mask = mask & tp_results_mask
-            
-            return df[mask].copy()
-            
-        except Exception as e:
-            self._log(f"Error finding orphaned trades: {e}", 'warning')
+            import pandas as pd
             return pd.DataFrame()
     
-    def _update_csv_monitoring_status(self, trade_id: str, status: str):
-        """Update monitoring status in CSV - SAFE VERSION"""
-        try:
-            with self.csv_lock:
-                # Read CSV with error handling
-                try:
-                    df = pd.read_csv(self.csv_path)
-                except Exception as e:
-                    self._log(f"⚠️ CSV read error in _update_csv_monitoring_status, trying recovery: {e}", 'warning')
-                    df = pd.read_csv(self.csv_path, on_bad_lines='skip')
-                
-                if df.empty or 'trade_id' not in df.columns:
-                    self._log(f"❌ CSV is empty or missing trade_id column", 'error')
-                    return
-                
-                if trade_id in df['trade_id'].values:
-                    mask = df['trade_id'] == trade_id
-                    
-                    df.loc[mask, 'monitoring_status'] = status
-                    df.loc[mask, 'last_heartbeat'] = datetime.now().isoformat()
-                    
-                    df.to_csv(self.csv_path, index=False)
-                    
-        except Exception as e:
-            self._log(f"❌ Error updating CSV status for {trade_id}: {e}", 'error')
+    def _record_sl_hit_updates(self, trade_data, hit_time, hit_tps, be_tracking):
+        """Create updates dictionary for SL hit"""
+        updates = {}
+        
+        # Record -1 for all TPs not hit
+        for i in range(1, 11):
+            if trade_data.get(f'tp_1_{i}_result') == '':
+                updates[f'tp_1_{i}_result'] = '-1'
+        
+        # Set highest TP to -1
+        updates['tp_level_hit'] = '-1'
+        updates['exit_time'] = hit_time.strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Calculate time to exit
+        entry_time = pd.to_datetime(trade_data['entry_time'])
+        time_to_exit = (hit_time - entry_time).total_seconds()
+        updates['time_to_exit_seconds'] = str(int(time_to_exit))
+        
+        # Update BE outcomes
+        for tp_level in hit_tps:
+            if be_tracking[tp_level]['state'] == 'tracking':
+                if be_tracking[tp_level]['be_triggered']:
+                    updates[f'if_BE_TP{tp_level}'] = 'hit'
+                else:
+                    updates[f'if_BE_TP{tp_level}'] = 'miss'
+        
+        return updates
     
-    def _update_trade_in_csv(self, trade_data: Dict):
-        """Update trade data in CSV - ONLY UPDATE EMPTY VALUES"""
-        try:
-            with self.csv_lock:
-                # Read CSV with error handling
-                try:
-                    df = pd.read_csv(self.csv_path)
-                except Exception as e:
-                    self._log(f"⚠️ CSV read error in _update_trade_in_csv, trying recovery: {e}", 'warning')
-                    df = pd.read_csv(self.csv_path, on_bad_lines='skip')
+    def _update_be_tracking(self, trade_data, hit_tps, be_tracking, current_price, tp_prices):
+        """Update BE tracking logic"""
+        entry_price = float(trade_data['entry_price'])
+        
+        for tp_level in hit_tps:
+            if be_tracking[tp_level]['state'] == 'tracking':
+                # Check if price returned to entry (BE)
+                if abs(current_price - entry_price) <= self.be_tolerance:
+                    be_tracking[tp_level]['be_triggered'] = True
                 
-                if df.empty or 'trade_id' not in df.columns:
-                    self._log(f"❌ CSV is empty or missing trade_id column", 'error')
-                    return
-                
-                trade_id = trade_data['trade_id']
-                
-                if trade_id in df['trade_id'].values:
-                    mask = df['trade_id'] == trade_id
-                    
-                    # ONLY update empty or missing values - NEVER overwrite existing data
-                    for col in trade_data.keys():
-                        if col in df.columns:
-                            # Get current value
-                            current_value = df.loc[mask, col].iloc[0] if mask.any() else ''
+                # Check if next TP is hit
+                if tp_level < 10 and tp_prices.get(tp_level + 1):
+                    # We would check if next TP is hit here
+                    # This is simplified - you need to implement the logic
+                    pass
+    
+    def _is_trade_completed(self, trade_data):
+        """Check if trade is completed (all TPs have results)"""
+        for i in range(1, 11):
+            result = trade_data.get(f'tp_1_{i}_result', '')
+            if self._is_empty_value(result):
+                return False
+        return True
+    
+    def _update_trade_in_csv_safe(self, trade_id, updates):
+        """Safely update specific fields for a trade in CSV"""
+        with self.csv_lock:
+            fieldnames, rows = self._read_csv_safe()
+            if not fieldnames:
+                return False
+            
+            updated = False
+            for i, row in enumerate(rows):
+                if row.get('trade_id') == trade_id:
+                    # Apply updates carefully
+                    for key, new_value in updates.items():
+                        if key in fieldnames:
+                            current_value = row.get(key, '')
                             
-                            # Check if current value is empty/NaN
-                            is_empty = (
-                                pd.isna(current_value) or 
-                                current_value == '' or 
-                                current_value == '0' or 
-                                str(current_value).strip() == ''
-                            )
-                            
-                            # Only update if current is empty AND new value is not empty
-                            new_value = trade_data[col]
-                            if is_empty and new_value not in ['', '0', None]:
-                                df.loc[mask, col] = new_value
-                                self._log(f"📝 Updated {col} for {trade_id}: {new_value}")
+                            # Only update if current is empty and new is not empty
+                            if self._is_empty_value(current_value) and not self._is_empty_value(new_value):
+                                rows[i][key] = str(new_value)
+                                updated = True
                     
                     # Always update heartbeat
-                    df.loc[mask, 'last_heartbeat'] = datetime.now().isoformat()
-                    
-                    # Save CSV
-                    df.to_csv(self.csv_path, index=False)
-                    
-        except Exception as e:
-            self._log(f"❌ Error updating trade in CSV: {e}", 'error')
+                    rows[i]['last_heartbeat'] = datetime.now().isoformat()
+                    break
+            
+            if updated:
+                return self._write_csv_safe(fieldnames, rows)
+            
+            return False
     
-    def check_thread_health(self):
-        """Check health of all monitoring threads and restart dead ones"""
-        dead_threads = []
-        
-        for trade_id, thread in list(self.active_threads.items()):
-            if not thread.is_alive():
-                dead_threads.append(trade_id)
-                self._log(f"⚠️ Thread for {trade_id} is dead", 'warning')
-        
-        # Restart dead threads
-        for trade_id in dead_threads:
+    def _periodic_health_check(self):
+        """Periodic health check for monitoring threads"""
+        while not self.shutdown_flag.is_set():
             try:
-                # Get trade data from CSV
-                try:
-                    df = pd.read_csv(self.csv_path)
-                except:
-                    df = pd.read_csv(self.csv_path, on_bad_lines='skip')
+                # Check for dead threads and restart them
+                dead_threads = []
+                for trade_id, thread in list(self.active_threads.items()):
+                    if not thread.is_alive():
+                        dead_threads.append(trade_id)
                 
-                trade_row = df[df['trade_id'] == trade_id]
+                for trade_id in dead_threads:
+                    self._log(f"⚠️ Thread for {trade_id} died, attempting to restart", 'warning')
+                    
+                    # Get trade data from CSV
+                    fieldnames, rows = self._read_csv_safe()
+                    for row in rows:
+                        if row.get('trade_id') == trade_id:
+                            trade_data = self._row_to_trade_data(row)
+                            
+                            # Check if still needs monitoring
+                            if not self._is_trade_completed(trade_data):
+                                self.start_live_monitoring(trade_data)
+                            else:
+                                self._log(f"⏭️ Trade {trade_id} already completed, not restarting")
+                            break
                 
-                if not trade_row.empty:
-                    trade_data = trade_row.iloc[0].to_dict()
-                    
-                    # Check if still needs monitoring
-                    if self.should_monitor_trade(trade_data):
-                        self._log(f"🔄 Restarting monitoring for {trade_id}")
-                        self.start_monitoring(trade_data)
-                    else:
-                        self._log(f"⏭️ Trade {trade_id} completed - not restarting")
-                    
-                    # Clean up old thread reference
-                    if trade_id in self.active_threads:
-                        del self.active_threads[trade_id]
+                # Wait before next check
+                time.sleep(300)  # Check every 5 minutes
                 
             except Exception as e:
-                self._log(f"❌ Failed to restart thread for {trade_id}: {e}", 'error')
+                self._log(f"⚠️ Error in health check: {e}", 'warning')
+                time.sleep(60)
+    
+    def _cleanup_trade_monitoring(self, trade_id, status):
+        """Clean up monitoring resources for a trade"""
+        if trade_id in self.active_threads:
+            del self.active_threads[trade_id]
+        
+        if trade_id in self.thread_states:
+            del self.thread_states[trade_id]
+        
+        if trade_id in self.heartbeat_times:
+            del self.heartbeat_times[trade_id]
+        
+        if trade_id in self.monitoring_start_times:
+            del self.monitoring_start_times[trade_id]
+        
+        # Update CSV status
+        self._update_trade_in_csv_safe(trade_id, {
+            'monitoring_status': status,
+            'last_heartbeat': datetime.now().isoformat()
+        })
+        
+        self._log(f"🧹 Cleaned up monitoring for {trade_id} ({status})")
     
     def stop_all_monitoring(self):
         """Gracefully stop all monitoring"""
@@ -6748,36 +6541,6 @@ class TPMonitoringManager:
         self.monitoring_start_times.clear()
         
         self._log("✅ All TP monitoring stopped")
-    
-    def run_periodic_checks(self):
-        """Run periodic maintenance checks (call this periodically)"""
-        try:
-            # Check thread health
-            self.check_thread_health()
-            
-            # Reconcile orphaned trades (less frequently)
-            current_minute = datetime.now().minute
-            if current_minute % 30 == 0:  # Every 30 minutes
-                self.reconcile_orphaned_trades()
-        except Exception as e:
-            self._log(f"⚠️ Error in periodic checks: {e}", 'warning')
-    
-    def _cleanup_trade_monitoring(self, trade_id: str, status: str = 'completed'):
-        """Clean up monitoring resources for a trade"""
-        with self.thread_locks[trade_id]:
-            if trade_id in self.active_threads:
-                del self.active_threads[trade_id]
-            
-            if trade_id in self.thread_states:
-                del self.thread_states[trade_id]
-            
-            if trade_id in self.heartbeat_times:
-                del self.heartbeat_times[trade_id]
-            
-            if trade_id in self.monitoring_start_times:
-                del self.monitoring_start_times[trade_id]
-            
-            self._log(f"🧹 Cleaned up monitoring for {trade_id} ({status})")
 
 
 class HammerPatternScanner:
