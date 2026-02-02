@@ -26,6 +26,14 @@ from oandapyV20.endpoints import instruments
 from pytz import timezone
 from zoneinfo import ZoneInfo
 NY_TZ = ZoneInfo("America/New_York")
+import signal
+
+def ignore_sigint():
+    """Ignore Ctrl+C signals"""
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+
+# Call this when you start your bot
+ignore_sigint()
 
 
 # ================================
@@ -5677,7 +5685,8 @@ class TPMonitoringManager:
         self.monitoring_start_times = {}
         
         # Runtime configuration
-        self.monitoring_window_hours = 24
+        self.monitoring_window_hours = 2400
+        self.disable_timeouts()
         self.check_interval_live = 2
         self.heartbeat_interval = 60
         
@@ -5711,6 +5720,25 @@ class TPMonitoringManager:
             daemon=True
         )
         self.periodic_check_thread.start()
+
+        def disable_timeouts(self):
+            """Completely disable all timeout logic"""
+            self._log("⏰ DISABLING ALL TIMEOUT LOGIC - Monitoring will continue indefinitely", 'warning')
+            
+            # Set monitoring window to essentially infinite
+            self.monitoring_window_hours = 999999  # ~114 years
+            
+            # Replace the _handle_monitoring_timeout method with a no-op
+            original_handle_timeout = self._handle_monitoring_timeout
+            
+            def patched_handle_timeout(trade_data, be_tracking, hit_tps):
+                """Patched version - does NOTHING, allowing monitoring to continue"""
+                trade_id = trade_data['trade_id']
+                self._log(f"⏰ [DISABLED] Would have timed out {trade_id}, but timeout is disabled - monitoring continues", 'info')
+                # Intentionally do NOTHING - don't mark as timeout, don't stop monitoring
+                # This allows the trade to continue monitoring indefinitely
+                
+            self._handle_monitoring_timeout = patched_handle_timeout
     
     def _log(self, message: str, level: str = 'info'):
         """Log message with appropriate level"""
@@ -6065,12 +6093,12 @@ class TPMonitoringManager:
         while not self.shutdown_flag.is_set():
             try:
                 # Check if monitoring window expired
-                entry_time = pd.to_datetime(trade_data['entry_time'])
-                hours_since_entry = (datetime.now() - entry_time).total_seconds() / 3600
+                # entry_time = pd.to_datetime(trade_data['entry_time'])
+                # hours_since_entry = (datetime.now() - entry_time).total_seconds() / 3600
                 
-                if hours_since_entry >= self.monitoring_window_hours:
-                    self._handle_monitoring_timeout(trade_data, be_tracking, hit_tps)
-                    break
+                # if hours_since_entry >= self.monitoring_window_hours:
+                #     self._handle_monitoring_timeout(trade_data, be_tracking, hit_tps)
+                #     break
                 
                 # Check if trade already completed
                 if self._is_trade_completed(trade_data):
@@ -6434,11 +6462,11 @@ class TPMonitoringManager:
                 if entry_time and pd.notna(entry_time):
                     hours_since_entry = (datetime.now() - entry_time).total_seconds() / 3600
                     
-                    if hours_since_entry > self.monitoring_window_hours:
-                        # Trade is too old - mark as timeout
-                        self._log(f"⏰ Trade {trade_id} is older than 24h - marking as timeout")
-                        self._handle_monitoring_timeout(trade_data, {}, set())
-                        continue
+                    # if hours_since_entry > self.monitoring_window_hours:
+                    #     # Trade is too old - mark as timeout
+                    #     self._log(f"⏰ Trade {trade_id} is older than 24h - marking as timeout")
+                    #     self._handle_monitoring_timeout(trade_data, {}, set())
+                    #     continue
                 
                 # Start monitoring
                 self._log(f"🔄 Reconciling trade {trade_id} (attempt {attempts})")
