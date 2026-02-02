@@ -6513,7 +6513,7 @@ class HammerPatternScanner:
         self.init_csv_storage()
         self.tp_monitor = TPMonitoringManager(
             csv_path=self.csv_file_path,
-            api_client=self,  # Your class should have fetch_candles method
+            api_key=self.credentials['oanda_api_key'],  # Pass API key directly!
             logger=self.logger
         )
         self.periodic_check_thread = threading.Thread(
