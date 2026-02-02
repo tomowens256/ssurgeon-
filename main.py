@@ -5699,7 +5699,6 @@ class TPMonitoringManager:
         
         # Ensure CSV has required columns
         self._ensure_csv_columns()
-        self.repair_csv()
         # Start periodic checks thread for orphan reconciliation
         self.periodic_check_thread = threading.Thread(
             target=self._run_periodic_checks_loop,
