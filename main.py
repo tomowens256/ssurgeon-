@@ -12942,7 +12942,7 @@ class ZebraScanner:
         
         # Start the hammer scanner (but not background news fetch since we use shared)
         self.hammer_scanner.running = True
-        self.hammer_scanner.reconcile_and_resume_trades()
+        # self.hammer_scanner.reconcile_and_resume_trades()
         
         self.logger.info(f"🦓 Initialized Zebra Scanner for {instrument} {timeframe}")
     
