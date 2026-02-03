@@ -6248,22 +6248,27 @@ class SafeTPMonitoringManager:
             return False
     
     def _fetch_historical_candles(self, instrument, timeframe, start_time, end_time):
-        """Fetch historical candles using the provided fetch_candles function"""
+        """Fetch historical candles using your fetch_candles function"""
         try:
-            # Calculate how many candles we need (approx)
+            # Calculate time difference to estimate candle count
             time_diff_hours = (end_time - start_time).total_seconds() / 3600
             
-            # Estimate candle count based on timeframe
+            # Estimate candle count needed
             if timeframe == 'M1':
-                count = min(int(time_diff_hours * 60) + 100, 5000)
+                count = int(time_diff_hours * 60 * 1.5) + 100  # Extra buffer
             elif timeframe == 'M5':
-                count = min(int(time_diff_hours / 0.0833) + 100, 5000)
+                count = int(time_diff_hours * 12 * 1.5) + 100
             elif timeframe == 'M15':
-                count = min(int(time_diff_hours / 0.25) + 100, 5000)
-            else:
-                count = min(int(time_diff_hours) + 100, 5000)
+                count = int(time_diff_hours * 4 * 1.5) + 100
+            else:  # H1 or higher
+                count = int(time_diff_hours * 1.5) + 100
             
-            # Fetch candles
+            # Limit to max 5000 candles
+            count = min(count, 5000)
+            
+            self._log(f"📊 Fetching {count} {timeframe} candles for {instrument} ({time_diff_hours:.1f}h)")
+            
+            # Use your fetch_candles function
             df = self.fetch_candles(
                 instrument=instrument,
                 timeframe=timeframe,
@@ -6273,15 +6278,17 @@ class SafeTPMonitoringManager:
                 use_cache=True
             )
             
-            # Filter to date range
+            # Filter to our date range
             if not df.empty:
                 df = df[(df['time'] >= start_time) & (df['time'] <= end_time)]
+                self._log(f"✅ Got {len(df)} candles for backfill")
+            else:
+                self._log(f"⚠️ No candles returned for {instrument}")
             
-            self._log(f"📊 Fetched {len(df)} {timeframe} candles for {instrument} from {start_time} to {end_time}")
             return df
             
         except Exception as e:
-            self._log(f"❌ Error fetching historical candles: {e}", 'error')
+            self._log(f"❌ Error fetching historical candles for {instrument}: {e}", 'error')
             import pandas as pd
             return pd.DataFrame()
     
@@ -6298,7 +6305,7 @@ class SafeTPMonitoringManager:
             )
             return df
         except Exception as e:
-            self._log(f"❌ Error fetching current candles: {e}", 'error')
+            self._log(f"❌ Error fetching current candles for {instrument}: {e}", 'error')
             import pandas as pd
             return pd.DataFrame()
     
