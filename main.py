@@ -5715,10 +5715,20 @@ class SafeTPMonitoringManager:
         
         # Ensure CSV has required columns
         self.safe_check_and_fix_csv()
+        # Add this check
+        fieldnames, rows = self._read_csv_safe()
+        row_count = len(rows)
+        if row_count < 50:  # If suspiciously small
+            self._log(f"🚨 EMERGENCY: CSV has only {row_count} rows!", 'error')
+            self._log("🚨 STOPPING to prevent data loss. Restore from backup.", 'error')
+            # Raise error or pause execution
+            raise Exception(f"CSV data loss detected: {row_count} rows")
+        else:
+            self._log(f"✅ CSV integrity check passed: {row_count} rows")
         
         # Start safe reconciliation with rate limiting
         startup_thread = threading.Thread(
-            target=self._safe_startup_reconciliation_focused, #_safe_startup_reconciliation_rate_limited
+            target=self.debug_single_trade, #_safe_startup_reconciliation_rate_limited /// _safe_startup_reconciliation_focused
             daemon=True,
             name="SafeTPMonitor_StartupRecon"
         )
@@ -6904,52 +6914,70 @@ class SafeTPMonitoringManager:
         return True
     
     def _update_trade_in_csv_safe(self, trade_id, updates):
-        """Safely update specific fields for a trade in CSV - WITH DEBUG"""
-        with self.csv_lock:
-            fieldnames, rows = self._read_csv_safe()
-            if not fieldnames:
-                self._log(f"❌ No fieldnames when updating {trade_id}", 'error')
-                return False
-            
-            self._log(f"🔍 Looking for {trade_id} in {len(rows)} rows...")
-            
-            updated = False
-            found = False
-            for i, row in enumerate(rows):
-                if row.get('trade_id') == trade_id:
-                    found = True
-                    self._log(f"✅ Found {trade_id} at row {i}")
+        """Update specific fields for ONE trade - PRESERVES ALL OTHER DATA"""
+        # MAX RETRIES to handle race conditions
+        for attempt in range(3):
+            with self.csv_lock:
+                try:
+                    # STEP 1: Read current state ATOMICALLY
+                    fieldnames, rows = self._read_csv_safe()
+                    if not fieldnames:
+                        self._log(f"❌ Attempt {attempt+1}: No fieldnames for {trade_id}")
+                        time.sleep(0.5)
+                        continue
                     
-                    # Apply updates carefully
-                    for key, new_value in updates.items():
-                        if key in fieldnames:
-                            current_value = row.get(key, '')
-                            
-                            # Log what we're updating
-                            if current_value != new_value:
-                                self._log(f"📝 Updating {key}: '{current_value}' → '{new_value}'")
-                                rows[i][key] = str(new_value)
-                                updated = True
-                            else:
-                                self._log(f"⏭️ Skipping {key}: already '{current_value}'")
+                    # STEP 2: Find the trade (handle multiple matches)
+                    found_indices = []
+                    for i, row in enumerate(rows):
+                        if row.get('trade_id') == trade_id:
+                            found_indices.append(i)
+                    
+                    if not found_indices:
+                        self._log(f"❌ Trade {trade_id} not found in {len(rows)} rows")
+                        # Log first few trade IDs for debugging
+                        if rows:
+                            sample_ids = [r.get('trade_id', 'NO_ID') for r in rows[:5]]
+                            self._log(f"   Sample IDs: {sample_ids}")
+                        return False
+                    
+                    # STEP 3: Apply updates to ALL matching rows (should be only one)
+                    updated_count = 0
+                    for idx in found_indices:
+                        row_updated = False
+                        for key, new_value in updates.items():
+                            if key in fieldnames:
+                                old_value = rows[idx].get(key, '')
+                                # Only update if changing to a non-empty value
+                                if str(new_value).strip() and str(old_value) != str(new_value):
+                                    rows[idx][key] = str(new_value)
+                                    row_updated = True
                         
-                        # Always update heartbeat
-                        rows[i]['last_heartbeat'] = datetime.now().isoformat()
-                    break
-            
-            if not found:
-                self._log(f"❌ Trade {trade_id} not found in CSV!", 'error')
-                # Try to find by other means
-                for i, row in enumerate(rows):
-                    if trade_id in str(row):
-                        self._log(f"⚠️ Trade ID might be in other field: {row}")
-            
-            if updated:
-                self._log(f"💾 Saving updates for {trade_id} to CSV...")
-                return self._write_csv_safe(fieldnames, rows, force_backup=True)
-            
-            self._log(f"⏭️ No updates needed for {trade_id}")
-            return False
+                        if row_updated:
+                            updated_count += 1
+                            # Update heartbeat
+                            rows[idx]['last_heartbeat'] = datetime.now().isoformat()
+                    
+                    # STEP 4: Write back ONLY if changes were made
+                    if updated_count > 0:
+                        self._log(f"📝 Updating {trade_id}: {len(updates)} fields on {updated_count} rows")
+                        success = self._write_csv_safe(fieldnames, rows, f"update_{trade_id}")
+                        if success:
+                            self._log(f"✅ Successfully updated {trade_id}")
+                            return True
+                        else:
+                            self._log(f"⚠️  Write failed for {trade_id}, retrying...")
+                            time.sleep(1)
+                            continue
+                    else:
+                        self._log(f"⏭️  No updates needed for {trade_id} (already current)")
+                        return True
+                        
+                except Exception as e:
+                    self._log(f"❌ Update error for {trade_id} (attempt {attempt+1}): {e}")
+                    time.sleep(1)
+        
+        self._log(f"💥 FAILED to update {trade_id} after 3 attempts")
+        return False
 
     def verify_backfill_update(self, trade_id, expected_updates):
         """Verify that backfill updates were applied correctly"""
