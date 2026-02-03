@@ -5665,7 +5665,7 @@ class SafeTPMonitoringManager:
     - Creates backups before any modification
     """
     
-    def __init__(self, csv_path: str, api_key: str, logger=None, max_workers: int = 50):
+    def __init__(self, csv_path: str, api_key: str, fetch_candles_func,logger=None, max_workers: int = 50):
         """
         Args:
             csv_path: Path to CSV file with trades
@@ -5675,6 +5675,7 @@ class SafeTPMonitoringManager:
         """
         self.csv_path = csv_path
         self.api_key = api_key
+        self.fetch_candles = fetch_candles_func
         self.logger = logger or self._create_default_logger()
         self.max_workers = max_workers
         
@@ -6192,15 +6193,57 @@ class SafeTPMonitoringManager:
             return False
     
     def _fetch_historical_candles(self, instrument, timeframe, start_time, end_time):
-        """Fetch historical candles - you need to adapt this to your fetch_candles function"""
+        """Fetch historical candles using the provided fetch_candles function"""
         try:
-            # This is where you need to use your fetch_candles function
-            # For now, return empty DataFrame
-            import pandas as pd
-            return pd.DataFrame()
+            # Calculate how many candles we need (approx)
+            time_diff_hours = (end_time - start_time).total_seconds() / 3600
+            
+            # Estimate candle count based on timeframe
+            if timeframe == 'M1':
+                count = min(int(time_diff_hours * 60) + 100, 5000)
+            elif timeframe == 'M5':
+                count = min(int(time_diff_hours / 0.0833) + 100, 5000)
+            elif timeframe == 'M15':
+                count = min(int(time_diff_hours / 0.25) + 100, 5000)
+            else:
+                count = min(int(time_diff_hours) + 100, 5000)
+            
+            # Fetch candles
+            df = self.fetch_candles(
+                instrument=instrument,
+                timeframe=timeframe,
+                count=count,
+                api_key=self.api_key,
+                since=start_time,
+                use_cache=True
+            )
+            
+            # Filter to date range
+            if not df.empty:
+                df = df[(df['time'] >= start_time) & (df['time'] <= end_time)]
+            
+            self._log(f"📊 Fetched {len(df)} {timeframe} candles for {instrument} from {start_time} to {end_time}")
+            return df
             
         except Exception as e:
             self._log(f"❌ Error fetching historical candles: {e}", 'error')
+            import pandas as pd
+            return pd.DataFrame()
+    
+    def _fetch_current_candles(self, instrument, timeframe, count):
+        """Fetch current candles for live monitoring"""
+        try:
+            df = self.fetch_candles(
+                instrument=instrument,
+                timeframe=timeframe,
+                count=count,
+                api_key=self.api_key,
+                since=None,
+                use_cache=True
+            )
+            return df
+        except Exception as e:
+            self._log(f"❌ Error fetching current candles: {e}", 'error')
             import pandas as pd
             return pd.DataFrame()
     
@@ -6378,15 +6421,6 @@ class SafeTPMonitoringManager:
             self._update_trade_in_csv_safe(trade_id, {'monitoring_status': 'failed'})
             self._cleanup_trade_monitoring(trade_id, 'failed')
     
-    def _fetch_current_candles(self, instrument, timeframe, count):
-        """Fetch current candles - adapt to your fetch_candles"""
-        try:
-            # Use your fetch_candles function here
-            import pandas as pd
-            return pd.DataFrame()
-        except:
-            import pandas as pd
-            return pd.DataFrame()
     
     def _record_sl_hit_updates(self, trade_data, hit_time, hit_tps, be_tracking):
         """Create updates dictionary for SL hit"""
