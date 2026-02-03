@@ -5821,6 +5821,59 @@ class SafeTPMonitoringManager:
         except Exception as e:
             self._log(f"❌ Error checking/fixing CSV: {e}", 'error')
             return False
+
+    def start_monitoring(self, trade_data):
+        """Start monitoring for a new trade (called from HammerPatternScanner)"""
+        trade_id = trade_data.get('trade_id')
+        if not trade_id:
+            self._log(f"❌ Cannot start monitoring: No trade_id", 'error')
+            return
+        
+        # Check if trade is already completed (has exit time)
+        if trade_data.get('exit_time'):
+            self._log(f"⏭️ Trade {trade_id} already has exit time, skipping monitoring")
+            return
+        
+        # Check if already being monitored
+        if trade_id in self.active_threads:
+            thread = self.active_threads[trade_id]
+            if thread.is_alive():
+                self._log(f"⏭️ Trade {trade_id} already being monitored")
+                return
+        
+        # Start live monitoring thread
+        try:
+            thread = threading.Thread(
+                target=self._monitor_trade_live,
+                args=(trade_data,),
+                name=f"TPMonitor_{trade_id}",
+                daemon=True
+            )
+            
+            self.active_threads[trade_id] = thread
+            self.monitoring_start_times[trade_id] = datetime.now()
+            self.heartbeat_times[trade_id] = datetime.now()
+            
+            # Initialize thread state
+            self.thread_states[trade_id] = {
+                'status': 'running',
+                'hit_tps': set(),
+                'last_checked': datetime.now(),
+                'be_tracking': {i: {'state': 'waiting', 'be_triggered': False, 'outcome': 'none'} for i in range(1, 11)}
+            }
+            
+            thread.start()
+            
+            # Update CSV status
+            self._update_trade_in_csv_safe(trade_id, {
+                'monitoring_status': 'running',
+                'last_heartbeat': datetime.now().isoformat()
+            })
+            
+            self._log(f"📡 Started LIVE monitoring for {trade_id}")
+            
+        except Exception as e:
+            self._log(f"❌ Failed to start monitoring for {trade_id}: {e}", 'error')
     
     def _create_empty_csv_with_headers(self):
         """Create empty CSV with required headers"""
