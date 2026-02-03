@@ -6051,59 +6051,90 @@ class SafeTPMonitoringManager:
         self._log(f"📁 Created empty CSV with {len(headers)} headers", 'warning')
     
     def _read_csv_safe(self):
-        """Read CSV using csv module (NOT pandas) - preserves exact data"""
-        import csv
-        csv.field_size_limit(10000000000)  # Increase field size limit 
-        try:
-            if not os.path.exists(self.csv_path):
-                return [], []
-            
-            rows = []
-            with open(self.csv_path, 'r', newline='', encoding='utf-8') as f:
-                # Try to detect delimiter
-                sample = f.read(1024)
-                f.seek(0)
-                
-                if ',' in sample:
-                    delimiter = ','
-                elif ';' in sample:
-                    delimiter = ';'
-                else:
-                    delimiter = ','
-                
-                reader = csv.DictReader(f, delimiter=delimiter)
-                fieldnames = reader.fieldnames or []
-                rows = list(reader)
-            
-            return fieldnames, rows
-            
-        except Exception as e:
-            self._log(f"❌ Error reading CSV: {e}", 'error')
-            return [], []
+        """Read CSV using csv module - ATOMIC & ROBUST VERSION"""
+        with self.csv_lock:  # CRITICAL: Lock the entire read operation
+            try:
+                if not os.path.exists(self.csv_path):
+                    self._log(f"CSV file not found at {self.csv_path}")
+                    return [], []
     
-    def _write_csv_safe(self, fieldnames, rows, force_backup=False):
-        """Write CSV with controlled backup frequency"""
-        try:
-            # Only create backup every 10 writes or if forced
-            self.write_counter = getattr(self, 'write_counter', 0) + 1
-            
-            if force_backup or self.write_counter % 100 == 0:
-                backup_path = f"{self.csv_path}.backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-                if os.path.exists(self.csv_path):
-                    shutil.copy2(self.csv_path, backup_path)
-                    self._log(f"📂 Created backup: {os.path.basename(backup_path)}")
-            
-            # Write new CSV
-            with open(self.csv_path, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=fieldnames)
-                writer.writeheader()
-                writer.writerows(rows)
-            
-            return True
-            
-        except Exception as e:
-            self._log(f"❌ Error writing CSV: {e}", 'error')
-            return False
+                # FIX 1: Drastically increase field size limit BEFORE reading
+                csv.field_size_limit(10 * 1024 * 1024)  # 10MB limit
+    
+                rows = []
+                with open(self.csv_path, 'r', newline='', encoding='utf-8') as f:
+                    # FIX 2: Read entire content first to avoid mid-write reads
+                    content = f.read()
+                    
+                    if not content.strip():
+                        return [], []
+                    
+                    # Determine delimiter from first line
+                    first_line = content.split('\n')[0]
+                    delimiter = ',' if ',' in first_line else ';'
+    
+                    # Parse with StringIO to handle the content safely
+                    from io import StringIO
+                    reader = csv.DictReader(StringIO(content), delimiter=delimiter)
+                    fieldnames = reader.fieldnames or []
+                    
+                    # FIX 3: Convert each row IMMEDIATELY to dict, don't store reader
+                    for row in reader:
+                        rows.append(dict(row))  # Explicit conversion
+    
+                self._log(f"📖 Read CSV: {len(rows)} rows, {len(fieldnames)} columns")
+                return fieldnames, rows
+    
+            except Exception as e:
+                self._log(f"❌ CRITICAL ERROR reading CSV: {e}", 'error')
+                # EMERGENCY: Try a basic line count to verify file exists
+                try:
+                    if os.path.exists(self.csv_path):
+                        with open(self.csv_path, 'r') as f:
+                            lines = f.readlines()
+                        self._log(f"⚠️  Raw file has {len(lines)} lines")
+                except:
+                    pass
+                return [], []  # Return empty to prevent writing garbage
+    
+    def _write_csv_safe(self, fieldnames, rows, backup_reason="update"):
+        """Write CSV - PRESERVES ALL EXISTING DATA, creates ONE backup per session"""
+        with self.csv_lock:  # CRITICAL: Lock the entire write operation
+            try:
+                # FIX 1: Only create ONE backup per session, not per write
+                if not hasattr(self, 'backup_created'):
+                    backup_path = f"{self.csv_path}.backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                    if os.path.exists(self.csv_path):
+                        shutil.copy2(self.csv_path, backup_path)
+                        self._log(f"📂 Created SINGLE session backup: {os.path.basename(backup_path)}")
+                        self.backup_created = True
+                
+                # FIX 2: Write to TEMP file first, then rename (atomic operation)
+                temp_path = f"{self.csv_path}.temp_{int(time.time())}"
+                
+                with open(temp_path, 'w', newline='', encoding='utf-8') as f:
+                    writer = csv.DictWriter(f, fieldnames=fieldnames)
+                    writer.writeheader()
+                    
+                    # FIX 3: Write ALL rows, never skip
+                    for row in rows:
+                        writer.writerow(row)
+                
+                # Atomic replace
+                os.replace(temp_path, self.csv_path)
+                
+                self._log(f"💾 Wrote CSV: {len(rows)} rows preserved")
+                return True
+                
+            except Exception as e:
+                self._log(f"❌ CRITICAL ERROR writing CSV: {e}", 'error')
+                # Try to delete temp file if it exists
+                try:
+                    if 'temp_path' in locals() and os.path.exists(temp_path):
+                        os.remove(temp_path)
+                except:
+                    pass
+                return False
     
     def _is_empty_value(self, value):
         """Check if a value is empty/undefined (preserves '0' and '-1' as valid)"""
