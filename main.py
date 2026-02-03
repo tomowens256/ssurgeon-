@@ -5982,14 +5982,17 @@ class SafeTPMonitoringManager:
             self._log(f"❌ Error reading CSV: {e}", 'error')
             return [], []
     
-    def _write_csv_safe(self, fieldnames, rows):
-        """Write CSV using csv module (NOT pandas) - creates backup first"""
+    def _write_csv_safe(self, fieldnames, rows, force_backup=False):
+        """Write CSV with controlled backup frequency"""
         try:
-            # Always create backup before writing
-            backup_path = f"{self.csv_path}.backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-            if os.path.exists(self.csv_path):
-                shutil.copy2(self.csv_path, backup_path)
-                self._log(f"📂 Created backup: {os.path.basename(backup_path)}")
+            # Only create backup every 10 writes or if forced
+            self.write_counter = getattr(self, 'write_counter', 0) + 1
+            
+            if force_backup or self.write_counter % 100 == 0:
+                backup_path = f"{self.csv_path}.backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                if os.path.exists(self.csv_path):
+                    shutil.copy2(self.csv_path, backup_path)
+                    self._log(f"📂 Created backup: {os.path.basename(backup_path)}")
             
             # Write new CSV
             with open(self.csv_path, 'w', newline='', encoding='utf-8') as f:
