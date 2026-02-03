@@ -7165,6 +7165,17 @@ class SafeTPMonitoringManager:
             return pd.DataFrame()
     
     def start_live_monitoring(self, trade_data):
+        """Start live monitoring with CSV health check"""
+        trade_id = trade_data.get('trade_id', 'UNKNOWN')
+        
+        # Check CSV health first
+        if not self._check_csv_health():
+            self._log(f"⚠️ CSV health check failed, delaying monitoring for {trade_id}")
+            time.sleep(1)  # Wait 1 second and try again
+            # Try one more time
+            if not self._check_csv_health():
+                self._log(f"❌ CSV health check failed twice, skipping monitoring for {trade_id}")
+                return
         """Start live monitoring using OLD PROVEN LOGIC"""
         trade_id = trade_data['trade_id']
         
