@@ -7370,19 +7370,6 @@ class SafeTPMonitoringManager:
                     
                     # If SL was hit on entry candle, record loss and exit immediately
                     if sl_hit_on_entry:
-                        # Update trade_data with SL result
-                        time_seconds = 0  # 0 seconds
-                        
-                        # Set all TPs to -1
-                        for i in range(1, 11):
-                            trade_data[f'tp_1_{i}_result'] = '-1'
-                            trade_data[f'tp_1_{i}_time_seconds'] = '0'
-                        
-                        # Set SL result
-                        trade_data['tp_level_hit'] = '-1'
-                        trade_data['exit_time'] = start_time.strftime('%Y-%m-%d %H:%M:%S')
-                        trade_data['time_to_exit_seconds'] = '0'
-                        
                         # Build updates for CSV
                         updates = {
                             'tp_level_hit': '-1',
@@ -7391,17 +7378,22 @@ class SafeTPMonitoringManager:
                             'monitoring_status': 'completed'
                         }
                         
-                        # Add TP results
+                        # CRITICAL FIX: Set ALL TP results to -1 (all 10 TPs)
                         for i in range(1, 11):
                             updates[f'tp_1_{i}_result'] = '-1'
                             updates[f'tp_1_{i}_time_seconds'] = '0'
                         
-                        # Update CSV using the CORRECT method name
+                        # Also set open TP if exists
+                        if 'open_tp_result' in trade_data:
+                            updates['open_tp_result'] = '-1'
+                            updates['open_tp_time_seconds'] = '0'
+                        
+                        # Update CSV
                         self._update_trade_in_csv_safe(trade_id, updates)
                         
                         self._log(f"🛑 SL HIT ON ENTRY CANDLE for trade {trade_id} at {start_time}")
                         
-                        # Cleanup using the CORRECT method name from SafeTPMonitoringManager
+                        # Cleanup
                         if hasattr(self, '_cleanup_trade_monitoring'):
                             self._cleanup_trade_monitoring(trade_id, 'completed')
                         elif hasattr(self, 'cleanup_trade_monitoring'):
@@ -7457,33 +7449,47 @@ class SafeTPMonitoringManager:
                 
                 # If SL hit, process BE tracking and exit monitoring
                 if sl_hit:
-                    # Check all TPs that were in tracking mode
-                    for tp_level in hit_tps:
-                        if be_tracking[tp_level]['state'] == 'tracking':
-                            # RULE: If SL hit after TP, it's ALWAYS a HIT for BE
-                            be_tracking[tp_level]['outcome'] = 'hit'
-                            be_tracking[tp_level]['sl_hit'] = True
-                            trade_data[f'if_BE_TP{tp_level}'] = 'hit'
-                    
                     # Build updates for SL hit
                     time_seconds = (current_time - start_time).total_seconds()
                     updates = {}
                     
-                    # Set all TPs to -1 if not already set
+                    # CRITICAL FIX: Check if any TP was hit before SL
+                    tp_was_hit = False
+                    highest_tp_hit = 0
+                    
+                    # First, check all TPs that were already hit (from trade_data)
                     for i in range(1, 11):
-                        if trade_data.get(f'tp_1_{i}_result', '') == '':
+                        current_result = trade_data.get(f'tp_1_{i}_result', '')
+                        if current_result and current_result.startswith('+'):
+                            tp_was_hit = True
+                            try:
+                                tp_num = int(current_result.replace('+', ''))
+                                if tp_num > highest_tp_hit:
+                                    highest_tp_hit = tp_num
+                            except:
+                                pass
+                    
+                    # Set ALL TP results to -1 (if not already set to positive)
+                    for i in range(1, 11):
+                        current_result = trade_data.get(f'tp_1_{i}_result', '')
+                        # Only set to -1 if it's empty or 0 (not already a positive result)
+                        if not current_result or current_result in ['', '0']:
                             updates[f'tp_1_{i}_result'] = '-1'
                             updates[f'tp_1_{i}_time_seconds'] = '0'
+                        elif current_result.startswith('+'):
+                            # Keep the positive result
+                            updates[f'tp_1_{i}_result'] = current_result
+                            # Also keep the time if it exists
+                            time_val = trade_data.get(f'tp_1_{i}_time_seconds', '')
+                            if time_val:
+                                updates[f'tp_1_{i}_time_seconds'] = time_val
                     
-                    # Check if any TP was hit before SL
-                    tp_was_hit = False
-                    for i in range(1, 11):
-                        if trade_data.get(f'tp_1_{i}_result', '').startswith('+'):
-                            tp_was_hit = True
-                            break
-                    
-                    # Only set tp_level_hit to -1 if no TP was hit
-                    if not tp_was_hit:
+                    # Set tp_level_hit based on whether any TP was hit
+                    if tp_was_hit:
+                        # If TP was hit, keep the highest TP as tp_level_hit
+                        updates['tp_level_hit'] = str(highest_tp_hit)
+                    else:
+                        # No TP hit - set to -1
                         updates['tp_level_hit'] = '-1'
                     
                     # Set exit info
@@ -7493,14 +7499,18 @@ class SafeTPMonitoringManager:
                         'monitoring_status': 'completed'
                     })
                     
-                    # Add BE outcomes
+                    # Process BE tracking for hit TPs
                     for tp_level in hit_tps:
                         if be_tracking[tp_level]['state'] == 'tracking':
+                            # If SL hit after TP, it's ALWAYS a HIT for BE
                             updates[f'if_BE_TP{tp_level}'] = 'hit'
                     
                     # Update CSV
-                    self._update_trade_in_csv_safe(trade_id, updates)
-                    self._log(f"🛑 SL HIT for trade {trade_id} at {current_time}")
+                    success = self._update_trade_in_csv_safe(trade_id, updates)
+                    if success:
+                        self._log(f"🛑 SL HIT for trade {trade_id} at {current_time}")
+                    else:
+                        self._log(f"⚠️ SL HIT recorded but CSV update failed for {trade_id}")
                     break  # Exit monitoring loop
                 
                 # ========================================================================
