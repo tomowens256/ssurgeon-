@@ -6153,7 +6153,7 @@ class SafeTPMonitoringManager:
         return fieldnames, rows
 
     def _monitor_trade_live_with_resume(self, trade_data, resume_info):
-        """Live monitoring with resume capability"""
+        """Live monitoring with resume capability - FIXED INDENTATION"""
         trade_id = trade_data['trade_id']
         instrument = trade_data['instrument']
         direction = trade_data['direction'].lower()
