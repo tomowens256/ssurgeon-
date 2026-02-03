@@ -7220,8 +7220,10 @@ class SafeTPMonitoringManager:
         except Exception as e:
             self._log(f"❌ Failed to start live monitoring for {trade_id}: {e}", 'error')
 
-    def _monitor_trade_live_fixed(self, trade_data):
+   def _monitor_trade_live_fixed(self, trade_data):
         """Monitor trade with OLD VERSION LOGIC - PROVEN AND WORKING"""
+        trade_id = trade_data.get('trade_id', 'UNKNOWN')
+        
         try:
             # Extract basic trade information
             instrument = trade_data['instrument']
@@ -7327,10 +7329,37 @@ class SafeTPMonitoringManager:
                     
                     # If SL was hit on entry candle, record loss and exit immediately
                     if sl_hit_on_entry:
-                        self._record_tp_result_old(trade_data, 'SL', -1, start_time)
-                        self._update_trade_in_csv_safe(trade_data['trade_id'], trade_data)
-                        self._log(f"🛑 SL HIT ON ENTRY CANDLE for trade {trade_data['trade_id']} at {start_time}")
-                        self._cleanup_trade_monitoring(trade_data['trade_id'], 'completed')
+                        # Update trade_data with SL result
+                        time_seconds = (start_time - start_time).total_seconds()  # 0 seconds
+                        
+                        # Set all TPs to -1
+                        for i in range(1, 11):
+                            trade_data[f'tp_1_{i}_result'] = '-1'
+                            trade_data[f'tp_1_{i}_time_seconds'] = '0'
+                        
+                        # Set SL result
+                        trade_data['tp_level_hit'] = '-1'
+                        trade_data['exit_time'] = start_time.strftime('%Y-%m-%d %H:%M:%S')
+                        trade_data['time_to_exit_seconds'] = '0'
+                        
+                        # Build updates for CSV
+                        updates = {
+                            'tp_level_hit': '-1',
+                            'exit_time': start_time.strftime('%Y-%m-%d %H:%M:%S'),
+                            'time_to_exit_seconds': '0',
+                            'monitoring_status': 'completed'
+                        }
+                        
+                        # Add TP results
+                        for i in range(1, 11):
+                            updates[f'tp_1_{i}_result'] = '-1'
+                            updates[f'tp_1_{i}_time_seconds'] = '0'
+                        
+                        # Update CSV
+                        self._update_trade_in_csv_safe(trade_id, updates)
+                        
+                        self._log(f"🛑 SL HIT ON ENTRY CANDLE for trade {trade_id} at {start_time}")
+                        self._cleanup_trade_monitoring(trade_id, 'completed')
                         return  # Stop monitoring - trade is already closed at loss
             
             # ============================================================================
@@ -7389,13 +7418,45 @@ class SafeTPMonitoringManager:
                             be_tracking[tp_level]['sl_hit'] = True
                             trade_data[f'if_BE_TP{tp_level}'] = 'hit'
                     
-                    # Record SL result
+                    # Build updates for SL hit
                     time_seconds = (current_time - start_time).total_seconds()
-                    self._record_tp_result_old(trade_data, 'SL', -1, current_time, time_seconds)
+                    updates = {}
                     
-                    # Update CSV with results
-                    self._update_trade_in_csv_safe(trade_data['trade_id'], trade_data)
-                    self._log(f"🛑 SL HIT for trade {trade_data['trade_id']} at {current_time}")
+                    # Set all TPs to -1 if not already set
+                    for i in range(1, 11):
+                        if trade_data.get(f'tp_1_{i}_result', '') == '':
+                            updates[f'tp_1_{i}_result'] = '-1'
+                            updates[f'tp_1_{i}_time_seconds'] = '0'
+                    
+                    # Check if any TP was hit before SL
+                    tp_was_hit = False
+                    for i in range(1, 11):
+                        if trade_data.get(f'tp_1_{i}_result', '').startswith('+'):
+                            tp_was_hit = True
+                            break
+                    
+                    # Only set tp_level_hit to -1 if no TP was hit
+                    if not tp_was_hit:
+                        updates['tp_level_hit'] = '-1'
+                    
+                    # Set exit info
+                    updates.update({
+                        'exit_time': current_time.strftime('%Y-%m-%d %H:%M:%S'),
+                        'time_to_exit_seconds': str(int(time_seconds)),
+                        'monitoring_status': 'completed'
+                    })
+                    
+                    # Add BE outcomes
+                    for tp_level in hit_tps:
+                        if be_tracking[tp_level]['state'] == 'tracking':
+                            if be_tracking[tp_level]['be_triggered']:
+                                updates[f'if_BE_TP{tp_level}'] = 'hit'
+                            else:
+                                updates[f'if_BE_TP{tp_level}'] = 'miss'
+                    
+                    # Update CSV
+                    self._update_trade_in_csv_safe(trade_id, updates)
+                    self._log(f"🛑 SL HIT for trade {trade_id} at {current_time}")
                     break  # Exit monitoring loop
                 
                 # ========================================================================
@@ -7407,7 +7468,7 @@ class SafeTPMonitoringManager:
                     tp_result_key = f'tp_1_{i}_result'
                     
                     # Only check if this TP hasn't been recorded yet
-                    if trade_data.get(tp_result_key) == '':
+                    if trade_data.get(tp_result_key, '') == '':
                         tp_hit = False
                         
                         if direction == 'bearish':
@@ -7422,7 +7483,32 @@ class SafeTPMonitoringManager:
                         # If TP hit, record it and start BE tracking
                         if tp_hit:
                             time_seconds = (current_time - start_time).total_seconds()
-                            self._record_tp_result_old(trade_data, f'TP_{i}', i, current_time, time_seconds)
+                            
+                            # Update trade_data
+                            trade_data[f'tp_1_{i}_result'] = f'+{i}'
+                            trade_data[f'tp_1_{i}_time_seconds'] = str(int(time_seconds))
+                            
+                            # Build updates for CSV
+                            updates = {
+                                f'tp_1_{i}_result': f'+{i}',
+                                f'tp_1_{i}_time_seconds': str(int(time_seconds))
+                            }
+                            
+                            # Update highest TP hit
+                            current_highest = int(trade_data.get('tp_level_hit', 0) or 0)
+                            if i > current_highest:
+                                trade_data['tp_level_hit'] = str(i)
+                                trade_data['exit_time'] = current_time.strftime('%Y-%m-%d %H:%M:%S')
+                                trade_data['time_to_exit_seconds'] = str(int(time_seconds))
+                                
+                                updates.update({
+                                    'tp_level_hit': str(i),
+                                    'exit_time': current_time.strftime('%Y-%m-%d %H:%M:%S'),
+                                    'time_to_exit_seconds': str(int(time_seconds))
+                                })
+                            
+                            # Update CSV
+                            self._update_trade_in_csv_safe(trade_id, updates)
                             
                             # Start BE tracking for this TP level
                             if i not in hit_tps:
@@ -7430,13 +7516,15 @@ class SafeTPMonitoringManager:
                                 be_tracking[i]['state'] = 'tracking'
                                 be_tracking[i]['price_returned_to_entry'] = False
                                 be_tracking[i]['next_tp_hit'] = False
+                            
+                            self._log(f"✅ TP{i} hit for {trade_id} at {current_time}")
                 
                 # ========================================================================
                 # CHECK 3: OPEN TP (if specified)
                 # Optional flexible TP level - OLD LOGIC
                 # ========================================================================
                 
-                if open_tp_price and trade_data.get('open_tp_result') == '':
+                if open_tp_price and trade_data.get('open_tp_result', '') == '':
                     open_tp_hit = False
                     
                     if direction == 'bearish' and candle_low <= open_tp_price:
@@ -7446,9 +7534,21 @@ class SafeTPMonitoringManager:
                     
                     if open_tp_hit:
                         time_seconds = (current_time - start_time).total_seconds()
-                        self._record_tp_result_old(trade_data, 'OPEN_TP', 
-                                                  trade_data.get('open_tp_rr', 0), 
-                                                  current_time, time_seconds)
+                        
+                        # Update trade_data
+                        open_tp_rr = trade_data.get('open_tp_rr', 0)
+                        trade_data['open_tp_result'] = f'+{open_tp_rr}'
+                        trade_data['open_tp_time_seconds'] = str(int(time_seconds))
+                        
+                        # Build updates
+                        updates = {
+                            'open_tp_result': f'+{open_tp_rr}',
+                            'open_tp_time_seconds': str(int(time_seconds))
+                        }
+                        
+                        # Update CSV
+                        self._update_trade_in_csv_safe(trade_id, updates)
+                        self._log(f"✅ Open TP hit for {trade_id} at {current_time}")
                 
                 # ========================================================================
                 # UPDATE BREAK-EVEN TRACKING FOR EACH HIT TP - OLD LOGIC
@@ -7475,10 +7575,10 @@ class SafeTPMonitoringManager:
                     
                     if tp_level < 10:  # There's a next TP (1-9)
                         next_tp_result_key = f'tp_1_{tp_level + 1}_result'
-                        if trade_data.get(next_tp_result_key) != '':
+                        if trade_data.get(next_tp_result_key, '') != '':
                             next_tp_hit = True
                     else:  # For TP10, check if open TP is hit
-                        if open_tp_price and trade_data.get('open_tp_result') != '':
+                        if open_tp_price and trade_data.get('open_tp_result', '') != '':
                             next_tp_hit = True
                     
                     # If next TP hit, determine BE outcome
@@ -7495,9 +7595,14 @@ class SafeTPMonitoringManager:
                             be_tracking[tp_level]['outcome'] = 'hit'
                             trade_data[f'if_BE_TP{tp_level}'] = 'hit'
                         
-                        # Update CSV and mark as completed
-                        self._update_trade_in_csv_safe(trade_data['trade_id'], trade_data)
+                        # Update CSV with BE outcome
+                        updates = {
+                            f'if_BE_TP{tp_level}': trade_data[f'if_BE_TP{tp_level}']
+                        }
+                        self._update_trade_in_csv_safe(trade_id, updates)
+                        
                         be_tracking[tp_level]['state'] = 'completed'
+                        self._log(f"📊 BE for TP{tp_level}: {be_tracking[tp_level]['outcome']}")
                 
                 # Wait before next check
                 time.sleep(check_interval)
@@ -7507,27 +7612,40 @@ class SafeTPMonitoringManager:
             # Handle TPs still in tracking mode when monitoring ends
             # ============================================================================
             
+            updates = {}
             for tp_level in hit_tps:
                 if be_tracking[tp_level]['state'] == 'tracking' and be_tracking[tp_level]['outcome'] == 'pending':
                     # Monitoring ended without next TP or SL → mark as incomplete
                     trade_data[f'if_BE_TP{tp_level}'] = 'incomplete'
+                    updates[f'if_BE_TP{tp_level}'] = 'incomplete'
             
-            # Update CSV with final results
-            self._update_trade_in_csv_safe(trade_data['trade_id'], trade_data)
+            # Update CSV with final BE results if any
+            if updates:
+                self._update_trade_in_csv_safe(trade_id, updates)
+            
+            # Update monitoring status
+            self._update_trade_in_csv_safe(trade_id, {
+                'monitoring_status': 'completed',
+                'last_heartbeat': self._now_ny().isoformat()
+            })
             
             # Log final results
-            self._log(f"📊 TP monitoring completed for {trade_data['trade_id']}")
-            self._log(f"   BE Results: {[f'TP{i}:{be_tracking[i].get('outcome', 'N/A')}' for i in hit_tps]}")
+            self._log(f"📊 TP monitoring completed for {trade_id}")
+            be_results = []
+            for i in hit_tps:
+                be_results.append(f'TP{i}:{be_tracking[i].get("outcome", "N/A")}')
+            if be_results:
+                self._log(f"   BE Results: {', '.join(be_results)}")
             
             # Cleanup
-            self._cleanup_trade_monitoring(trade_data['trade_id'], 'completed')
+            self._cleanup_trade_monitoring(trade_id, 'completed')
             
         except Exception as e:
-            self._log(f"❌ Error in TP monitoring for {trade_data.get('trade_id', 'UNKNOWN')}: {str(e)}", 'error')
+            self._log(f"❌ Error in TP monitoring for {trade_id}: {str(e)}", 'error')
             import traceback
             self._log(f"❌ Traceback: {traceback.format_exc()}", 'error')
-            self._cleanup_trade_monitoring(trade_data['trade_id'], 'failed')
-    
+            self._update_trade_in_csv_safe(trade_id, {'monitoring_status': 'failed'})
+            self._cleanup_trade_monitoring(trade_id, 'failed')
     def _monitor_trade_live(self, trade_data):
         """Live monitoring thread - FIXED with OLD VERSION LOGIC"""
         trade_id = trade_data['trade_id']
