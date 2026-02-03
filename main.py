@@ -7220,6 +7220,36 @@ class SafeTPMonitoringManager:
         except Exception as e:
             self._log(f"❌ Failed to start live monitoring for {trade_id}: {e}", 'error')
 
+    def _check_csv_health(self):
+        """Check CSV file health and fix issues"""
+        try:
+            if not os.path.exists(self.csv_path):
+                self._log(f"📁 CSV file doesn't exist, creating: {self.csv_path}")
+                # We need to know the headers - get them from HammerScanner or use default
+                default_headers = ['timestamp', 'trade_id', 'instrument', 'timeframe', 'direction']
+                with open(self.csv_path, 'w', newline='', encoding='utf-8') as f:
+                    writer = csv.DictWriter(f, fieldnames=default_headers)
+                    writer.writeheader()
+                return False
+            
+            # Check if CSV has data
+            with open(self.csv_path, 'r', encoding='utf-8') as f:
+                content = f.read().strip()
+                if not content:
+                    self._log(f"📁 CSV file is empty: {self.csv_path}")
+                    return False
+                
+                lines = content.split('\n')
+                if len(lines) < 2:  # Only header or empty
+                    self._log(f"📁 CSV has only headers: {self.csv_path}")
+                    return False
+            
+            return True
+            
+        except Exception as e:
+            self._log(f"❌ Error checking CSV health: {e}", 'error')
+            return False
+
     def _monitor_trade_live_fixed(self, trade_data):
         """Monitor trade with OLD VERSION LOGIC - PROVEN AND WORKING"""
         trade_id = trade_data.get('trade_id', 'UNKNOWN')
