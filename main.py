@@ -7233,12 +7233,13 @@ class SafeTPMonitoringManager:
             self._log(f"❌ Failed to start live monitoring for {trade_id}: {e}", 'error')
     
     def _monitor_trade_live(self, trade_data):
-        """Live monitoring thread - FIXED TIMEZONE ISSUES"""
+        """Live monitoring thread - FIXED with OLD VERSION LOGIC"""
         trade_id = trade_data['trade_id']
         instrument = trade_data['instrument']
         direction = trade_data['direction'].lower()
         
         try:
+            # Get prices
             entry_price = float(trade_data['entry_price'])
             sl_price = float(trade_data['sl_price'])
             
@@ -7264,7 +7265,7 @@ class SafeTPMonitoringManager:
             hit_tps = set()
             be_tracking = {i: {'state': 'waiting', 'be_triggered': False, 'outcome': 'none'} for i in range(1, 11)}
             
-            # Get entry time for timeout calculation - FIXED TIMEZONE
+            # Get entry time
             entry_time = self._parse_datetime(trade_data['entry_time'])
             if entry_time is None:
                 self._log(f"❌ Invalid entry_time for {trade_id}", 'error')
@@ -7272,7 +7273,52 @@ class SafeTPMonitoringManager:
             
             self._log(f"📊 LIVE monitoring started for {trade_id}")
             
+            # =============================================
+            # CRITICAL FIX 1: Check if SL was hit on entry candle
+            # Borrowed from old version
+            # =============================================
+            entry_candle_sl_hit = False
+            try:
+                # Fetch the candle at entry time
+                df_entry_check = self._fetch_current_candles(instrument, 'M1', count=2)
+                
+                if not df_entry_check.empty and len(df_entry_check) >= 1:
+                    # Prepare candles to check (up to 2 most recent)
+                    candles_to_check = []
+                    if len(df_entry_check) >= 2:
+                        candles_to_check = [df_entry_check.iloc[-1], df_entry_check.iloc[-2]]
+                    else:
+                        candles_to_check = [df_entry_check.iloc[-1]]
+                    
+                    # Check each candle for SL hit
+                    for entry_candle in candles_to_check:
+                        candle_high = float(entry_candle['high'])
+                        candle_low = float(entry_candle['low'])
+                        
+                        if direction == 'bearish':
+                            # For bearish trade, SL is above entry
+                            if candle_high >= sl_price:
+                                entry_candle_sl_hit = True
+                                break
+                        elif direction == 'bullish':
+                            # For bullish trade, SL is below entry
+                            if candle_low <= sl_price:
+                                entry_candle_sl_hit = True
+                                break
+                    
+                    if entry_candle_sl_hit:
+                        # Record SL hit and exit immediately
+                        updates = self._record_sl_hit_updates(trade_data, self._now_ny(), hit_tps, be_tracking)
+                        self._update_trade_in_csv_safe(trade_id, updates)
+                        self._log(f"🛑 SL HIT ON ENTRY CANDLE for {trade_id}")
+                        self._cleanup_trade_monitoring(trade_id, 'completed')
+                        return
+            except Exception as e:
+                self._log(f"⚠️ Error checking entry candle SL: {e}", 'warning')
+            
+            # =============================================
             # Main monitoring loop
+            # =============================================
             while not self.shutdown_flag.is_set():
                 try:
                     # Check if trade is already completed
@@ -7286,7 +7332,7 @@ class SafeTPMonitoringManager:
                     if not candles.empty:
                         latest_candle = candles.iloc[-1]
                         
-                        # FIX TIMEZONE: Ensure current_time is timezone-aware
+                        # Ensure timezone-aware
                         current_time = latest_candle['time']
                         current_time = self._ensure_timezone_aware(current_time)
                         
@@ -7294,12 +7340,22 @@ class SafeTPMonitoringManager:
                         current_low = float(latest_candle['low'])
                         current_close = float(latest_candle['close'])
                         
-                        # Check SL
+                        # =============================================
+                        # CRITICAL FIX 2: Proper SL check logic
+                        # Borrowed from old version
+                        # =============================================
                         sl_hit = False
-                        if direction == 'bearish' and current_low <= sl_price:
-                            sl_hit = True
-                        elif direction == 'bullish' and current_high >= sl_price:
-                            sl_hit = True
+                        
+                        if direction == 'bearish':
+                            # For bearish trade, SL is above entry
+                            # Check if price went up to SL (using candle HIGH)
+                            if current_high >= sl_price:
+                                sl_hit = True
+                        elif direction == 'bullish':
+                            # For bullish trade, SL is below entry
+                            # Check if price went down to SL (using candle LOW)
+                            if current_low <= sl_price:
+                                sl_hit = True
                         
                         if sl_hit:
                             # Record SL hit
@@ -7308,18 +7364,25 @@ class SafeTPMonitoringManager:
                             self._log(f"🛑 SL hit for {trade_id}")
                             break
                         
-                        # Check TPs
+                        # =============================================
+                        # CRITICAL FIX 3: Proper TP check logic
+                        # Borrowed from old version
+                        # =============================================
                         for i in range(1, 11):
                             if i not in hit_tps and tp_prices[i] is not None:
                                 tp_hit = False
-                                if direction == 'bearish' and current_low <= tp_prices[i]:
-                                    tp_hit = True
-                                elif direction == 'bullish' and current_high >= tp_prices[i]:
-                                    tp_hit = True
+                                
+                                if direction == 'bearish':
+                                    # For bearish, TP is below entry - check candle LOW
+                                    if current_low <= tp_prices[i]:
+                                        tp_hit = True
+                                elif direction == 'bullish':
+                                    # For bullish, TP is above entry - check candle HIGH
+                                    if current_high >= tp_prices[i]:
+                                        tp_hit = True
                                 
                                 if tp_hit:
                                     hit_tps.add(i)
-                                    # FIX TIMEZONE: Both datetimes are now timezone-aware
                                     time_seconds = (current_time - entry_time).total_seconds()
                                     
                                     # Update CSV
@@ -7336,7 +7399,7 @@ class SafeTPMonitoringManager:
                                         updates['time_to_exit_seconds'] = str(int(time_seconds))
                                     
                                     self._update_trade_in_csv_safe(trade_id, updates)
-                                    trade_data.update(updates)  # Update local copy
+                                    trade_data.update(updates)
                                     
                                     # Start BE tracking for this TP
                                     be_tracking[i]['state'] = 'tracking'
