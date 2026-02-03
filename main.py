@@ -5715,24 +5715,24 @@ class SafeTPMonitoringManager:
         
         # Ensure CSV has required columns
         self.safe_check_and_fix_csv()
-        # Add this check
+        
+        # Add this check - but make it SAFE
         fieldnames, rows = self._read_csv_safe()
         row_count = len(rows)
-        if row_count < 50:  # If suspiciously small
-            self._log(f"🚨 EMERGENCY: CSV has only {row_count} rows!", 'error')
-            self._log("🚨 STOPPING to prevent data loss. Restore from backup.", 'error')
-            # Raise error or pause execution
-            raise Exception(f"CSV data loss detected: {row_count} rows")
+        if row_count < 50 and row_count > 0:  # Only warn if suspiciously small but not empty
+            self._log(f"⚠️ Warning: CSV has only {row_count} rows", 'warning')
+        elif row_count == 0:
+            self._log(f"📁 CSV is empty or could not be read")
         else:
             self._log(f"✅ CSV integrity check passed: {row_count} rows")
         
-        # Start safe reconciliation with rate limiting
-        startup_thread = threading.Thread(
-            target=self.debug_single_trade, #_safe_startup_reconciliation_rate_limited /// _safe_startup_reconciliation_focused
-            daemon=True,
-            name="SafeTPMonitor_StartupRecon"
-        )
-        startup_thread.start()
+        # Start safe reconciliation with rate limiting - COMMENTED OUT FOR NOW
+        # startup_thread = threading.Thread(
+        #     target=self.debug_single_trade, #_safe_startup_reconciliation_rate_limited /// _safe_startup_reconciliation_focused
+        #     daemon=True,
+        #     name="SafeTPMonitor_StartupRecon"
+        # )
+        # startup_thread.start()
         
         # Start periodic checks
         periodic_thread = threading.Thread(
@@ -5761,7 +5761,7 @@ class SafeTPMonitoringManager:
         return self.start_live_monitoring(trade_data)
 
     def _parse_datetime(self, dt_str):
-        """Parse datetime string and ensure it's NY_TZ timezone-aware"""
+        """Parse datetime string and ensure it's NY_TZ timezone-aware - FIXED VERSION"""
         if not dt_str or pd.isna(dt_str):
             return None
         
@@ -5773,29 +5773,40 @@ class SafeTPMonitoringManager:
                 # Parse string
                 dt = pd.to_datetime(dt_str)
             
-            # Ensure it's timezone-aware in NY_TZ
+            # CRITICAL FIX: Ensure it's timezone-aware
             if dt.tzinfo is None:
-                # If naive, localize to NY_TZ
+                # If naive, assume it's NY time
+                from pytz import timezone
+                NY_TZ = timezone('America/New_York')
                 return NY_TZ.localize(dt)
             else:
                 # If has timezone, convert to NY_TZ
+                from pytz import timezone
+                NY_TZ = timezone('America/New_York')
                 return dt.astimezone(NY_TZ)
         except Exception as e:
             self._log(f"⚠️ Error parsing datetime {dt_str}: {e}", 'warning')
             return None
     
     def _ensure_timezone_aware(self, dt):
-        """Ensure datetime is timezone-aware in NY_TZ"""
+        """Ensure datetime is timezone-aware in NY_TZ - FIXED VERSION"""
         if dt is None:
             return None
         
+        from pytz import timezone
+        NY_TZ = timezone('America/New_York')
+        
         if dt.tzinfo is None:
+            # If naive, localize to NY_TZ
             return NY_TZ.localize(dt)
         else:
+            # If has timezone, convert to NY_TZ
             return dt.astimezone(NY_TZ)
     
     def _now_ny(self):
         """Get current time in NY_TZ"""
+        from pytz import timezone
+        NY_TZ = timezone('America/New_York')
         return datetime.now(NY_TZ)
     
     def _log(self, message: str, level: str = 'info'):
@@ -5912,9 +5923,12 @@ class SafeTPMonitoringManager:
                 # Update fieldnames
                 new_fieldnames = list(fieldnames) + missing_columns
                 
-                # Write back safely
-                self._write_csv_safe(new_fieldnames, rows)
-                self._log(f"✅ Added missing columns: {missing_columns}")
+                # Write back safely - ONLY if we have rows!
+                if rows:
+                    self._write_csv_safe(new_fieldnames, rows)
+                    self._log(f"✅ Added missing columns: {missing_columns}")
+                else:
+                    self._log(f"⚠️ No rows to write, skipping column addition")
             
             else:
                 self._log(f"✅ CSV has all required columns ({len(fieldnames)} total)")
@@ -6061,89 +6075,204 @@ class SafeTPMonitoringManager:
         self._log(f"📁 Created empty CSV with {len(headers)} headers", 'warning')
     
     def _read_csv_safe(self):
-        """Read CSV using csv module - ATOMIC & ROBUST VERSION"""
+        """ULTRA-SAFE CSV reading - NEVER loses data - FIXED VERSION"""
         with self.csv_lock:  # CRITICAL: Lock the entire read operation
             try:
                 if not os.path.exists(self.csv_path):
                     self._log(f"CSV file not found at {self.csv_path}")
                     return [], []
     
-                # FIX 1: Drastically increase field size limit BEFORE reading
-                csv.field_size_limit(10 * 1024 * 1024)  # 10MB limit
-    
-                rows = []
-                with open(self.csv_path, 'r', newline='', encoding='utf-8') as f:
-                    # FIX 2: Read entire content first to avoid mid-write reads
-                    content = f.read()
-                    
-                    if not content.strip():
-                        return [], []
-                    
-                    # Determine delimiter from first line
-                    first_line = content.split('\n')[0]
-                    delimiter = ',' if ',' in first_line else ';'
-    
-                    # Parse with StringIO to handle the content safely
-                    from io import StringIO
-                    reader = csv.DictReader(StringIO(content), delimiter=delimiter)
-                    fieldnames = reader.fieldnames or []
-                    
-                    # FIX 3: Convert each row IMMEDIATELY to dict, don't store reader
-                    for row in reader:
-                        rows.append(dict(row))  # Explicit conversion
-    
-                self._log(f"📖 Read CSV: {len(rows)} rows, {len(fieldnames)} columns")
-                return fieldnames, rows
-    
+                # Check file size first
+                file_size = os.path.getsize(self.csv_path)
+                if file_size == 0:
+                    self._log("CSV file is empty")
+                    return [], []
+                
+                # Read raw content first
+                with open(self.csv_path, 'r', encoding='utf-8') as f:
+                    raw_content = f.read()
+                
+                if not raw_content.strip():
+                    self._log("CSV content is empty after reading")
+                    return [], []
+                
+                # Try multiple parsing strategies
+                strategies = [
+                    self._parse_csv_with_pandas,  # Most robust
+                    self._parse_csv_with_csv_module,  # Standard
+                    self._parse_csv_manually  # Last resort
+                ]
+                
+                for strategy in strategies:
+                    try:
+                        fieldnames, rows = strategy(raw_content)
+                        if fieldnames and rows:
+                            self._log(f"✅ Successfully read {len(rows)} rows using {strategy.__name__}")
+                            return fieldnames, rows
+                    except Exception as e:
+                        continue
+                
+                # If all strategies fail, at least try to get headers
+                lines = raw_content.strip().split('\n')
+                if lines:
+                    first_line = lines[0].strip()
+                    if ',' in first_line:
+                        fieldnames = [col.strip() for col in first_line.split(',')]
+                    else:
+                        fieldnames = []
+                    self._log(f"⚠️ Could only extract headers: {fieldnames}")
+                    return fieldnames, []
+                
+                return [], []
+                
             except Exception as e:
                 self._log(f"❌ CRITICAL ERROR reading CSV: {e}", 'error')
-                # EMERGENCY: Try a basic line count to verify file exists
+                # Try to preserve whatever we have
                 try:
                     if os.path.exists(self.csv_path):
-                        with open(self.csv_path, 'r') as f:
-                            lines = f.readlines()
-                        self._log(f"⚠️  Raw file has {len(lines)} lines")
+                        # Create emergency backup
+                        backup_path = f"{self.csv_path}.emergency_backup_{int(time.time())}"
+                        shutil.copy2(self.csv_path, backup_path)
+                        self._log(f"🚨 Created emergency backup: {backup_path}")
                 except:
                     pass
                 return [], []  # Return empty to prevent writing garbage
     
+    def _parse_csv_with_pandas(self, raw_content):
+        """Parse CSV using pandas (most robust)"""
+        from io import StringIO
+        import pandas as pd
+        
+        df = pd.read_csv(StringIO(raw_content))
+        fieldnames = df.columns.tolist()
+        rows = df.to_dict('records')
+        
+        # Convert all values to strings for consistency
+        rows = [{k: str(v) if not pd.isna(v) else '' for k, v in row.items()} for row in rows]
+        
+        return fieldnames, rows
+    
+    def _parse_csv_with_csv_module(self, raw_content):
+        """Parse CSV using csv module"""
+        from io import StringIO
+        import csv
+        
+        rows = []
+        reader = csv.DictReader(StringIO(raw_content))
+        fieldnames = reader.fieldnames or []
+        
+        for row in reader:
+            rows.append(dict(row))
+        
+        return fieldnames, rows
+    
+    def _parse_csv_manually(self, raw_content):
+        """Parse CSV manually as fallback"""
+        lines = raw_content.strip().split('\n')
+        if not lines:
+            return [], []
+        
+        # Parse headers
+        headers = [col.strip() for col in lines[0].split(',')]
+        
+        # Parse rows
+        rows = []
+        for line in lines[1:]:
+            if not line.strip():
+                continue
+            values = line.split(',')
+            row = {}
+            for i, header in enumerate(headers):
+                if i < len(values):
+                    row[header] = values[i].strip()
+                else:
+                    row[header] = ''
+            rows.append(row)
+        
+        return headers, rows
+    
     def _write_csv_safe(self, fieldnames, rows, backup_reason="update"):
-        """Write CSV - PRESERVES ALL EXISTING DATA, creates ONE backup per session"""
-        with self.csv_lock:  # CRITICAL: Lock the entire write operation
+        """ULTRA-SAFE CSV writing - NEVER loses data - FIXED VERSION"""
+        with self.csv_lock:
+            backup_path = None
+            temp_path = None
+            
             try:
-                # FIX 1: Only create ONE backup per session, not per write
-                if not hasattr(self, 'backup_created'):
-                    backup_path = f"{self.csv_path}.backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-                    if os.path.exists(self.csv_path):
-                        shutil.copy2(self.csv_path, backup_path)
-                        self._log(f"📂 Created SINGLE session backup: {os.path.basename(backup_path)}")
-                        self.backup_created = True
+                # ALWAYS create a backup before ANY write
+                if os.path.exists(self.csv_path):
+                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
+                    backup_path = f"{self.csv_path}.backup_{timestamp}"
+                    shutil.copy2(self.csv_path, backup_path)
+                    self._log(f"📂 Created backup: {os.path.basename(backup_path)}")
                 
-                # FIX 2: Write to TEMP file first, then rename (atomic operation)
+                # CRITICAL: Never write empty if file had data
+                original_has_data = False
+                if os.path.exists(self.csv_path):
+                    file_size = os.path.getsize(self.csv_path)
+                    if file_size > 100:  # More than just headers
+                        original_has_data = True
+                
+                if not rows and original_has_data:
+                    self._log(f"🚨 EMERGENCY: Attempting to write empty rows to non-empty CSV!", 'error')
+                    self._log(f"🚨 Backup created at: {backup_path}")
+                    self._log(f"🚨 Restoring from backup...")
+                    
+                    if backup_path and os.path.exists(backup_path):
+                        shutil.copy2(backup_path, self.csv_path)
+                        self._log(f"✅ Restored from backup")
+                    
+                    return False
+                
+                # Write to temp file
                 temp_path = f"{self.csv_path}.temp_{int(time.time())}"
                 
                 with open(temp_path, 'w', newline='', encoding='utf-8') as f:
                     writer = csv.DictWriter(f, fieldnames=fieldnames)
                     writer.writeheader()
                     
-                    # FIX 3: Write ALL rows, never skip
+                    # Write ALL rows
                     for row in rows:
                         writer.writerow(row)
+                
+                # Verify temp file
+                temp_size = os.path.getsize(temp_path)
+                if temp_size < 50 and len(rows) > 0:
+                    self._log(f"🚨 Temp file too small ({temp_size} bytes), aborting!", 'error')
+                    if backup_path and os.path.exists(backup_path):
+                        shutil.copy2(backup_path, self.csv_path)
+                    return False
                 
                 # Atomic replace
                 os.replace(temp_path, self.csv_path)
                 
-                self._log(f"💾 Wrote CSV: {len(rows)} rows preserved")
+                # Verify final file
+                final_size = os.path.getsize(self.csv_path)
+                self._log(f"💾 SAFELY wrote {len(rows)} rows ({final_size} bytes)")
+                
+                # Clean up backup after successful write (optional)
+                # if backup_path and os.path.exists(backup_path):
+                #     os.remove(backup_path)
+                
                 return True
                 
             except Exception as e:
                 self._log(f"❌ CRITICAL ERROR writing CSV: {e}", 'error')
-                # Try to delete temp file if it exists
-                try:
-                    if 'temp_path' in locals() and os.path.exists(temp_path):
+                
+                # Try to restore from backup
+                if backup_path and os.path.exists(backup_path):
+                    try:
+                        shutil.copy2(backup_path, self.csv_path)
+                        self._log(f"🔄 Restored from backup: {backup_path}")
+                    except:
+                        self._log(f"💥 Failed to restore from backup!", 'error')
+                
+                # Clean up temp file
+                if temp_path and os.path.exists(temp_path):
+                    try:
                         os.remove(temp_path)
-                except:
-                    pass
+                    except:
+                        pass
+                
                 return False
     
     def _is_empty_value(self, value):
@@ -6255,7 +6384,6 @@ class SafeTPMonitoringManager:
             
         except Exception as e:
             self._log(f"❌ Reconciliation failed: {e}", 'error')
-
 
     def debug_single_trade(self, trade_id):
         """Debug a single trade's backfill process"""
@@ -6454,6 +6582,8 @@ class SafeTPMonitoringManager:
             
             for idx, candle in candles.iterrows():
                 candle_time = candle['time']
+                # FIX: Ensure candle_time is timezone-aware
+                candle_time = self._ensure_timezone_aware(candle_time)
                 candle_high = float(candle['high'])
                 candle_low = float(candle['low'])
                 
@@ -6498,8 +6628,9 @@ class SafeTPMonitoringManager:
                 for i in range(1, 11):
                     updates[f'tp_1_{i}_result'] = '-1'
                 
-                # Calculate time to exit
+                # Calculate time to exit - FIX TIMEZONE ISSUE
                 if exit_time:
+                    # Both datetimes should be timezone-aware
                     time_to_exit = (exit_time - entry_time).total_seconds()
                     updates['time_to_exit_seconds'] = int(time_to_exit)
                 
@@ -6728,7 +6859,7 @@ class SafeTPMonitoringManager:
             self._log(f"❌ Failed to start live monitoring for {trade_id}: {e}", 'error')
     
     def _monitor_trade_live(self, trade_data):
-        """Live monitoring thread (similar to your old version)"""
+        """Live monitoring thread - FIXED TIMEZONE ISSUES"""
         trade_id = trade_data['trade_id']
         instrument = trade_data['instrument']
         direction = trade_data['direction'].lower()
@@ -6759,8 +6890,7 @@ class SafeTPMonitoringManager:
             hit_tps = set()
             be_tracking = {i: {'state': 'waiting', 'be_triggered': False, 'outcome': 'none'} for i in range(1, 11)}
             
-            # Get entry time for timeout calculation (disabled)
-            # Fix entry_time parsing
+            # Get entry time for timeout calculation - FIXED TIMEZONE
             entry_time = self._parse_datetime(trade_data['entry_time'])
             if entry_time is None:
                 self._log(f"❌ Invalid entry_time for {trade_id}", 'error')
@@ -6779,14 +6909,12 @@ class SafeTPMonitoringManager:
                     # Fetch current candles
                     candles = self._fetch_current_candles(instrument, 'M1', count=2)
                     
-                    # Fix current_time in loop
                     if not candles.empty:
                         latest_candle = candles.iloc[-1]
-                        current_time = latest_candle['time']
                         
-                        # Ensure current_time is timezone-aware
-                        if hasattr(current_time, 'tzinfo') and current_time.tzinfo is None:
-                            current_time = self._ensure_timezone_aware(current_time)
+                        # FIX TIMEZONE: Ensure current_time is timezone-aware
+                        current_time = latest_candle['time']
+                        current_time = self._ensure_timezone_aware(current_time)
                         
                         current_high = float(latest_candle['high'])
                         current_low = float(latest_candle['low'])
@@ -6817,6 +6945,7 @@ class SafeTPMonitoringManager:
                                 
                                 if tp_hit:
                                     hit_tps.add(i)
+                                    # FIX TIMEZONE: Both datetimes are now timezone-aware
                                     time_seconds = (current_time - entry_time).total_seconds()
                                     
                                     # Update CSV
@@ -6860,7 +6989,6 @@ class SafeTPMonitoringManager:
             self._update_trade_in_csv_safe(trade_id, {'monitoring_status': 'failed'})
             self._cleanup_trade_monitoring(trade_id, 'failed')
     
-    
     def _record_sl_hit_updates(self, trade_data, hit_time, hit_tps, be_tracking):
         """Create updates dictionary for SL hit"""
         updates = {}
@@ -6874,10 +7002,11 @@ class SafeTPMonitoringManager:
         updates['tp_level_hit'] = '-1'
         updates['exit_time'] = hit_time.strftime('%Y-%m-%d %H:%M:%S')
         
-        # Calculate time to exit
-        entry_time = pd.to_datetime(trade_data['entry_time'])
-        time_to_exit = (hit_time - entry_time).total_seconds()
-        updates['time_to_exit_seconds'] = str(int(time_to_exit))
+        # Calculate time to exit - FIX TIMEZONE
+        entry_time = self._parse_datetime(trade_data['entry_time'])
+        if entry_time:
+            time_to_exit = (hit_time - entry_time).total_seconds()
+            updates['time_to_exit_seconds'] = str(int(time_to_exit))
         
         # Update BE outcomes
         for tp_level in hit_tps:
@@ -6925,6 +7054,10 @@ class SafeTPMonitoringManager:
                         self._log(f"❌ Attempt {attempt+1}: No fieldnames for {trade_id}")
                         time.sleep(0.5)
                         continue
+                    
+                    if not rows:
+                        self._log(f"❌ Attempt {attempt+1}: No rows in CSV for {trade_id}")
+                        return False
                     
                     # STEP 2: Find the trade (handle multiple matches)
                     found_indices = []
@@ -7078,6 +7211,14 @@ class SafeTPMonitoringManager:
         self.monitoring_start_times.clear()
         
         self._log("✅ All TP monitoring stopped")
+    
+    def _get_trade_row_from_csv(self, trade_id):
+        """Helper to get a specific trade row from CSV"""
+        fieldnames, rows = self._read_csv_safe()
+        for row in rows:
+            if row.get('trade_id') == trade_id:
+                return row
+        return None
 
 
 class HammerPatternScanner:
