@@ -6354,35 +6354,79 @@ class SafeTPMonitoringManager:
             self._log(f"❌ Backfill error for {trade_id}: {e}", 'error')
             return False
     
+    def _rate_limited_fetch_candles(self, instrument, timeframe, count, since=None):
+        """Fetch candles with rate limiting"""
+        # Track API call times
+        with self.api_call_lock:
+            now = time.time()
+            # Remove calls older than 60 seconds
+            self.api_call_times = [t for t in self.api_call_times if now - t < 60]
+            
+            # Check if we're hitting rate limits (max 60 calls per minute)
+            if len(self.api_call_times) >= 50:
+                wait_time = 60 - (now - min(self.api_call_times)) + 1
+                self._log(f"⏳ Rate limit approaching, waiting {wait_time:.1f}s")
+                time.sleep(wait_time)
+            
+            # Record this call
+            self.api_call_times.append(now)
+        
+        try:
+            return self.fetch_candles(
+                instrument=instrument,
+                timeframe=timeframe,
+                count=count,
+                api_key=self.api_key,
+                since=since,
+                use_cache=True
+            )
+        except Exception as e:
+            if '502' in str(e) or '429' in str(e) or 'rate' in str(e).lower():
+                # Exponential backoff for rate limits
+                wait_time = min(30, 5 * (len(self.api_call_times) // 10))
+                self._log(f"⚠️ API rate limit hit for {instrument}, waiting {wait_time}s", 'warning')
+                time.sleep(wait_time)
+                # Retry once
+                return self.fetch_candles(
+                    instrument=instrument,
+                    timeframe=timeframe,
+                    count=count,
+                    api_key=self.api_key,
+                    since=since,
+                    use_cache=True
+                )
+            else:
+                raise
+    
     def _fetch_historical_candles(self, instrument, timeframe, start_time, end_time):
-        """Fetch historical candles using your fetch_candles function"""
+        """Fetch historical candles with rate limiting"""
         try:
             # Calculate time difference to estimate candle count
             time_diff_hours = (end_time - start_time).total_seconds() / 3600
             
             # Estimate candle count needed
             if timeframe == 'M1':
-                count = int(time_diff_hours * 60 * 1.5) + 100  # Extra buffer
+                count = int(time_diff_hours * 60 * 1.2) + 50  # 20% buffer
             elif timeframe == 'M5':
-                count = int(time_diff_hours * 12 * 1.5) + 100
+                count = int(time_diff_hours * 12 * 1.2) + 50
             elif timeframe == 'M15':
-                count = int(time_diff_hours * 4 * 1.5) + 100
-            else:  # H1 or higher
-                count = int(time_diff_hours * 1.5) + 100
+                count = int(time_diff_hours * 4 * 1.2) + 50
+            elif timeframe == 'H1':
+                count = int(time_diff_hours * 1.2) + 50
+            else:
+                count = 100
             
-            # Limit to max 5000 candles
-            count = min(count, 5000)
+            # Limit to max 3000 candles to avoid API limits
+            count = min(count, 3000)
             
             self._log(f"📊 Fetching {count} {timeframe} candles for {instrument} ({time_diff_hours:.1f}h)")
             
-            # Use your fetch_candles function
-            df = self.fetch_candles(
+            # Use rate-limited fetch
+            df = self._rate_limited_fetch_candles(
                 instrument=instrument,
                 timeframe=timeframe,
                 count=count,
-                api_key=self.api_key,
-                since=start_time,
-                use_cache=True
+                since=start_time
             )
             
             # Filter to our date range
@@ -6400,24 +6444,21 @@ class SafeTPMonitoringManager:
             return pd.DataFrame()
     
     def _fetch_current_candles(self, instrument, timeframe, count):
-        """Fetch current candles for live monitoring"""
+        """Fetch current candles for live monitoring with rate limiting"""
         try:
-            df = self.fetch_candles(
+            return self._rate_limited_fetch_candles(
                 instrument=instrument,
                 timeframe=timeframe,
                 count=count,
-                api_key=self.api_key,
-                since=None,
-                use_cache=True
+                since=None
             )
-            return df
         except Exception as e:
             self._log(f"❌ Error fetching current candles for {instrument}: {e}", 'error')
             import pandas as pd
             return pd.DataFrame()
     
     def start_live_monitoring(self, trade_data):
-        """Start live monitoring thread for a trade"""
+        """Start live monitoring thread for a trade with thread pool limits"""
         trade_id = trade_data['trade_id']
         
         # Check if already being monitored
@@ -6427,43 +6468,60 @@ class SafeTPMonitoringManager:
                 self._log(f"⏭️ Trade {trade_id} already being monitored")
                 return
         
+        # Check if we've reached max workers
+        active_count = len([t for t in self.active_threads.values() if t.is_alive()])
+        if active_count >= self.max_workers:
+            self._log(f"⏳ Max workers reached ({self.max_workers}), queuing {trade_id}")
+            # Queue it for later - maybe store in a pending queue
+            return
+        
         # Check if trade is already completed
         if self._is_trade_completed(trade_data):
             self._log(f"⏭️ Trade {trade_id} already completed")
             return
         
         try:
-            # Start monitoring thread
-            thread = threading.Thread(
-                target=self._monitor_trade_live,
-                args=(trade_data,),
-                name=f"TPMonitor_{trade_id}",
-                daemon=True
-            )
+            # Acquire rate limit semaphore
+            if not self.rate_limit_semaphore.acquire(timeout=10):
+                self._log(f"❌ Rate limit timeout for starting {trade_id}", 'warning')
+                return
             
-            self.active_threads[trade_id] = thread
-            self.monitoring_start_times[trade_id] = datetime.now()
-            self.heartbeat_times[trade_id] = datetime.now()
-            
-            # Initialize thread state
-            self.thread_states[trade_id] = {
-                'status': 'running',
-                'hit_tps': set(),
-                'last_checked': datetime.now(),
-                'be_tracking': {i: {'state': 'waiting', 'be_triggered': False, 'outcome': 'none'} for i in range(1, 11)}
-            }
-            
-            thread.start()
-            
-            # Update CSV status
-            self._update_trade_in_csv_safe(trade_id, {
-                'monitoring_status': 'running',
-                'last_heartbeat': datetime.now().isoformat(),
-                'reconciliation_attempts': str(int(trade_data.get('reconciliation_attempts', 0)) + 1)
-            })
-            
-            self._log(f"📡 Started LIVE monitoring for {trade_id}")
-            
+            try:
+                # Start monitoring thread
+                thread = threading.Thread(
+                    target=self._monitor_trade_live,
+                    args=(trade_data,),
+                    name=f"TPMonitor_{trade_id}",
+                    daemon=True
+                )
+                
+                self.active_threads[trade_id] = thread
+                self.monitoring_start_times[trade_id] = self._now_ny()
+                self.heartbeat_times[trade_id] = self._now_ny()
+                
+                # Initialize thread state
+                self.thread_states[trade_id] = {
+                    'status': 'running',
+                    'hit_tps': set(),
+                    'last_checked': self._now_ny(),
+                    'be_tracking': {i: {'state': 'waiting', 'be_triggered': False, 'outcome': 'none'} for i in range(1, 11)}
+                }
+                
+                thread.start()
+                
+                # Update CSV status
+                self._update_trade_in_csv_safe(trade_id, {
+                    'monitoring_status': 'running',
+                    'last_heartbeat': self._now_ny().isoformat(),
+                    'reconciliation_attempts': str(int(trade_data.get('reconciliation_attempts', 0)) + 1)
+                })
+                
+                self._log(f"📡 Started LIVE monitoring for {trade_id} (active: {active_count + 1}/{self.max_workers})")
+                
+            finally:
+                # Release semaphore after starting thread (not after it completes)
+                self.rate_limit_semaphore.release()
+                
         except Exception as e:
             self._log(f"❌ Failed to start live monitoring for {trade_id}: {e}", 'error')
     
