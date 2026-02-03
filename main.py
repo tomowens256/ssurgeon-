@@ -7881,75 +7881,20 @@ class SafeTPMonitoringManager:
                 return False
         return True
     
-    def _update_trade_in_csv_safe(self, trade_id, updates):
-        """Update specific fields for ONE trade - PRESERVES ALL OTHER DATA"""
-        # MAX RETRIES to handle race conditions
-        for attempt in range(3):
-            with self.csv_lock:
-                try:
-                    # STEP 1: Read current state ATOMICALLY
-                    fieldnames, rows = self._read_csv_safe()
-                    if not fieldnames:
-                        self._log(f"❌ Attempt {attempt+1}: No fieldnames for {trade_id}")
-                        time.sleep(0.5)
-                        continue
-                    
-                    if not rows:
-                        self._log(f"❌ Attempt {attempt+1}: No rows in CSV for {trade_id}")
-                        return False
-                    
-                    # STEP 2: Find the trade (handle multiple matches)
-                    found_indices = []
-                    for i, row in enumerate(rows):
-                        if row.get('trade_id') == trade_id:
-                            found_indices.append(i)
-                    
-                    if not found_indices:
-                        self._log(f"❌ Trade {trade_id} not found in {len(rows)} rows")
-                        # Log first few trade IDs for debugging
-                        if rows:
-                            sample_ids = [r.get('trade_id', 'NO_ID') for r in rows[:5]]
-                            self._log(f"   Sample IDs: {sample_ids}")
-                        return False
-                    
-                    # STEP 3: Apply updates to ALL matching rows (should be only one)
-                    updated_count = 0
-                    for idx in found_indices:
-                        row_updated = False
-                        for key, new_value in updates.items():
-                            if key in fieldnames:
-                                old_value = rows[idx].get(key, '')
-                                # Only update if changing to a non-empty value
-                                if str(new_value).strip() and str(old_value) != str(new_value):
-                                    rows[idx][key] = str(new_value)
-                                    row_updated = True
-                        
-                        if row_updated:
-                            updated_count += 1
-                            # Update heartbeat
-                            rows[idx]['last_heartbeat'] = datetime.now().isoformat()
-                    
-                    # STEP 4: Write back ONLY if changes were made
-                    if updated_count > 0:
-                        self._log(f"📝 Updating {trade_id}: {len(updates)} fields on {updated_count} rows")
-                        success = self._write_csv_safe(fieldnames, rows, f"update_{trade_id}")
-                        if success:
-                            self._log(f"✅ Successfully updated {trade_id}")
-                            return True
-                        else:
-                            self._log(f"⚠️  Write failed for {trade_id}, retrying...")
-                            time.sleep(1)
-                            continue
-                    else:
-                        self._log(f"⏭️  No updates needed for {trade_id} (already current)")
-                        return True
-                        
-                except Exception as e:
-                    self._log(f"❌ Update error for {trade_id} (attempt {attempt+1}): {e}")
-                    time.sleep(1)
+    def _update_trade_in_csv_safe(self, trade_id, trade_data):
+        """Update trade in CSV with FULL trade_data - FIXED for OLD LOGIC"""
+        # Extract updates from trade_data (everything except basic fields)
+        updates = {}
         
-        self._log(f"💥 FAILED to update {trade_id} after 3 attempts")
-        return False
+        # Get the fields we should update (all except metadata)
+        exclude_fields = ['timestamp', 'signal_id', 'trade_id', 'instrument', 'entry_time']
+        
+        for key, value in trade_data.items():
+            if key not in exclude_fields and not key.startswith('_'):
+                updates[key] = value
+        
+        # Call the existing update method
+        return self._update_trade_in_csv_safe(trade_id, updates)
 
     def verify_backfill_update(self, trade_id, expected_updates):
         """Verify that backfill updates were applied correctly"""
