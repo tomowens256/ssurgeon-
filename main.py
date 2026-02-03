@@ -7165,7 +7165,7 @@ class SafeTPMonitoringManager:
             return pd.DataFrame()
     
     def start_live_monitoring(self, trade_data):
-        """Start live monitoring thread for a trade with thread pool limits - FIXED"""
+        """Start live monitoring using OLD PROVEN LOGIC"""
         trade_id = trade_data['trade_id']
         
         # Check if already being monitored
@@ -7181,44 +7181,14 @@ class SafeTPMonitoringManager:
             self._log(f"⏳ Max workers reached ({self.max_workers}), queuing {trade_id}")
             return
         
-        # CRITICAL FIX: Check if SL was hit on entry candle BEFORE starting thread
-        try:
-            instrument = trade_data['instrument']
-            direction = trade_data['direction'].lower()
-            sl_price = float(trade_data['sl_price'])
-            
-            # Fetch the candle at entry time
-            candles = self._fetch_current_candles(instrument, 'M1', count=2)
-            
-            if not candles.empty and len(candles) >= 1:
-                # Check most recent 2 candles
-                for idx in range(min(2, len(candles))):
-                    candle = candles.iloc[-1-idx]
-                    candle_high = float(candle['high'])
-                    candle_low = float(candle['low'])
-                    
-                    sl_hit_on_entry = False
-                    if direction == 'bearish' and candle_high >= sl_price:
-                        sl_hit_on_entry = True
-                    elif direction == 'bullish' and candle_low <= sl_price:
-                        sl_hit_on_entry = True
-                    
-                    if sl_hit_on_entry:
-                        # Trade hit SL on entry candle - don't start monitoring
-                        self._update_trade_in_csv_safe(trade_id, {
-                            'tp_level_hit': '-1',
-                            'exit_time': self._now_ny().strftime('%Y-%m-%d %H:%M:%S'),
-                            'monitoring_status': 'entry_sl_hit'
-                        })
-                        self._log(f"⏭️ Trade {trade_id} hit SL on entry candle, skipping monitoring")
-                        return
-        except Exception as e:
-            self._log(f"⚠️ Error checking entry candle: {e}", 'warning')
+        # Check if trade is already completed
+        if self._is_trade_completed(trade_data):
+            self._log(f"⏭️ Trade {trade_id} already completed")
+            return
         
-        # Start monitoring thread
         try:
             thread = threading.Thread(
-                target=self._monitor_trade_live,  # This should now use the FIXED version
+                target=self._monitor_trade_live_fixed,  # Use OLD LOGIC
                 args=(trade_data,),
                 name=f"TPMonitor_{trade_id}",
                 daemon=True
@@ -7245,7 +7215,7 @@ class SafeTPMonitoringManager:
                 'reconciliation_attempts': str(int(trade_data.get('reconciliation_attempts', 0)) + 1)
             })
             
-            self._log(f"📡 Started LIVE monitoring for {trade_id} (active: {active_count + 1}/{self.max_workers})")
+            self._log(f"📡 Started LIVE monitoring for {trade_id} using OLD LOGIC (active: {active_count + 1}/{self.max_workers})")
             
         except Exception as e:
             self._log(f"❌ Failed to start live monitoring for {trade_id}: {e}", 'error')
