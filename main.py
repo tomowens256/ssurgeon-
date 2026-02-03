@@ -6021,10 +6021,10 @@ class SafeTPMonitoringManager:
         
         return True
     
-    def _safe_startup_reconciliation(self):
-        """SAFE reconciliation: Find orphaned trades and process them"""
-        self._log("🔍 Starting SAFE orphaned trade reconciliation...")
-        time.sleep(5)  # Wait for system initialization
+    def _safe_startup_reconciliation_rate_limited(self):
+        """SAFE reconciliation with rate limiting - process in batches"""
+        self._log("🔍 Starting RATE-LIMITED orphaned trade reconciliation...")
+        time.sleep(10)  # Wait for system initialization
         
         try:
             fieldnames, rows = self._read_csv_safe()
@@ -6047,56 +6047,107 @@ class SafeTPMonitoringManager:
             
             self._log(f"📊 Found {len(trades_needing_processing)} trades needing processing")
             
-            # Process each trade
+            if not trades_needing_processing:
+                self._log("✅ No trades need processing")
+                return
+            
+            # Process in batches of max_workers
+            batch_size = min(self.max_workers, 10)  # Process max 10 at a time
+            batches = [trades_needing_processing[i:i + batch_size] 
+                      for i in range(0, len(trades_needing_processing), batch_size)]
+            
+            self._log(f"📦 Processing in {len(batches)} batches of {batch_size}")
+            
             processed_count = 0
-            for trade_id, row in trades_needing_processing:
-                try:
-                    # Convert row to trade_data dict
-                    trade_data = self._row_to_trade_data(row)
-                    
-                    # Get entry time
-                    entry_time_str = trade_data.get('entry_time')
-                    if not entry_time_str:
-                        self._log(f"⚠️ No entry_time for {trade_id}, skipping")
-                        continue
-                    
-                    entry_time = pd.to_datetime(entry_time_str)
-                    hours_since_entry = (datetime.now() - entry_time).total_seconds() / 3600
-                    
-                    # Strategy:
-                    # 1. If trade is OLD (>2 hours), try to backfill from historical data
-                    # 2. If still open after backfill, OR if trade is RECENT (<2 hours), start live thread
-                    
-                    if hours_since_entry > 2:
-                        self._log(f"🕰️ Processing OLD trade {trade_id} ({hours_since_entry:.1f}h old)")
+            for batch_idx, batch in enumerate(batches):
+                self._log(f"🔄 Processing batch {batch_idx + 1}/{len(batches)} ({len(batch)} trades)")
+                
+                batch_threads = []
+                for trade_id, row in batch:
+                    try:
+                        # Convert row to trade_data
+                        trade_data = self._row_to_trade_data(row)
                         
-                        # First try to backfill from historical data
-                        completed = self._backfill_trade_from_history(trade_data)
+                        # Get entry time
+                        entry_time_str = trade_data.get('entry_time')
+                        if not entry_time_str:
+                            self._log(f"⚠️ No entry_time for {trade_id}, skipping")
+                            continue
                         
-                        if completed:
-                            self._log(f"✅ Trade {trade_id} completed via backfill")
-                        else:
-                            # Still open - start live monitoring thread
-                            self._log(f"📡 Trade {trade_id} still open after backfill, starting live thread")
-                            self.start_live_monitoring(trade_data)
-                    
-                    else:
-                        # Recent trade - start live monitoring
-                        self._log(f"📡 Starting live thread for RECENT trade {trade_id} ({hours_since_entry:.1f}h old)")
-                        self.start_live_monitoring(trade_data)
-                    
-                    processed_count += 1
-                    
-                    # Small delay to avoid overwhelming
-                    time.sleep(0.5)
-                    
-                except Exception as e:
-                    self._log(f"❌ Error processing trade {trade_id}: {e}", 'error')
+                        entry_time = self._parse_datetime(entry_time_str)
+                        if entry_time is None:
+                            continue
+                        
+                        hours_since_entry = (self._now_ny() - entry_time).total_seconds() / 3600
+                        
+                        # Create thread for this trade
+                        thread = threading.Thread(
+                            target=self._process_single_trade_reconciliation,
+                            args=(trade_id, trade_data, hours_since_entry),
+                            name=f"Recon_{trade_id}",
+                            daemon=True
+                        )
+                        batch_threads.append(thread)
+                        
+                    except Exception as e:
+                        self._log(f"❌ Error preparing {trade_id}: {e}", 'error')
+                
+                # Start batch threads
+                for thread in batch_threads:
+                    thread.start()
+                
+                # Wait for batch to complete
+                for thread in batch_threads:
+                    thread.join(timeout=30)  # 30 second timeout
+                
+                # Rate limiting: Wait between batches
+                if batch_idx < len(batches) - 1:
+                    wait_time = 5  # Wait 5 seconds between batches
+                    self._log(f"⏳ Waiting {wait_time}s before next batch...")
+                    time.sleep(wait_time)
+                
+                processed_count += len(batch)
             
             self._log(f"✅ Reconciliation completed for {processed_count} trades")
             
         except Exception as e:
             self._log(f"❌ Reconciliation failed: {e}", 'error')
+    
+    def _process_single_trade_reconciliation(self, trade_id, trade_data, hours_since_entry):
+        """Process single trade reconciliation with rate limiting"""
+        try:
+            # Acquire rate limit semaphore
+            if not self.rate_limit_semaphore.acquire(timeout=30):
+                self._log(f"❌ Rate limit timeout for {trade_id}", 'warning')
+                return
+            
+            try:
+                # Strategy based on trade age
+                if hours_since_entry > 2:
+                    self._log(f"🕰️ Processing OLD trade {trade_id} ({hours_since_entry:.1f}h old)")
+                    
+                    # First try to backfill from historical data
+                    completed = self._backfill_trade_from_history(trade_data)
+                    
+                    if completed:
+                        self._log(f"✅ Trade {trade_id} completed via backfill")
+                    else:
+                        # Still open - start live monitoring thread
+                        self._log(f"📡 Trade {trade_id} still open after backfill, starting live thread")
+                        self.start_live_monitoring(trade_data)
+                
+                else:
+                    # Recent trade - start live monitoring
+                    self._log(f"📡 Starting live thread for RECENT trade {trade_id} ({hours_since_entry:.1f}h old)")
+                    self.start_live_monitoring(trade_data)
+                    
+            finally:
+                # Release semaphore
+                self.rate_limit_semaphore.release()
+                time.sleep(0.5)  # Small delay between API calls
+                
+        except Exception as e:
+            self._log(f"❌ Error processing trade {trade_id}: {e}", 'error')
     
     def _trade_needs_processing(self, row):
         """Check if a trade needs TP/SL results or monitoring"""
