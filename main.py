@@ -6151,6 +6151,140 @@ class SafeTPMonitoringManager:
         rows = [{k: str(v) if not pd.isna(v) else '' for k, v in row.items()} for row in rows]
         
         return fieldnames, rows
+
+    def _monitor_trade_live_with_resume(self, trade_data, resume_info):
+        """Live monitoring with resume capability"""
+        trade_id = trade_data['trade_id']
+        instrument = trade_data['instrument']
+        direction = trade_data['direction'].lower()
+        
+        try:
+            entry_price = float(trade_data['entry_price'])
+            sl_price = float(trade_data['sl_price'])
+            
+            # Calculate TP prices
+            pip_multiplier = 100 if 'JPY' in instrument else 10000
+            tp_prices = {}
+            
+            for i in range(1, 11):
+                distance_key = f'tp_1_{i}_distance'
+                if distance_key in trade_data:
+                    try:
+                        distance_pips = float(trade_data[distance_key])
+                        if direction == 'bearish':
+                            tp_prices[i] = entry_price - (distance_pips / pip_multiplier)
+                        else:  # bullish
+                            tp_prices[i] = entry_price + (distance_pips / pip_multiplier)
+                    except:
+                        tp_prices[i] = None
+                else:
+                    tp_prices[i] = None
+            
+            # Initialize tracking with resume info
+            hit_tps = set(resume_info.get('hit_tps', []))
+            
+            # If resuming from a specific TP, mark all lower TPs as already checked
+            resume_from_tp = resume_info.get('tp_level', 1) if resume_info.get('type') == 'resume_from_tp' else 1
+            
+            be_tracking = {i: {'state': 'waiting', 'be_triggered': False, 'outcome': 'none'} for i in range(1, 11)}
+            
+            # Initialize BE tracking for already hit TPs
+            for tp_level in hit_tps:
+                be_tracking[tp_level]['state'] = 'tracking'
+            
+            entry_time = self._parse_datetime(trade_data['entry_time'])
+            if entry_time is None:
+                self._log(f"❌ Invalid entry_time for {trade_id}", 'error')
+                return
+            
+            self._log(f"📊 RESUMED monitoring for {trade_id} from TP{resume_from_tp}")
+            
+            # Main monitoring loop
+            while not self.shutdown_flag.is_set():
+                try:
+                    # Check if trade is already completed
+                    if not self._is_orphan_row(trade_data):
+                        self._log(f"✅ Trade {trade_id} completed during monitoring")
+                        break
+                    
+                    # Fetch current candles
+                    candles = self._fetch_current_candles(instrument, 'M1', count=2)
+                    
+                    if not candles.empty:
+                        latest_candle = candles.iloc[-1]
+                        current_time = latest_candle['time']
+                        current_time = self._ensure_timezone_aware(current_time)
+                        
+                        current_high = float(latest_candle['high'])
+                        current_low = float(latest_candle['low'])
+                        current_close = float(latest_candle['close'])
+                        
+                        # Check SL
+                        sl_hit = False
+                        if direction == 'bearish' and current_low <= sl_price:
+                            sl_hit = True
+                        elif direction == 'bullish' and current_high >= sl_price:
+                            sl_hit = True
+                        
+                        if sl_hit:
+                            updates = self._record_sl_hit_updates(trade_data, current_time, hit_tps, be_tracking)
+                            self._update_trade_in_csv_safe(trade_id, updates)
+                            self._log(f"🛑 SL hit for {trade_id}")
+                            break
+                        
+                        # Check TPs starting from resume point
+                        for i in range(resume_from_tp, 11):
+                            if i not in hit_tps and tp_prices[i] is not None:
+                                tp_hit = False
+                                if direction == 'bearish' and current_low <= tp_prices[i]:
+                                    tp_hit = True
+                                elif direction == 'bullish' and current_high >= tp_prices[i]:
+                                    tp_hit = True
+                                
+                                if tp_hit:
+                                    hit_tps.add(i)
+                                    time_seconds = (current_time - entry_time).total_seconds()
+                                    
+                                    # Update CSV
+                                    updates = {
+                                        f'tp_1_{i}_result': f'+{i}',
+                                        f'tp_1_{i}_time_seconds': str(int(time_seconds))
+                                    }
+                                    
+                                    # Update highest TP hit
+                                    current_highest = int(trade_data.get('tp_level_hit', 0) or 0)
+                                    if i > current_highest:
+                                        updates['tp_level_hit'] = str(i)
+                                        updates['exit_time'] = current_time.strftime('%Y-%m-%d %H:%M:%S')
+                                        updates['time_to_exit_seconds'] = str(int(time_seconds))
+                                    
+                                    self._update_trade_in_csv_safe(trade_id, updates)
+                                    trade_data.update(updates)
+                                    
+                                    # Start BE tracking for this TP
+                                    be_tracking[i]['state'] = 'tracking'
+                                    self._log(f"✅ TP{i} hit for {trade_id}")
+                        
+                        # Update BE tracking
+                        self._update_be_tracking(trade_data, hit_tps, be_tracking, current_close, tp_prices)
+                        
+                        # Update heartbeat
+                        self.heartbeat_times[trade_id] = datetime.now()
+                    
+                    # Sleep between checks
+                    time.sleep(self.check_interval_live)
+                    
+                except Exception as e:
+                    self._log(f"⚠️ Error in resumed monitoring loop for {trade_id}: {e}", 'warning')
+                    time.sleep(5)
+            
+            # Cleanup
+            self._cleanup_trade_monitoring(trade_id, 'completed')
+            
+        except Exception as e:
+            self._log(f"❌ Resumed monitoring crashed for {trade_id}: {e}", 'error')
+            self._update_trade_in_csv_safe(trade_id, {'monitoring_status': 'failed'})
+            self._cleanup_trade_monitoring(trade_id, 'failed')
     
     def _parse_csv_with_csv_module(self, raw_content):
         """Parse CSV using csv module"""
