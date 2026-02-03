@@ -5665,19 +5665,20 @@ class SafeTPMonitoringManager:
     - Creates backups before any modification
     """
     
-    def __init__(self, csv_path: str, api_key: str, fetch_candles_func,logger=None, max_workers: int = 50):
+    def __init__(self, csv_path: str, api_key: str, fetch_candles_func, logger=None, max_workers: int = 10):
         """
         Args:
             csv_path: Path to CSV file with trades
             api_key: OANDA API key for candle fetching
+            fetch_candles_func: Your existing fetch_candles function
             logger: Logger instance
-            max_workers: Maximum concurrent monitoring threads
+            max_workers: Maximum concurrent monitoring threads (DEFAULT: 10)
         """
         self.csv_path = csv_path
         self.api_key = api_key
         self.fetch_candles = fetch_candles_func
         self.logger = logger or self._create_default_logger()
-        self.max_workers = max_workers
+        self.max_workers = max_workers  # Limit concurrent threads
         
         # Thread management
         self.active_threads = {}
@@ -5686,15 +5687,20 @@ class SafeTPMonitoringManager:
         
         # Control flags
         self.shutdown_flag = threading.Event()
-        self.csv_lock = threading.RLock()  # For thread-safe CSV operations
+        self.csv_lock = threading.RLock()
+        
+        # Rate limiting and batching
+        self.rate_limit_semaphore = threading.Semaphore(max_workers)  # Limit concurrent API calls
+        self.api_call_times = []  # Track API call times for rate limiting
+        self.api_call_lock = threading.Lock()
         
         # Performance tracking
         self.heartbeat_times = {}
         self.monitoring_start_times = {}
         
         # Runtime configuration
-        self.monitoring_window_hours = 999999  # Infinite monitoring
-        self.check_interval_live = 2
+        self.monitoring_window_hours = 999999
+        self.check_interval_live = 5  # Increased from 2 to 5 seconds
         self.heartbeat_interval = 60
         
         # Candle fetching configuration
@@ -5704,12 +5710,15 @@ class SafeTPMonitoringManager:
         # BE tracking tolerance (pips)
         self.be_tolerance = 0.0001
         
-        # Ensure CSV has required columns (SAFE VERSION)
+        # Backfill configuration
+        self.max_backfill_threads = 3  # Limit concurrent backfill threads
+        
+        # Ensure CSV has required columns
         self.safe_check_and_fix_csv()
         
-        # Start safe reconciliation
+        # Start safe reconciliation with rate limiting
         startup_thread = threading.Thread(
-            target=self._safe_startup_reconciliation,
+            target=self._safe_startup_reconciliation_rate_limited,
             daemon=True,
             name="SafeTPMonitor_StartupRecon"
         )
@@ -5723,7 +5732,7 @@ class SafeTPMonitoringManager:
         )
         periodic_thread.start()
         
-        self.logger.info("✅ Safe TP Monitoring Manager initialized")
+        self.logger.info(f"✅ Safe TP Monitoring Manager initialized (max_workers: {max_workers})")
     
     def _create_default_logger(self):
         """Create a default logger if none provided"""
@@ -5740,6 +5749,44 @@ class SafeTPMonitoringManager:
     def start_monitoring(self, trade_data):
         """Alias for start_live_monitoring (for compatibility)"""
         return self.start_live_monitoring(trade_data)
+
+    def _parse_datetime(self, dt_str):
+        """Parse datetime string and ensure it's NY_TZ timezone-aware"""
+        if not dt_str or pd.isna(dt_str):
+            return None
+        
+        try:
+            # If it's already a datetime object
+            if isinstance(dt_str, datetime):
+                dt = dt_str
+            else:
+                # Parse string
+                dt = pd.to_datetime(dt_str)
+            
+            # Ensure it's timezone-aware in NY_TZ
+            if dt.tzinfo is None:
+                # If naive, localize to NY_TZ
+                return NY_TZ.localize(dt)
+            else:
+                # If has timezone, convert to NY_TZ
+                return dt.astimezone(NY_TZ)
+        except Exception as e:
+            self._log(f"⚠️ Error parsing datetime {dt_str}: {e}", 'warning')
+            return None
+    
+    def _ensure_timezone_aware(self, dt):
+        """Ensure datetime is timezone-aware in NY_TZ"""
+        if dt is None:
+            return None
+        
+        if dt.tzinfo is None:
+            return NY_TZ.localize(dt)
+        else:
+            return dt.astimezone(NY_TZ)
+    
+    def _now_ny(self):
+        """Get current time in NY_TZ"""
+        return datetime.now(NY_TZ)
     
     def _log(self, message: str, level: str = 'info'):
         """Log message with appropriate level"""
@@ -6108,8 +6155,13 @@ class SafeTPMonitoringManager:
         direction = trade_data['direction'].lower()
         
         try:
-            entry_time = pd.to_datetime(trade_data['entry_time'])
-            now = datetime.now()
+            # Fix entry_time parsing
+            entry_time = self._parse_datetime(trade_data['entry_time'])
+            if entry_time is None:
+                self._log(f"❌ Invalid entry_time for backfill {trade_id}", 'error')
+                return False
+            
+            now = self._now_ny()
             
             # Choose timeframe based on duration
             time_diff_hours = (now - entry_time).total_seconds() / 3600
@@ -6397,7 +6449,11 @@ class SafeTPMonitoringManager:
             be_tracking = {i: {'state': 'waiting', 'be_triggered': False, 'outcome': 'none'} for i in range(1, 11)}
             
             # Get entry time for timeout calculation (disabled)
-            entry_time = pd.to_datetime(trade_data['entry_time'])
+            # Fix entry_time parsing
+            entry_time = self._parse_datetime(trade_data['entry_time'])
+            if entry_time is None:
+                self._log(f"❌ Invalid entry_time for {trade_id}", 'error')
+                return
             
             self._log(f"📊 LIVE monitoring started for {trade_id}")
             
@@ -6412,9 +6468,15 @@ class SafeTPMonitoringManager:
                     # Fetch current candles
                     candles = self._fetch_current_candles(instrument, 'M1', count=2)
                     
+                    # Fix current_time in loop
                     if not candles.empty:
                         latest_candle = candles.iloc[-1]
                         current_time = latest_candle['time']
+                        
+                        # Ensure current_time is timezone-aware
+                        if hasattr(current_time, 'tzinfo') and current_time.tzinfo is None:
+                            current_time = self._ensure_timezone_aware(current_time)
+                        
                         current_high = float(latest_candle['high'])
                         current_low = float(latest_candle['low'])
                         current_close = float(latest_candle['close'])
