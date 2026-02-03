@@ -7973,13 +7973,13 @@ class SafeTPMonitoringManager:
         """Simple, safe CSV update - uses old logic with thread safety"""
         with self.csv_lock:  # Add thread safety
             try:
-                if not os.path.exists(self.csv_file_path):
-                    self._log(f"❌ CSV file not found: {self.csv_file_path}", 'error')
+                if not os.path.exists(self.csv_path):  # Changed from csv_file_path to csv_path
+                    self._log(f"❌ CSV file not found: {self.csv_path}", 'error')
                     return False
                 
                 # Read all data
                 rows = []
-                with open(self.csv_file_path, 'r', newline='', encoding='utf-8') as f:
+                with open(self.csv_path, 'r', newline='', encoding='utf-8') as f:  # Changed
                     reader = csv.DictReader(f)
                     fieldnames = reader.fieldnames
                     if not fieldnames:
@@ -8000,7 +8000,7 @@ class SafeTPMonitoringManager:
                 
                 if updated:
                     # Write back to CSV
-                    with open(self.csv_file_path, 'w', newline='', encoding='utf-8') as f:
+                    with open(self.csv_path, 'w', newline='', encoding='utf-8') as f:  # Changed
                         writer = csv.DictWriter(f, fieldnames=fieldnames)
                         writer.writeheader()
                         writer.writerows(rows)
@@ -8015,9 +8015,9 @@ class SafeTPMonitoringManager:
                 self._log(f"❌ Error updating CSV for {trade_id}: {str(e)}", 'error')
                 # Create emergency backup
                 try:
-                    backup_path = f"{self.csv_file_path}.error_backup_{int(time.time())}"
+                    backup_path = f"{self.csv_path}.error_backup_{int(time.time())}"  # Changed
                     import shutil
-                    # shutil.copy2(self.csv_file_path, backup_path)
+                    # shutil.copy2(self.csv_path, backup_path)  # Changed
                     # self._log(f"📂 Created error backup: {backup_path}")
                 except:
                     pass
