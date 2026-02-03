@@ -5718,7 +5718,7 @@ class SafeTPMonitoringManager:
         
         # Start safe reconciliation with rate limiting
         startup_thread = threading.Thread(
-            target=self._safe_startup_reconciliation_rate_limited,
+            target=self._safe_startup_reconciliation_focused, #_safe_startup_reconciliation_rate_limited
             daemon=True,
             name="SafeTPMonitor_StartupRecon"
         )
@@ -5796,6 +5796,48 @@ class SafeTPMonitoringManager:
             self.logger.warning(message)
         else:
             self.logger.info(message)
+
+    def get_incomplete_trades_waitlist(self, limit=5):
+        """Safely creates a list of the N most recent incomplete trades for processing."""
+        waitlist = []
+        try:
+            fieldnames, rows = self._read_csv_safe()
+            if not rows:
+                self._log("CSV is empty or could not be read.")
+                return waitlist
+    
+            for row in rows:
+                trade_id = row.get('trade_id', '').strip()
+                # Check if trade needs processing: missing exit time or TP results
+                exit_time = row.get('exit_time', '').strip()
+                tp_hit = row.get('tp_level_hit', '').strip()
+                
+                if not trade_id:
+                    continue
+                if self._is_empty_value(exit_time) or self._is_empty_value(tp_hit) or tp_hit == '0':
+                    # Get entry time for sorting
+                    entry_time_str = row.get('entry_time')
+                    if entry_time_str:
+                        try:
+                            entry_time = pd.to_datetime(entry_time_str)
+                            waitlist.append((entry_time, trade_id, row))
+                        except:
+                            waitlist.append((datetime.min, trade_id, row))
+    
+            # Sort by entry_time descending (newest first) and take the limit
+            waitlist.sort(key=lambda x: x[0], reverse=True)
+            recent_trades = waitlist[:limit]
+    
+            self._log(f"🧾 Created waitlist with {len(recent_trades)} most recent incomplete trades.")
+            for _, trade_id, _ in recent_trades:
+                self._log(f"   - {trade_id}")
+            
+            # Return just the trade_data dictionaries
+            return [trade_data for _, _, trade_data in recent_trades]
+    
+        except Exception as e:
+            self._log(f"❌ Failed to create waitlist: {e}", 'error')
+            return []
     
     def safe_check_and_fix_csv(self):
         """Check CSV integrity and add missing columns SAFELY"""
@@ -5872,6 +5914,63 @@ class SafeTPMonitoringManager:
         except Exception as e:
             self._log(f"❌ Error checking/fixing CSV: {e}", 'error')
             return False
+
+    def _safe_startup_reconciliation_focused(self):
+        """New reconciliation: Only processes a few recent, incomplete trades."""
+        self._log("🔍 Starting FOCUSED reconciliation on recent incomplete trades...")
+        time.sleep(5)
+    
+        # Step 1: Get the short waitlist
+        trades_to_process = self.get_incomplete_trades_waitlist(limit=5)
+        
+        if not trades_to_process:
+            self._log("✅ No incomplete trades found in the recent waitlist.")
+            return
+    
+        self._log(f"🔄 Beginning sequential processing of {len(trades_to_process)} trades...")
+        
+        # Step 2: Process each trade slowly and carefully
+        for idx, trade_data in enumerate(trades_to_process, 1):
+            trade_id = trade_data.get('trade_id', 'Unknown')
+            self._log(f"--- Processing Trade {idx}/{len(trades_to_process)}: {trade_id} ---")
+            
+            try:
+                # Re-fetch the LATEST data from CSV right before processing
+                current_row = self._get_trade_row_from_csv(trade_id)
+                if not current_row:
+                    self._log(f"⚠️  Could not reload {trade_id} from CSV, skipping.")
+                    continue
+                    
+                fresh_trade_data = self._row_to_trade_data(current_row)
+                entry_time = self._parse_datetime(fresh_trade_data.get('entry_time'))
+                
+                if not entry_time:
+                    self._log(f"⚠️  Invalid entry time for {trade_id}, skipping.")
+                    continue
+                    
+                # Decide: Backfill old trade or start live monitoring for recent one
+                hours_since_entry = (self._now_ny() - entry_time).total_seconds() / 3600
+                
+                if hours_since_entry > 2:  # Old trade, try to backfill
+                    self._log(f"🕰️  Backfilling old trade ({hours_since_entry:.1f}h)...")
+                    completed = self._backfill_trade_from_history(fresh_trade_data)
+                    if completed:
+                        self._log(f"✅ Backfill completed for {trade_id}.")
+                    else:
+                        self._log(f"⏸️  Trade {trade_id} still open after backfill.")
+                else:  # Recent trade
+                    self._log(f"📡 Starting live monitor for recent trade ({hours_since_entry:.1f}h)...")
+                    self.start_live_monitoring(fresh_trade_data)
+                    
+            except Exception as e:
+                self._log(f"❌ Unexpected error processing {trade_id}: {e}", 'error')
+            
+            # CRITICAL: Wait between trades to respect API limits
+            wait_seconds = 10
+            self._log(f"⏳ Waiting {wait_seconds}s before next trade...")
+            time.sleep(wait_seconds)
+    
+        self._log("✅ Focused reconciliation cycle complete.")
 
     def start_monitoring(self, trade_data):
         """Start monitoring for a new trade (called from HammerPatternScanner)"""
