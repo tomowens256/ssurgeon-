@@ -7864,7 +7864,7 @@ class SafeTPMonitoringManager:
                 updates[key] = value
         
         # Call the existing update method
-        return self._update_trade_in_csv(trade_id, updates)
+        return self.update_trade_in_csv(trade_id, updates)
 
     def verify_backfill_update(self, trade_id, expected_updates):
         """Verify that backfill updates were applied correctly"""
