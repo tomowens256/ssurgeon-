@@ -6115,6 +6115,45 @@ class SafeTPMonitoringManager:
             
         except Exception as e:
             self._log(f"❌ Reconciliation failed: {e}", 'error')
+
+
+    def debug_single_trade(self, trade_id):
+        """Debug a single trade's backfill process"""
+        self._log(f"🔍 DEBUGGING {trade_id}")
+        
+        # 1. Find trade in CSV
+        fieldnames, rows = self._read_csv_safe()
+        trade_row = None
+        for row in rows:
+            if row.get('trade_id') == trade_id:
+                trade_row = row
+                break
+        
+        if not trade_row:
+            self._log(f"❌ Trade {trade_id} not in CSV")
+            return
+        
+        # 2. Show current state
+        self._log(f"📊 Current state:")
+        self._log(f"   Entry time: {trade_row.get('entry_time')}")
+        self._log(f"   Exit time: {trade_row.get('exit_time')}")
+        self._log(f"   TP level hit: {trade_row.get('tp_level_hit')}")
+        self._log(f"   Monitoring status: {trade_row.get('monitoring_status')}")
+        
+        # 3. Run backfill manually
+        trade_data = self._row_to_trade_data(trade_row)
+        completed = self._backfill_trade_from_history(trade_data)
+        
+        self._log(f"📊 Backfill result: {completed}")
+        
+        # 4. Check CSV again
+        fieldnames2, rows2 = self._read_csv_safe()
+        for row in rows2:
+            if row.get('trade_id') == trade_id:
+                self._log(f"📊 After backfill:")
+                self._log(f"   Exit time: {row.get('exit_time')}")
+                self._log(f"   TP level hit: {row.get('tp_level_hit')}")
+                break
     
     def _process_single_trade_reconciliation(self, trade_id, trade_data, hours_since_entry):
         """Process single trade reconciliation with rate limiting"""
@@ -6325,6 +6364,8 @@ class SafeTPMonitoringManager:
                     updates['time_to_exit_seconds'] = int(time_to_exit)
                 
                 self._update_trade_in_csv_safe(trade_id, updates)
+                time.sleep(0.1)
+                self.verify_backfill_update(trade_id, updates)
                 return True
                 
             elif hit_tps:
@@ -6346,6 +6387,8 @@ class SafeTPMonitoringManager:
                     updates['time_to_exit_seconds'] = int(time_to_exit)
                 
                 self._update_trade_in_csv_safe(trade_id, updates)
+                time.sleep(0.1)  # Small delay for write to complete
+                self.verify_backfill_update(trade_id, updates)
                 return True
                 
             else:
@@ -6356,6 +6399,22 @@ class SafeTPMonitoringManager:
         except Exception as e:
             self._log(f"❌ Backfill error for {trade_id}: {e}", 'error')
             return False
+
+    def find_trade_by_pattern(self, pattern):
+        """Find trades by pattern (partial trade_id match)"""
+        fieldnames, rows = self._read_csv_safe()
+        
+        matches = []
+        for row in rows:
+            trade_id = row.get('trade_id', '')
+            if pattern in trade_id:
+                matches.append(row)
+        
+        self._log(f"🔍 Found {len(matches)} trades matching '{pattern}'")
+        for match in matches[:5]:  # Show first 5
+            self._log(f"   - {match.get('trade_id')}: entry={match.get('entry_time')}, exit={match.get('exit_time')}")
+        
+        return matches
     
     def _rate_limited_fetch_candles(self, instrument, timeframe, count, since=None):
         """Fetch candles with rate limiting"""
@@ -6715,33 +6774,79 @@ class SafeTPMonitoringManager:
         return True
     
     def _update_trade_in_csv_safe(self, trade_id, updates):
-        """Safely update specific fields for a trade in CSV"""
+        """Safely update specific fields for a trade in CSV - WITH DEBUG"""
         with self.csv_lock:
             fieldnames, rows = self._read_csv_safe()
             if not fieldnames:
+                self._log(f"❌ No fieldnames when updating {trade_id}", 'error')
                 return False
             
+            self._log(f"🔍 Looking for {trade_id} in {len(rows)} rows...")
+            
             updated = False
+            found = False
             for i, row in enumerate(rows):
                 if row.get('trade_id') == trade_id:
+                    found = True
+                    self._log(f"✅ Found {trade_id} at row {i}")
+                    
                     # Apply updates carefully
                     for key, new_value in updates.items():
                         if key in fieldnames:
                             current_value = row.get(key, '')
                             
-                            # Only update if current is empty and new is not empty
-                            if self._is_empty_value(current_value) and not self._is_empty_value(new_value):
+                            # Log what we're updating
+                            if current_value != new_value:
+                                self._log(f"📝 Updating {key}: '{current_value}' → '{new_value}'")
                                 rows[i][key] = str(new_value)
                                 updated = True
-                    
-                    # Always update heartbeat
-                    rows[i]['last_heartbeat'] = datetime.now().isoformat()
+                            else:
+                                self._log(f"⏭️ Skipping {key}: already '{current_value}'")
+                        
+                        # Always update heartbeat
+                        rows[i]['last_heartbeat'] = datetime.now().isoformat()
                     break
             
-            if updated:
-                return self._write_csv_safe(fieldnames, rows)
+            if not found:
+                self._log(f"❌ Trade {trade_id} not found in CSV!", 'error')
+                # Try to find by other means
+                for i, row in enumerate(rows):
+                    if trade_id in str(row):
+                        self._log(f"⚠️ Trade ID might be in other field: {row}")
             
+            if updated:
+                self._log(f"💾 Saving updates for {trade_id} to CSV...")
+                return self._write_csv_safe(fieldnames, rows, force_backup=True)
+            
+            self._log(f"⏭️ No updates needed for {trade_id}")
             return False
+
+    def verify_backfill_update(self, trade_id, expected_updates):
+        """Verify that backfill updates were applied correctly"""
+        fieldnames, rows = self._read_csv_safe()
+        
+        for row in rows:
+            if row.get('trade_id') == trade_id:
+                self._log(f"🔍 VERIFICATION for {trade_id}:")
+                
+                all_correct = True
+                for key, expected_value in expected_updates.items():
+                    actual_value = row.get(key, '')
+                    if str(actual_value) != str(expected_value):
+                        self._log(f"❌ Mismatch: {key} = '{actual_value}' (expected '{expected_value}')")
+                        all_correct = False
+                    else:
+                        self._log(f"✅ Match: {key} = '{actual_value}'")
+                
+                if all_correct:
+                    self._log(f"✅ All updates verified for {trade_id}")
+                else:
+                    self._log(f"❌ Some updates missing for {trade_id}")
+                
+                return all_correct
+        
+        self._log(f"❌ Trade {trade_id} not found for verification")
+        return False
     
     def _periodic_health_check(self):
         """Periodic health check for monitoring threads"""
