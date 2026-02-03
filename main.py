@@ -7965,6 +7965,242 @@ class SafeTPMonitoringManager:
         self.monitoring_start_times.clear()
         
         self._log("✅ All TP monitoring stopped")
+
+    def save_trade_to_csv(self, trade_data):
+        """Save trade data safely - APPEND only (no overwrite) - SUPER DEBUG VERSION"""
+        try:
+            # ============ CRITICAL DEBUG: CATCH THE ZEBRA BUG ============
+            trade_id = trade_data.get('trade_id', 'UNKNOWN')
+            criteria = trade_data.get('criteria', 'UNKNOWN')
+            instrument = trade_data.get('instrument', 'UNKNOWN')
+            
+            self.logger.info(f"🔍 CSV SAVE START | Trade: {trade_id} | Criteria: {criteria} | Instrument: {instrument}")
+            
+            # ============ PHASE 1: CHECK FOR NONE KEYS ============
+            self.logger.info(f"📊 Phase 1: Checking for None keys in trade_data...")
+            
+            none_keys = [k for k in trade_data.keys() if k is None]
+            if none_keys:
+                self.logger.error(f"🚨 BUG CONFIRMED: Found {len(none_keys)} None keys in trade_data!")
+                self.logger.error(f"🚨 None keys list: {none_keys}")
+                
+                # Check what values these None keys have
+                for k in none_keys:
+                    value = trade_data[k]
+                    self.logger.error(f"   - Key None has value: {value} (type: {type(value)})")
+                
+                # Where did these None keys come from? Let's trace...
+                if criteria == 'zebra':
+                    self.logger.error("🚨 THIS IS A ZEBRA TRADE - the bug only happens with zebra!")
+                    
+                    # Check if zebra features might be the culprit
+                    self.logger.info("🔍 Checking zebra-specific keys in trade_data:")
+                    zebra_keys = [k for k in trade_data.keys() if 'zebra' in str(k).lower()]
+                    self.logger.info(f"   Zebra-related keys: {zebra_keys}")
+                
+                # Remove None keys to fix the CSV error
+                self.logger.info("🛠️ Removing None keys from trade_data...")
+                for k in none_keys:
+                    removed_value = trade_data.pop(k)
+                    self.logger.info(f"   ✅ Removed None key, value was: {removed_value}")
+            
+            # ============ PHASE 2: CHECK FOR NONE IN HEADERS ============
+            self.logger.info(f"📊 Phase 2: Checking self.headers...")
+            
+            if not self.headers:
+                self.logger.critical("🚨 CRITICAL: self.headers is None or empty!")
+                return False
+            
+            none_in_headers = [i for i, h in enumerate(self.headers) if h is None]
+            if none_in_headers:
+                self.logger.error(f"🚨 Found None in self.headers at indices: {none_in_headers}")
+                self.logger.error(f"🚨 self.headers: {self.headers}")
+                
+                # Show context around each None
+                for idx in none_in_headers:
+                    start = max(0, idx - 3)
+                    end = min(len(self.headers), idx + 4)
+                    self.logger.error(f"   Context around index {idx}: {self.headers[start:end]}")
+                
+                # Filter out None
+                original_count = len(self.headers)
+                self.headers = [h for h in self.headers if h is not None]
+                self.logger.info(f"🛠️ Filtered headers: {original_count} → {len(self.headers)}")
+            
+            # ============ PHASE 3: CHECK FOR MISMATCHED KEYS ============
+            self.logger.info(f"📊 Phase 3: Checking key mismatches...")
+            
+            headers_set = set(self.headers)
+            trade_keys_set = set(trade_data.keys())
+            
+            # Keys in trade_data but not in headers
+            extra_keys = trade_keys_set - headers_set
+            if extra_keys:
+                self.logger.warning(f"⚠️ Trade data has {len(extra_keys)} keys not in CSV headers:")
+                for key in sorted(extra_keys):
+                    value = trade_data.get(key)
+                    self.logger.warning(f"   - '{key}' = {value} (type: {type(value)})")
+                    
+                    # Special check for zebra
+                    if criteria == 'zebra' and 'zebra' in str(key).lower():
+                        self.logger.error(f"🚨 ZEBRA BUG CLUE: Extra key '{key}' might be from zebra_features!")
+            
+            # Keys in headers but not in trade_data (will get empty values)
+            missing_keys = headers_set - trade_keys_set
+            if missing_keys:
+                self.logger.info(f"📝 {len(missing_keys)} headers will get empty values")
+                if len(missing_keys) < 10:  # Don't spam if there are many
+                    for key in sorted(missing_keys):
+                        self.logger.info(f"   - '{key}'")
+            
+            # ============ PHASE 4: LOG TRADE DATA STRUCTURE ============
+            if criteria == 'zebra':
+                self.logger.info(f"📊 Phase 4: Dumping zebra trade_data structure...")
+                
+                # Log all keys for zebra trades
+                all_keys = list(trade_data.keys())
+                self.logger.info(f"📋 Zebra trade_data has {len(all_keys)} keys total")
+                
+                # Group keys by category for easier debugging
+                fvg_keys = [k for k in all_keys if 'fvg' in k.lower()]
+                smt_keys = [k for k in all_keys if 'smt' in k.lower()]
+                crt_keys = [k for k in all_keys if 'crt' in k.lower()]
+                news_keys = [k for k in all_keys if 'news' in k.lower()]
+                tp_keys = [k for k in all_keys if 'tp_' in k]
+                feature_keys = [k for k in all_keys if k not in ['timestamp', 'signal_id', 'trade_id', 'instrument', 'criteria']]
+                
+                self.logger.info(f"   FVG keys ({len(fvg_keys)}): {fvg_keys}")
+                self.logger.info(f"   SMT keys ({len(smt_keys)}): {smt_keys}")
+                self.logger.info(f"   CRT keys ({len(crt_keys)}): {crt_keys}")
+                self.logger.info(f"   News keys ({len(news_keys)}): {news_keys}")
+                self.logger.info(f"   TP keys ({len(tp_keys)}): {tp_keys[:5]}...")  # Just first 5
+            
+            # ============ ORIGINAL SAVE LOGIC (with extra safety) ============
+            self.logger.info(f"💾 Saving trade {trade_id} to CSV...")
+            
+            # Create new row with all headers
+            new_row = {}
+            for header in self.headers:
+                try:
+                    new_row[header] = trade_data.get(header, '')
+                except Exception as e:
+                    self.logger.error(f"❌ Error getting value for header '{header}': {e}")
+                    new_row[header] = ''
+            
+            # Final safety check: ensure new_row has no None keys
+            final_none_keys = [k for k in new_row.keys() if k is None]
+            if final_none_keys:
+                self.logger.critical(f"🚨 EMERGENCY: new_row STILL has None keys: {final_none_keys}")
+                self.logger.critical("🛠️ Creating emergency clean row...")
+                new_row = {k: v for k, v in new_row.items() if k is not None}
+            
+            # Write to CSV
+            file_exists = os.path.exists(self.csv_file_path)
+            
+            with open(self.csv_file_path, 'a', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=self.headers)
+                
+                if not file_exists:
+                    writer.writeheader()
+                    self.logger.info(f"📝 Created new CSV file with headers")
+                
+                # Log sample of what we're writing
+                sample_keys = ['instrument', 'entry_price', 'sl_price', 'criteria', 'signal_latency_seconds']
+                sample_data = {k: new_row.get(k, 'N/A') for k in sample_keys}
+                self.logger.info(f"📝 Writing row sample: {sample_data}")
+                
+                writer.writerow(new_row)
+            
+            self.logger.info(f"✅ SUCCESS: Saved trade {trade_id} to CSV")
+            
+            # ============ POST-SAVE VERIFICATION ============
+            try:
+                with open(self.csv_file_path, 'r', encoding='utf-8') as f:
+                    line_count = sum(1 for _ in f)
+                self.logger.info(f"📊 CSV now has {line_count} total lines")
+                
+                # Read last line to verify
+                if line_count > 1:
+                    with open(self.csv_file_path, 'r', encoding='utf-8') as f:
+                        lines = f.readlines()
+                        last_line = lines[-1].strip()
+                        self.logger.info(f"📝 Last CSV line: {last_line[:100]}..." if len(last_line) > 100 else last_line)
+            except Exception as e:
+                self.logger.warning(f"⚠️ Couldn't verify CSV write: {e}")
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"❌ CRITICAL ERROR saving to CSV: {str(e)}", exc_info=True)
+            
+            # ============ EMERGENCY ERROR LOGGING ============
+            try:
+                timestamp = int(time.time())
+                error_log_path = f"{self.csv_file_path}.zebra_error_{timestamp}.log"
+                
+                self.logger.info(f"🆘 Creating emergency error log: {error_log_path}")
+                
+                with open(error_log_path, 'w', encoding='utf-8') as f:
+                    f.write(f"=== ZEBRA CSV SAVE ERROR LOG ===\n")
+                    f.write(f"Time: {datetime.now()}\n")
+                    f.write(f"Trade ID: {trade_id}\n")
+                    f.write(f"Criteria: {criteria}\n")
+                    f.write(f"Instrument: {instrument}\n")
+                    f.write(f"Error: {str(e)}\n\n")
+                    
+                    f.write("=== TRADE DATA KEYS ===\n")
+                    for key in sorted(trade_data.keys()):
+                        value = trade_data.get(key)
+                        f.write(f"{key}: {value} (type: {type(value)})\n")
+                    f.write("\n")
+                    
+                    f.write("=== HEADERS ===\n")
+                    f.write(f"Count: {len(self.headers) if self.headers else 0}\n")
+                    f.write(f"Headers: {self.headers}\n\n")
+                    
+                    f.write("=== TRACE FOR NONE KEYS ===\n")
+                    if 'criteria' in trade_data and trade_data['criteria'] == 'zebra':
+                        f.write("THIS IS A ZEBRA TRADE - check zebra_features() function!\n")
+                    
+                    # Check feature function returns
+                    f.write("\n=== FEATURE FUNCTION CHECK ===\n")
+                    f.write("Check these functions in _process_and_record_hammer:\n")
+                    f.write("1. calculate_advanced_features()\n")
+                    f.write("2. calculate_higher_tf_features()\n")
+                    f.write("3. calculate_zebra_features()  <-- MOST LIKELY CULPRIT FOR ZEBRA!\n")
+                    f.write("4. _get_safe_news_data()\n")
+                
+                self.logger.info(f"📦 Emergency log saved to: {error_log_path}")
+                
+            except Exception as log_err:
+                self.logger.error(f"❌ Failed to save error log: {log_err}")
+            
+            # Try to save anyway with stripped data
+            try:
+                backup_path = f"{self.csv_file_path}.backup_{timestamp}.csv"
+                self.logger.info(f"🆘 Attempting emergency backup to {backup_path}")
+                
+                # Create a clean version of trade_data
+                clean_data = {k: v for k, v in trade_data.items() if k is not None}
+                
+                with open(backup_path, 'w', newline='', encoding='utf-8') as f:
+                    if self.headers:
+                        clean_headers = [h for h in self.headers if h is not None]
+                        writer = csv.DictWriter(f, fieldnames=clean_headers)
+                        writer.writeheader()
+                        
+                        row = {}
+                        for header in clean_headers:
+                            row[header] = clean_data.get(header, '')
+                        
+                        writer.writerow(row)
+                
+                self.logger.info(f"📦 Emergency backup saved to: {backup_path}")
+                
+            except Exception as backup_err:
+                self.logger.error(f"❌ Emergency backup failed: {backup_err}")
+            
+            return False
     
     def _get_trade_row_from_csv(self, trade_id):
         """Helper to get a specific trade row from CSV"""
