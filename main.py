@@ -5736,6 +5736,10 @@ class SafeTPMonitoringManager:
             logger.addHandler(handler)
             logger.setLevel(logging.INFO)
         return logger
+
+    def start_monitoring(self, trade_data):
+        """Alias for start_live_monitoring (for compatibility)"""
+        return self.start_live_monitoring(trade_data)
     
     def _log(self, message: str, level: str = 'info'):
         """Log message with appropriate level"""
