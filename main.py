@@ -7330,7 +7330,7 @@ class SafeTPMonitoringManager:
                     # If SL was hit on entry candle, record loss and exit immediately
                     if sl_hit_on_entry:
                         # Update trade_data with SL result
-                        time_seconds = (start_time - start_time).total_seconds()  # 0 seconds
+                        time_seconds = 0  # 0 seconds
                         
                         # Set all TPs to -1
                         for i in range(1, 11):
@@ -7355,11 +7355,17 @@ class SafeTPMonitoringManager:
                             updates[f'tp_1_{i}_result'] = '-1'
                             updates[f'tp_1_{i}_time_seconds'] = '0'
                         
-                        # Update CSV
+                        # Update CSV using the CORRECT method name
                         self._update_trade_in_csv_safe(trade_id, updates)
                         
                         self._log(f"🛑 SL HIT ON ENTRY CANDLE for trade {trade_id} at {start_time}")
-                        self._cleanup_trade_monitoring(trade_id, 'completed')
+                        
+                        # Cleanup using the CORRECT method name from SafeTPMonitoringManager
+                        if hasattr(self, '_cleanup_trade_monitoring'):
+                            self._cleanup_trade_monitoring(trade_id, 'completed')
+                        elif hasattr(self, 'cleanup_trade_monitoring'):
+                            self.cleanup_trade_monitoring(trade_id, 'completed')
+                        
                         return  # Stop monitoring - trade is already closed at loss
             
             # ============================================================================
@@ -7449,10 +7455,7 @@ class SafeTPMonitoringManager:
                     # Add BE outcomes
                     for tp_level in hit_tps:
                         if be_tracking[tp_level]['state'] == 'tracking':
-                            if be_tracking[tp_level]['be_triggered']:
-                                updates[f'if_BE_TP{tp_level}'] = 'hit'
-                            else:
-                                updates[f'if_BE_TP{tp_level}'] = 'miss'
+                            updates[f'if_BE_TP{tp_level}'] = 'hit'
                     
                     # Update CSV
                     self._update_trade_in_csv_safe(trade_id, updates)
@@ -7638,14 +7641,21 @@ class SafeTPMonitoringManager:
                 self._log(f"   BE Results: {', '.join(be_results)}")
             
             # Cleanup
-            self._cleanup_trade_monitoring(trade_id, 'completed')
+            if hasattr(self, '_cleanup_trade_monitoring'):
+                self._cleanup_trade_monitoring(trade_id, 'completed')
+            elif hasattr(self, 'cleanup_trade_monitoring'):
+                self.cleanup_trade_monitoring(trade_id, 'completed')
             
         except Exception as e:
             self._log(f"❌ Error in TP monitoring for {trade_id}: {str(e)}", 'error')
             import traceback
             self._log(f"❌ Traceback: {traceback.format_exc()}", 'error')
             self._update_trade_in_csv_safe(trade_id, {'monitoring_status': 'failed'})
-            self._cleanup_trade_monitoring(trade_id, 'failed')
+            
+            if hasattr(self, '_cleanup_trade_monitoring'):
+                self._cleanup_trade_monitoring(trade_id, 'failed')
+            elif hasattr(self, 'cleanup_trade_monitoring'):
+                self.cleanup_trade_monitoring(trade_id, 'failed')
     def _monitor_trade_live(self, trade_data):
         """Live monitoring thread - FIXED with OLD VERSION LOGIC"""
         trade_id = trade_data['trade_id']
