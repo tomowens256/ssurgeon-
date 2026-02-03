@@ -7851,20 +7851,59 @@ class SafeTPMonitoringManager:
                 return False
         return True
     
-    def _update_trade_in_csv_safe(self, trade_id, trade_data):
-        """Update trade in CSV with FULL trade_data - FIXED for OLD LOGIC"""
-        # Extract updates from trade_data (everything except basic fields)
-        updates = {}
-        
-        # Get the fields we should update (all except metadata)
-        exclude_fields = ['timestamp', 'signal_id', 'trade_id', 'instrument', 'entry_time']
-        
-        for key, value in trade_data.items():
-            if key not in exclude_fields and not key.startswith('_'):
-                updates[key] = value
-        
-        # Call the existing update method
-        return self.update_trade_in_csv(trade_id, updates)
+    def _update_trade_in_csv_safe(self, trade_id, updates):
+        """Simple, safe CSV update - uses old logic with thread safety"""
+        with self.csv_lock:  # Add thread safety
+            try:
+                if not os.path.exists(self.csv_file_path):
+                    self._log(f"❌ CSV file not found: {self.csv_file_path}", 'error')
+                    return False
+                
+                # Read all data
+                rows = []
+                with open(self.csv_file_path, 'r', newline='', encoding='utf-8') as f:
+                    reader = csv.DictReader(f)
+                    fieldnames = reader.fieldnames
+                    if not fieldnames:
+                        self._log(f"❌ No headers in CSV", 'error')
+                        return False
+                    rows = list(reader)
+                
+                # Find and update the trade
+                updated = False
+                for i, row in enumerate(rows):
+                    if row.get('trade_id') == trade_id:
+                        # Update the row with new data
+                        for key, value in updates.items():
+                            if key in fieldnames:
+                                rows[i][key] = str(value)
+                        updated = True
+                        break
+                
+                if updated:
+                    # Write back to CSV
+                    with open(self.csv_file_path, 'w', newline='', encoding='utf-8') as f:
+                        writer = csv.DictWriter(f, fieldnames=fieldnames)
+                        writer.writeheader()
+                        writer.writerows(rows)
+                    
+                    self._log(f"💾 Updated trade {trade_id} in CSV with {len(updates)} fields")
+                    return True
+                else:
+                    self._log(f"❌ Trade {trade_id} not found in CSV", 'warning')
+                    return False
+                    
+            except Exception as e:
+                self._log(f"❌ Error updating CSV for {trade_id}: {str(e)}", 'error')
+                # Create emergency backup
+                try:
+                    backup_path = f"{self.csv_file_path}.error_backup_{int(time.time())}"
+                    import shutil
+                    # shutil.copy2(self.csv_file_path, backup_path)
+                    # self._log(f"📂 Created error backup: {backup_path}")
+                except:
+                    pass
+                return False
 
     def verify_backfill_update(self, trade_id, expected_updates):
         """Verify that backfill updates were applied correctly"""
