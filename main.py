@@ -6460,7 +6460,7 @@ class SafeTPMonitoringManager:
             self._log(f"❌ Error processing trade {trade_id}: {e}", 'error')
     
     def _trade_needs_processing(self, row):
-        """Check if a trade needs TP/SL results or monitoring"""
+        """Check if a trade needs TP/SL results or monitoring - IMPROVED with orphan detection"""
         # Check if trade already has exit results
         exit_time = row.get('exit_time', '')
         if not self._is_empty_value(exit_time):
@@ -6471,19 +6471,248 @@ class SafeTPMonitoringManager:
         if monitoring_status == 'completed':
             return False
         
-        # Check if all TP results are filled
-        all_tps_filled = True
+        # Check if trade is an orphan (missing TP results)
+        return self._is_orphan_row(row)
+    
+    def _is_orphan_row(self, row):
+        """Check if a trade row is orphaned (missing TP/SL results)"""
+        # Skip if we don't have essential info
+        if self._is_empty_value(row.get('entry_price')) or self._is_empty_value(row.get('sl_price')):
+            return False
+        
+        # List of fields that should be filled for a completed trade
+        orphan_fields = [
+            'tp_1_1_result', 'tp_1_1_time_seconds',
+            'tp_1_2_result', 'tp_1_2_time_seconds',
+            'tp_1_3_result', 'tp_1_3_time_seconds',
+            'tp_1_4_result', 'tp_1_4_time_seconds',
+            'tp_1_5_result', 'tp_1_5_time_seconds',
+            'tp_1_6_result', 'tp_1_6_time_seconds',
+            'tp_1_7_result', 'tp_1_7_time_seconds',
+            'tp_1_8_result', 'tp_1_8_time_seconds',
+            'tp_1_9_result', 'tp_1_9_time_seconds',
+            'tp_1_10_result', 'tp_1_10_time_seconds',
+            'open_tp_result', 'open_tp_time_seconds'
+        ]
+        
+        # Check if any of these fields are empty
+        for field in orphan_fields:
+            val = row.get(field, '')
+            if self._is_empty_value(val) or val == '0':
+                return True
+        
+        return False
+    
+    def get_orphan_trades(self, limit=10):
+        """Get list of orphan trades that need processing"""
+        fieldnames, rows = self._read_csv_safe()
+        orphans = []
+        
+        for row in rows:
+            if self._is_orphan_row(row):
+                trade_id = row.get('trade_id', '')
+                if trade_id:
+                    orphans.append((row.get('entry_time', ''), trade_id, row))
+        
+        # Sort by entry_time descending (newest first)
+        orphans.sort(key=lambda x: x[0], reverse=True)
+        
+        # Return limited number
+        limited_orphans = orphans[:limit]
+        
+        self._log(f"🧩 Found {len(orphans)} orphan trades, processing {len(limited_orphans)}")
+        
+        # Return just the trade_data dictionaries
+        return [trade_data for _, _, trade_data in limited_orphans]
+    
+    def get_resume_point_for_trade(self, trade_data):
+        """Determine where to resume monitoring for an orphan trade"""
+        # Check which TPs have been hit
+        hit_tps = []
+        
         for i in range(1, 11):
-            tp_result = row.get(f'tp_1_{i}_result', '')
-            if self._is_empty_value(tp_result):
-                all_tps_filled = False
-                break
+            result = trade_data.get(f'tp_1_{i}_result', '')
+            if result and result.startswith('+'):  # +1, +2, etc.
+                hit_tps.append(i)
         
-        if all_tps_filled:
-            return False  # All TPs already filled
+        if hit_tps:
+            # Find the highest TP hit
+            highest_tp = max(hit_tps)
+            self._log(f"📊 Trade {trade_data.get('trade_id')}: TP{highest_tp} was hit")
+            
+            # Resume from the TP after the highest one hit
+            resume_from_tp = highest_tp + 1
+            
+            if resume_from_tp <= 10:
+                self._log(f"🔄 Will resume monitoring from TP{resume_from_tp}")
+                return {
+                    'type': 'resume_from_tp',
+                    'tp_level': resume_from_tp,
+                    'hit_tps': hit_tps
+                }
+            else:
+                self._log(f"✅ All TPs hit, checking open TP")
+                # Check open TP
+                open_tp_result = trade_data.get('open_tp_result', '')
+                if self._is_empty_value(open_tp_result):
+                    return {
+                        'type': 'resume_open_tp',
+                        'hit_tps': hit_tps
+                    }
+                else:
+                    self._log(f"✅ Trade already completed (all TPs and open TP hit)")
+                    return None
+        else:
+            # No TP hit yet, resume from TP1
+            self._log(f"🔄 No TP hit yet, will resume from TP1")
+            return {
+                'type': 'resume_from_tp',
+                'tp_level': 1,
+                'hit_tps': []
+            }
+    
+    def _safe_orphan_reconciliation(self):
+        """New reconciliation: Process orphan trades with resume logic"""
+        self._log("🧩 Starting ORPHAN trade reconciliation...")
+        time.sleep(5)
         
-        # Trade needs processing
-        return True
+        # Step 1: Get orphan trades
+        orphans = self.get_orphan_trades(limit=5)
+        
+        if not orphans:
+            self._log("✅ No orphan trades found")
+            return
+        
+        self._log(f"🔄 Processing {len(orphans)} orphan trades...")
+        
+        for idx, trade_data in enumerate(orphans, 1):
+            trade_id = trade_data.get('trade_id', 'Unknown')
+            instrument = trade_data.get('instrument', '')
+            
+            self._log(f"--- Orphan Trade {idx}/{len(orphans)}: {trade_id} ---")
+            
+            try:
+                # Get the latest data from CSV
+                current_row = self._get_trade_row_from_csv(trade_id)
+                if not current_row:
+                    self._log(f"⚠️ Could not reload {trade_id} from CSV, skipping")
+                    continue
+                
+                fresh_trade_data = self._row_to_trade_data(current_row)
+                entry_time = self._parse_datetime(fresh_trade_data.get('entry_time'))
+                
+                if not entry_time:
+                    self._log(f"⚠️ Invalid entry time for {trade_id}, skipping")
+                    continue
+                
+                # Determine if we should backfill or resume live monitoring
+                hours_since_entry = (self._now_ny() - entry_time).total_seconds() / 3600
+                
+                if hours_since_entry > 2:
+                    # Old orphan - try to backfill from history
+                    self._log(f"🕰️ Backfilling old orphan trade ({hours_since_entry:.1f}h)...")
+                    
+                    # Determine resume point
+                    resume_info = self.get_resume_point_for_trade(fresh_trade_data)
+                    
+                    if resume_info:
+                        self._log(f"📊 Resume info: {resume_info}")
+                        
+                        # Special backfill that starts from the resume point
+                        completed = self._backfill_trade_from_history_resume(fresh_trade_data, resume_info)
+                        
+                        if completed:
+                            self._log(f"✅ Orphan backfill completed for {trade_id}")
+                        else:
+                            self._log(f"⏸️ Orphan {trade_id} still open after backfill")
+                    else:
+                        # Already completed, just update status
+                        self._update_trade_in_csv_safe(trade_id, {
+                            'monitoring_status': 'completed',
+                            'last_heartbeat': self._now_ny().isoformat()
+                        })
+                        self._log(f"✅ Orphan {trade_id} already completed, updating status")
+                    
+                else:
+                    # Recent orphan - resume live monitoring
+                    self._log(f"📡 Resuming live monitoring for recent orphan ({hours_since_entry:.1f}h)...")
+                    
+                    # Determine resume point
+                    resume_info = self.get_resume_point_for_trade(fresh_trade_data)
+                    
+                    if resume_info:
+                        self._log(f"📊 Resume info: {resume_info}")
+                        
+                        # Start monitoring with resume info
+                        self.start_live_monitoring_with_resume(fresh_trade_data, resume_info)
+                    else:
+                        # Already completed
+                        self._update_trade_in_csv_safe(trade_id, {
+                            'monitoring_status': 'completed',
+                            'last_heartbeat': self._now_ny().isoformat()
+                        })
+                        self._log(f"✅ Orphan {trade_id} already completed")
+                
+            except Exception as e:
+                self._log(f"❌ Error processing orphan {trade_id}: {e}", 'error')
+            
+            # Wait between orphans
+            wait_seconds = 10
+            self._log(f"⏳ Waiting {wait_seconds}s before next orphan...")
+            time.sleep(wait_seconds)
+        
+        self._log("✅ Orphan reconciliation complete")
+    
+    def start_live_monitoring_with_resume(self, trade_data, resume_info):
+        """Start live monitoring from a specific resume point"""
+        trade_id = trade_data['trade_id']
+        
+        # Don't start if already completed
+        if not self._is_orphan_row(trade_data):
+            self._log(f"⏭️ Trade {trade_id} not an orphan, skipping")
+            return
+        
+        # Check if already being monitored
+        if trade_id in self.active_threads:
+            thread = self.active_threads[trade_id]
+            if thread.is_alive():
+                self._log(f"⏭️ Trade {trade_id} already being monitored")
+                return
+        
+        try:
+            thread = threading.Thread(
+                target=self._monitor_trade_live_with_resume,
+                args=(trade_data, resume_info),
+                name=f"TPMonitor_Resume_{trade_id}",
+                daemon=True
+            )
+            
+            self.active_threads[trade_id] = thread
+            self.monitoring_start_times[trade_id] = self._now_ny()
+            self.heartbeat_times[trade_id] = self._now_ny()
+            
+            # Initialize thread state with resume info
+            self.thread_states[trade_id] = {
+                'status': 'resumed',
+                'hit_tps': set(resume_info.get('hit_tps', [])),
+                'last_checked': self._now_ny(),
+                'be_tracking': {i: {'state': 'waiting', 'be_triggered': False, 'outcome': 'none'} for i in range(1, 11)},
+                'resume_from_tp': resume_info.get('tp_level', 1) if resume_info.get('type') == 'resume_from_tp' else None
+            }
+            
+            thread.start()
+            
+            # Update CSV status
+            self._update_trade_in_csv_safe(trade_id, {
+                'monitoring_status': 'resumed',
+                'last_heartbeat': self._now_ny().isoformat(),
+                'reconciliation_attempts': str(int(trade_data.get('reconciliation_attempts', 0)) + 1)
+            })
+            
+            self._log(f"📡 Resumed monitoring for {trade_id} from {resume_info}")
+            
+        except Exception as e:
+            self._log(f"❌ Failed to resume monitoring for {trade_id}: {e}", 'error')
     
     def _row_to_trade_data(self, row):
         """Convert CSV row to trade_data dictionary with proper types"""
