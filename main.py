@@ -5902,6 +5902,8 @@ class SafeTPMonitoringManager:
     
     def _read_csv_safe(self):
         """Read CSV using csv module (NOT pandas) - preserves exact data"""
+        import csv
+        csv.field_size_limit(10000000000)  # Increase field size limit 
         try:
             if not os.path.exists(self.csv_path):
                 return [], []
