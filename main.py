@@ -7220,7 +7220,7 @@ class SafeTPMonitoringManager:
         except Exception as e:
             self._log(f"❌ Failed to start live monitoring for {trade_id}: {e}", 'error')
 
-   def _monitor_trade_live_fixed(self, trade_data):
+    def _monitor_trade_live_fixed(self, trade_data):
         """Monitor trade with OLD VERSION LOGIC - PROVEN AND WORKING"""
         trade_id = trade_data.get('trade_id', 'UNKNOWN')
         
