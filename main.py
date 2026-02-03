@@ -6618,39 +6618,31 @@ class SafeTPMonitoringManager:
             # Prepare updates for CSV
             updates = {}
             
+            # In the SL hit section of _backfill_trade_from_history:
             if sl_hit:
-                # SL was hit
-                updates['tp_level_hit'] = '-1'
+                # SL was hit - CRITICAL: Check if any TP was hit already
+                tp_was_hit = False
+                for i in range(1, 11):
+                    result = trade_data.get(f'tp_1_{i}_result', '')
+                    if result and result.startswith('+'):  # +1, +2, etc.
+                        tp_was_hit = True
+                        break
+                
+                # Prepare updates
+                updates = {}
+                
+                # Only set tp_level_hit to -1 if NO TP was hit
+                if not tp_was_hit:
+                    updates['tp_level_hit'] = '-1'
+                
                 if exit_time:
                     updates['exit_time'] = exit_time.strftime('%Y-%m-%d %H:%M:%S')
                 
-                # Set all TPs to -1
+                # Set all TPs to -1 (that aren't already filled)
                 for i in range(1, 11):
-                    updates[f'tp_1_{i}_result'] = '-1'
-                
-                # Calculate time to exit - FIX TIMEZONE ISSUE
-                if exit_time:
-                    # Both datetimes should be timezone-aware
-                    time_to_exit = (exit_time - entry_time).total_seconds()
-                    updates['time_to_exit_seconds'] = int(time_to_exit)
-                
-                self._update_trade_in_csv_safe(trade_id, updates)
-                time.sleep(0.1)
-                self.verify_backfill_update(trade_id, updates)
-                return True
-                
-            elif hit_tps:
-                # Some TPs were hit
-                updates['tp_level_hit'] = str(highest_tp_hit)
-                if exit_time:
-                    updates['exit_time'] = exit_time.strftime('%Y-%m-%d %H:%M:%S')
-                
-                # Record TP hits
-                for i in range(1, 11):
-                    if i in hit_tps:
-                        updates[f'tp_1_{i}_result'] = f'+{i}'
-                    else:
+                    if trade_data.get(f'tp_1_{i}_result') == '':
                         updates[f'tp_1_{i}_result'] = '-1'
+                        updates[f'tp_1_{i}_time_seconds'] = '0'
                 
                 # Calculate time to exit
                 if exit_time:
@@ -6658,7 +6650,7 @@ class SafeTPMonitoringManager:
                     updates['time_to_exit_seconds'] = int(time_to_exit)
                 
                 self._update_trade_in_csv_safe(trade_id, updates)
-                time.sleep(0.1)  # Small delay for write to complete
+                time.sleep(0.1)
                 self.verify_backfill_update(trade_id, updates)
                 return True
                 
