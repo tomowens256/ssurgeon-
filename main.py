@@ -6990,23 +6990,52 @@ class SafeTPMonitoringManager:
             self._cleanup_trade_monitoring(trade_id, 'failed')
     
     def _record_sl_hit_updates(self, trade_data, hit_time, hit_tps, be_tracking):
-        """Create updates dictionary for SL hit"""
+        """Create updates dictionary for SL hit - FIXED: Only set tp_level_hit=-1 if NO TP was hit"""
         updates = {}
+        
+        # CRITICAL FIX: First check if ANY TP was hit
+        tp_was_hit = False
+        for i in range(1, 11):
+            result = trade_data.get(f'tp_1_{i}_result', '')
+            if result and result.startswith('+'):  # +1, +2, etc.
+                tp_was_hit = True
+                break
         
         # Record -1 for all TPs not hit
         for i in range(1, 11):
             if trade_data.get(f'tp_1_{i}_result') == '':
                 updates[f'tp_1_{i}_result'] = '-1'
+                # Also set time_seconds to 0 for consistency
+                if trade_data.get(f'tp_1_{i}_time_seconds') == '':
+                    updates[f'tp_1_{i}_time_seconds'] = '0'
         
-        # Set highest TP to -1
-        updates['tp_level_hit'] = '-1'
-        updates['exit_time'] = hit_time.strftime('%Y-%m-%d %H:%M:%S')
-        
-        # Calculate time to exit - FIX TIMEZONE
-        entry_time = self._parse_datetime(trade_data['entry_time'])
-        if entry_time:
-            time_to_exit = (hit_time - entry_time).total_seconds()
-            updates['time_to_exit_seconds'] = str(int(time_to_exit))
+        # Only set highest TP to -1 if NO TP was hit at all
+        if not tp_was_hit:
+            updates['tp_level_hit'] = '-1'
+        else:
+            # If TP was hit, don't change tp_level_hit - keep the highest TP that was hit
+            # Find the current highest TP hit
+            current_highest = 0
+            for i in range(1, 11):
+                result = trade_data.get(f'tp_1_{i}_result', '')
+                if result and result.startswith('+'):
+                    try:
+                        tp_num = int(result.replace('+', ''))
+                        if tp_num > current_highest:
+                            current_highest = tp_num
+                    except:
+                        pass
+            
+            # Update exit time if not already set
+            if trade_data.get('exit_time') == '':
+                updates['exit_time'] = hit_time.strftime('%Y-%m-%d %H:%M:%S')
+                
+                # Calculate time to exit if not set
+                if trade_data.get('time_to_exit_seconds') == '':
+                    entry_time = self._parse_datetime(trade_data['entry_time'])
+                    if entry_time:
+                        time_to_exit = (hit_time - entry_time).total_seconds()
+                        updates['time_to_exit_seconds'] = str(int(time_to_exit))
         
         # Update BE outcomes
         for tp_level in hit_tps:
