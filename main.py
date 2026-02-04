@@ -6442,6 +6442,28 @@ class SafeTPMonitoringManager:
             rows.append(row)
         
         return headers, rows
+
+    def _update_be_tracking(self, trade_data, hit_tps, be_tracking, current_price, tp_prices):
+        """
+        REBUILT DNA: Only detects entry touches for BANKED TPs.
+        Does NOT write to CSV; just updates the local state for our monitoring loop.
+        """
+        direction = trade_data.get('direction', '').lower()
+        entry_price = float(trade_data.get('entry_price', 0))
+    
+        # We only care about TPs that have been hit already (The Domino Rule)
+        for i in hit_tps:
+            if i in be_tracking and not be_tracking[i].get('be_triggered'):
+                # Detect entry touch (Break-Even Event)
+                is_touch = False
+                if direction == 'bullish' and current_price <= entry_price:
+                    is_touch = True
+                elif direction == 'bearish' and current_price >= entry_price:
+                    is_touch = True
+                    
+                if is_touch:
+                    be_tracking[i]['be_triggered'] = True
+                    self.logger.info(f"🛡️ BE Triggered: Price touched entry for TP{i}")
     
     def _write_csv_safe(self, fieldnames, rows, backup_reason="update"):
         """ULTRA-SAFE CSV writing - NEVER loses data - FIXED VERSION"""
