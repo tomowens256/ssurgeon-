@@ -8148,67 +8148,54 @@ class SafeTPMonitoringManager:
         return True
     
     def _update_trade_in_csv_safe(self, trade_id, updates, max_retries=3):
-        """Simple, safe CSV update - with retry logic"""
-        if existing_row.get('trade_closed') == '1':
-            
-            return True
-
+        """Simple, safe CSV update with hard SL finalization lock"""
         for attempt in range(max_retries):
             with self.csv_lock:
                 try:
                     if not os.path.exists(self.csv_path):
-                        if attempt < max_retries - 1:
-                            time.sleep(0.1)  # Wait and retry
-                            continue
-                        self._log(f"❌ CSV file not found: {self.csv_path}", 'error')
-                        return False
-                    
-                    # Read all data
-                    rows = []
+                        time.sleep(0.1)
+                        continue
+    
+                    # READ CSV FIRST (this was missing)
                     with open(self.csv_path, 'r', newline='', encoding='utf-8') as f:
                         reader = csv.DictReader(f)
                         fieldnames = reader.fieldnames
-                        if not fieldnames:
-                            if attempt < max_retries - 1:
-                                time.sleep(0.1)
-                                continue
-                            self._log(f"❌ No headers in CSV", 'error')
-                            return False
                         rows = list(reader)
-                    
-                    # Find and update the trade
-                    updated = False
+    
+                    if not fieldnames:
+                        time.sleep(0.1)
+                        continue
+    
+                    # FIND ROW + HARD GUARD
                     for i, row in enumerate(rows):
                         if row.get('trade_id') == trade_id:
-                            # Update the row with new data
+    
+                            # 🔒 DO NOT TOUCH CLOSED TRADES
+                            if row.get('trade_closed') == '1':
+                                return True
+    
+                            # APPLY UPDATES
                             for key, value in updates.items():
                                 if key in fieldnames:
                                     rows[i][key] = str(value)
-                            updated = True
                             break
-                    
-                    if updated:
-                        # Write back to CSV
-                        with open(self.csv_path, 'w', newline='', encoding='utf-8') as f:
-                            writer = csv.DictWriter(f, fieldnames=fieldnames)
-                            writer.writeheader()
-                            writer.writerows(rows)
-                        
-                        self._log(f"💾 Updated trade {trade_id} in CSV with {len(updates)} fields")
-                        return True
                     else:
-                        if attempt < max_retries - 1:
-                            time.sleep(0.1)  # Wait and retry
-                            continue
-                        self._log(f"❌ Trade {trade_id} not found in CSV after {max_retries} attempts", 'warning')
-                        return False
-                        
-                except Exception as e:
-                    if attempt < max_retries - 1:
                         time.sleep(0.1)
                         continue
-                    self._log(f"❌ Error updating CSV for {trade_id}: {str(e)}", 'error')
-                    return False
+    
+                    # WRITE BACK
+                    with open(self.csv_path, 'w', newline='', encoding='utf-8') as f:
+                        writer = csv.DictWriter(f, fieldnames=fieldnames)
+                        writer.writeheader()
+                        writer.writerows(rows)
+    
+                    self._log(f"💾 Updated trade {trade_id} ({len(updates)} fields)")
+                    return True
+    
+                except Exception as e:
+                    time.sleep(0.1)
+    
+        self._log(f"❌ Failed CSV update for {trade_id}", 'error')
         return False
 
     def verify_backfill_update(self, trade_id, expected_updates):
