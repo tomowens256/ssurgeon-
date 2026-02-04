@@ -6371,27 +6371,33 @@ class SafeTPMonitoringManager:
                     
                 self._log(f"📊 TP{tp_num} hit: value={result_value}, highest={updates.get('tp_level_hit', 'unchanged')}")
             ##hftr    
+            ##hftr    
             elif tp_type == 'SL':
-                # 1. Identify what was already hit
+                # STEP 1: Identify what was actually banked (+ value)
                 reached_tps = []
                 for i in range(1, 11):
-                    val = str(csv_row.get(f'tp_1_{i}_result', ''))
-                    if val.startswith('+'):
+                    result = csv_row.get(f'tp_1_{i}_result', '')
+                    if result and result.startswith('+'):
                         reached_tps.append(i)
             
-                # 2. FORCE FILL all others with -1 (The Fix)
+                # STEP 2: FORCE FILL all missing columns and handle BE Hit/Miss logic
                 for i in range(1, 11):
                     if i not in reached_tps:
-                        updates[f'tp_1_{i}_result'] = "-1"
+                        updates[f'tp_1_{i}_result'] = "-1"  # Fix: No more empty columns!
                         updates[f'tp_1_{i}_time_seconds'] = "0"
-                        # Ensure BE outcome for these is 'none' or 'hit' if it prevented the loss
-                        if i-1 in reached_tps:
-                            updates[f'if_BE_TP{i-1}'] = "hit" # BE saved us from this SL!
+                        
+                        # BE Logic: If price hit entry BEFORE this SL hit, it's a HIT (Saved us!)
+                        # If price hit SL without ever touching entry, it's 'none' or 'miss'
+                        if i in be_tracking and be_tracking[i].get('triggered'):
+                            updates[f'if_BE_TP{i}'] = "hit" 
+                        else:
+                            updates[f'if_BE_TP{i}'] = "none"
             
-                # 3. Finalize TP Level
+                # STEP 3: Finalize status
                 updates['tp_level_hit'] = str(max(reached_tps)) if reached_tps else "-1"
                 updates['exit_time'] = hit_time.strftime('%Y-%m-%d %H:%M:%S')
                 updates['monitoring_status'] = 'completed'
+                updates['trade_closed'] = '1' # Lock the row
 
             
             # Apply updates to CSV
