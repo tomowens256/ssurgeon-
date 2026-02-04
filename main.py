@@ -6269,26 +6269,24 @@ class SafeTPMonitoringManager:
                         self._update_be_tracking(trade_data, hit_tps, be_tracking, current_close, tp_prices)
 
                         # --- LIVE LOOP BE TRACKING ---
-                        for tp_idx, data in be_tracking.items():
-                            if not data['triggered']:
-                                # Check if price returned to entry price
-                                if (direction == 'bullish' and current_low <= entry_price) or \
-                                   (direction == 'bearish' and current_high >= entry_price):
-                                    data['triggered'] = True
-                                    self.logger.info(f"🛡️ BE Triggered for TP{tp_idx} - Monitoring for Fakeout...")
+                        for i, data in be_tracking.items():
+                            # Only monitor BE for TPs that have already been hit (The Domino Rule)
+                            if i in hit_tps: 
+                                if not data['be_triggered']:
+                                    # Now check if price returned to entry price
+                                    if (direction == 'bullish' and current_low <= entry_price) or \
+                                       (direction == 'bearish' and current_high >= entry_price):
+                                        data['be_triggered'] = True
+                                        self.logger.info(f"🛡️ BE Triggered for TP{i} on {trade_id}")
                         
-                            # Now check the outcome based on your NEW rules:
-                            next_tp_idx = tp_idx + 1
-                            next_tp_hit = (next_tp_idx in hit_tps) # Check if the next domino fell
-                            
-                            # CASE: Hit Next TP
-                            if next_tp_hit:
-                                if data['triggered']:
-                                    # Hit entry THEN hit TP = MISS (we were taken out at 0)
-                                    updates[f'if_BE_TP{tp_idx}'] = "miss"
-                                else:
-                                    # Hit TP without ever touching entry = HIT (Perfect trade)
-                                    updates[f'if_BE_TP{tp_idx}'] = "hit"
+                                # --- OUTCOME DETERMINATION ---
+                                # Rule: If we hit NEXT TP after a BE trigger, it's a 'miss'
+                                if (i + 1) in hit_tps:
+                                    updates[f'if_BE_TP{i}'] = "miss" if data['be_triggered'] else "hit"
+                                
+                                # Rule: If we hit SL after a BE trigger, it's a 'hit' (Success!)
+                                elif sl_hit:
+                                    updates[f'if_BE_TP{i}'] = "hit" if data['be_triggered'] else "none"
                         
                         
                         # Update heartbeat
