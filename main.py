@@ -13071,11 +13071,12 @@ class HammerPatternScanner:
             
             # Build message with PRICE LEVELS and LOT SIZES
             message = f"🔨 *HAMMER ENTRY SIGNAL* 🔨\n\n"
+            message += f"*🎯 ENTRY:* {direction} {instrument} on {tf}\n"
             message += f"*Yoo bro! {trigger_humor}*\n"
             message += f"*{hammer_humor}*\n\n"
             
             message += f"*📊 CRITERIA:* {criteria}\n"
-            message += f"*🎯 ENTRY:* {direction} {instrument} on {tf}\n"
+            
             message += f"*💰 ENTRY PRICE:* {trade_data['entry_price']:.5f}\n\n"
             
             # PRICE LEVELS
@@ -13087,10 +13088,6 @@ class HammerPatternScanner:
             message += f"  • Price: {trade_data['tp_1_4_price']:.5f}\n"
             message += f"  • Distance: {trade_data.get('tp_1_4_distance', 0):.1f} pips\n\n"
             
-            # RISK MANAGEMENT - LOT SIZES
-            message += f"*💰 RISK MANAGEMENT (MICRO LOTS):*\n"
-            message += f"  • Risk $10: {trade_data['risk_10_lots']:.2f} lots\n"
-            # message += f"  • Risk $100: {trade_data['risk_100_lots']:.2f} lots\n\n"
             
             message += f"*⏰ TIME:* {trade_data['entry_time']}\n"
             message += f"*⚡ LATENCY:* {trade_data.get('signal_latency_seconds', 0):.1f}s (candle close → signal)\n\n"
