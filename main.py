@@ -7915,14 +7915,30 @@ class SafeTPMonitoringManager:
                             if candle_low <= sl_price:
                                 entry_candle_sl_hit = True
                                 break
-                    
+                    #fhhgh
                     if entry_candle_sl_hit:
-                        # Record SL hit and exit immediately
-                        updates = self._record_sl_hit_updates(trade_data, self._now_ny(), hit_tps, be_tracking)
-                        self._update_trade_in_csv_safe(trade_id, updates)
-                        self._log(f"🛑 SL HIT ON ENTRY CANDLE for {trade_id}")
+                        # Use the master recording function to trigger the -1 Force-Fill loop
+                        # Arguments: trade_id, trade_data, tp_type='SL', result_value='-1', hit_time
+                        success = self._record_tp_result_old_logic(
+                            trade_id, 
+                            trade_data, 
+                            'SL', 
+                            '-1', 
+                            self._now_ny()
+                        )
+                        
+                        if success:
+                            self._log(f"🛑 SL HIT ON ENTRY CANDLE for {trade_id} - Pipeline Force-Filled")
+                        else:
+                            self._log(f"⚠️ Pipeline recording failed for {trade_id}, attempting manual fallback", 'warning')
+                            # Backup emergency manual write if the function fails
+                            updates = {'tp_level_hit': '-1', 'monitoring_status': 'completed', 'trade_closed': '1'}
+                            for i in range(1, 11): 
+                                updates[f'tp_1_{i}_result'] = "-1"
+                            self._update_trade_in_csv_safe(trade_id, updates)
+                    
                         self._cleanup_trade_monitoring(trade_id, 'completed')
-                        return
+                    # ------------------------------------------------
             except Exception as e:
                 self._log(f"⚠️ Error checking entry candle SL: {e}", 'warning')
             
@@ -7966,13 +7982,38 @@ class SafeTPMonitoringManager:
                             # Check if price went down to SL (using candle LOW)
                             if current_low <= sl_price:
                                 sl_hit = True
-                        
+                        #jgfgvhg
                         if sl_hit:
-                            # Record SL hit
-                            updates = self._record_sl_hit_updates(trade_data, current_time, hit_tps, be_tracking)
-                            self._update_trade_in_csv_safe(trade_id, updates)
-                            self._log(f"🛑 SL hit for {trade_id}")
-                            break
+                            # Use the master recording function to trigger the -1 Force-Fill loop
+                            # This automatically fills all unreached TP columns with -1 and sets trade_closed='1'
+                            success = self._record_tp_result_old_logic(
+                                trade_id, 
+                                trade_data, 
+                                'SL', 
+                                '-1', 
+                                current_time
+                            )
+                            
+                            if success:
+                                self._log(f"🛑 SL hit for {trade_id} - All targets force-filled with -1")
+                            else:
+                                # Emergency manual fallback to ensure no empty columns if the function fails
+                                self._log(f"⚠️ Recording function failed for {trade_id}, applying emergency fill", 'warning')
+                                emergency_updates = {
+                                    'tp_level_hit': '-1', 
+                                    'monitoring_status': 'completed', 
+                                    'trade_closed': '1',
+                                    'exit_time': current_time.strftime('%Y-%m-%d %H:%M:%S')
+                                }
+                                # Manually force -1 into every possible TP column
+                                for i in range(1, 11):
+                                    emergency_updates[f'tp_1_{i}_result'] = "-1"
+                                    emergency_updates[f'tp_1_{i}_time_seconds'] = "0"
+                                    
+                                self._update_trade_in_csv_safe(trade_id, emergency_updates)
+                        
+                            break # Exit the monitoring loop
+                        # --------------------------------------
                         
                         # =============================================
                         # CRITICAL FIX 3: Proper TP check logic
@@ -7995,19 +8036,29 @@ class SafeTPMonitoringManager:
                                     hit_tps.add(i)
                                     time_seconds = (current_time - entry_time).total_seconds()
                                     
-                                    # Update CSV
+                                    # 1. Start with the basic TP updates
                                     updates = {
                                         f'tp_1_{i}_result': f'+{i}',
                                         f'tp_1_{i}_time_seconds': str(int(time_seconds))
                                     }
                                     
-                                    # Update highest TP hit
+                                    # 2. BOSS LOGIC: Check the BE outcome for the PREVIOUS TP
+                                    # If we just hit TP(i), we can now finalize the BE status for TP(i-1)
+                                    prev_tp = i - 1
+                                    if prev_tp in be_tracking:
+                                        # If price touched entry before hitting this new TP = MISS
+                                        # If price never touched entry = HIT (Perfect move)
+                                        be_status = "miss" if be_tracking[prev_tp].get('be_triggered') else "hit"
+                                        updates[f'if_BE_TP{prev_tp}'] = be_status
+                                
+                                    # 3. Update highest TP hit
                                     current_highest = int(trade_data.get('tp_level_hit', 0) or 0)
                                     if i > current_highest:
                                         updates['tp_level_hit'] = str(i)
                                         updates['exit_time'] = current_time.strftime('%Y-%m-%d %H:%M:%S')
                                         updates['time_to_exit_seconds'] = str(int(time_seconds))
                                     
+                                    # 4. Save and Update Local State
                                     self._update_trade_in_csv_safe(trade_id, updates)
                                     trade_data.update(updates)
                                     
