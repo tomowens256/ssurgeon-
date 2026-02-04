@@ -10342,10 +10342,10 @@ class HammerPatternScanner:
                     detected_dir = None
                     arrow_found = False
                     
-                    if direction == 'bearish' and not np.isnan(arrdwn[-1]):
+                    if direction == 'bearish' and not np.isnan(arrdwn[-2]):
                         detected_dir = 'bearish'
                         arrow_found = True
-                    elif direction == 'bullish' and not np.isnan(arrup[-1]):
+                    elif direction == 'bullish' and not np.isnan(arrup[-2]):
                         detected_dir = 'bullish'
                         arrow_found = True
                     
