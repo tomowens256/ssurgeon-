@@ -8017,6 +8017,34 @@ class SafeTPMonitoringManager:
                         
                         # Update BE tracking
                         self._update_be_tracking(trade_data, hit_tps, be_tracking, current_close, tp_prices)
+
+                        # ---------------------------------------------------------
+                        # BE Logic: Entry touch = Saved from SL but missed profit 
+                        # ---------------------------------------------------------
+                        for i, data in be_tracking.items():
+                            if not data['be_triggered']:
+                                # Check if price returned to entry price (using Low/High for accuracy)
+                                if (direction == 'bullish' and current_low <= entry_price) or \
+                                   (direction == 'bearish' and current_high >= entry_price):
+                                    data['be_triggered'] = True
+                                    self.logger.info(f"🛡️ BE Triggered for TP{i} on {trade_id}")
+                        
+                            # Determine Outcomes based on your Psychology Rules:
+                            # Rule 1: Hit next TP? 
+                            if (i + 1) in hit_tps: 
+                                # If BE was already triggered, it's a 'miss' (we would've been out at 0)
+                                # If not triggered, it's a 'hit' (perfect move)
+                                updates[f'if_BE_TP{i}'] = "miss" if data['be_triggered'] else "hit"
+                            
+                            # Rule 2: Hit SL?
+                            elif sl_hit:
+                                # If BE was triggered, it's a 'hit' (saved us from loss!)
+                                # If not triggered, it's 'none' (BE didn't get a chance)
+                                updates[f'if_BE_TP{i}'] = "hit" if data['be_triggered'] else "none"
+                        
+                        # 3. (Already there) Update Heartbeat and Sleep
+                        self.heartbeat_times[trade_id] = datetime.now()
+                        time.sleep(self.check_interval_live)
                         
                         # Update heartbeat
                         self.heartbeat_times[trade_id] = datetime.now()
