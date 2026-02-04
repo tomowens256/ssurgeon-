@@ -8110,47 +8110,47 @@ class SafeTPMonitoringManager:
             self._update_trade_in_csv_safe(trade_id, {'monitoring_status': 'failed'})
             self._cleanup_trade_monitoring(trade_id, 'failed')
     
-    def _record_sl_hit_updates(self, trade_data, hit_time, hit_tps, be_tracking):
-        """Create updates dictionary for SL hit - FIXED with OLD VERSION LOGIC"""
-        updates = {}
+    # def _record_sl_hit_updates(self, trade_data, hit_time, hit_tps, be_tracking):
+    #     """Create updates dictionary for SL hit - FIXED with OLD VERSION LOGIC"""
+    #     updates = {}
         
-        # CRITICAL FIX: First check if ANY TP was hit
-        tp_was_hit = False
-        for i in range(1, 11):
-            result = trade_data.get(f'tp_1_{i}_result', '')
-            if result and result.startswith('+'):  # +1, +2, etc.
-                tp_was_hit = True
-                break
+    #     # CRITICAL FIX: First check if ANY TP was hit
+    #     tp_was_hit = False
+    #     for i in range(1, 11):
+    #         result = trade_data.get(f'tp_1_{i}_result', '')
+    #         if result and result.startswith('+'):  # +1, +2, etc.
+    #             tp_was_hit = True
+    #             break
         
-        # Record -1 for all TPs not hit
-        for i in range(1, 11):
-            if trade_data.get(f'tp_1_{i}_result') == '':
-                updates[f'tp_1_{i}_result'] = '-1'
-                updates[f'tp_1_{i}_time_seconds'] = '0'
+    #     # Record -1 for all TPs not hit
+    #     for i in range(1, 11):
+    #         if trade_data.get(f'tp_1_{i}_result') == '':
+    #             updates[f'tp_1_{i}_result'] = '-1'
+    #             updates[f'tp_1_{i}_time_seconds'] = '0'
         
-        # Only set highest TP to -1 if NO TP was hit at all
-        if not tp_was_hit:
-            updates['tp_level_hit'] = '-1'
+    #     # Only set highest TP to -1 if NO TP was hit at all
+    #     if not tp_was_hit:
+    #         updates['tp_level_hit'] = '-1'
         
-        # Always set exit time and calculate time to exit
-        if trade_data.get('exit_time') == '':
-            updates['exit_time'] = hit_time.strftime('%Y-%m-%d %H:%M:%S')
+    #     # Always set exit time and calculate time to exit
+    #     if trade_data.get('exit_time') == '':
+    #         updates['exit_time'] = hit_time.strftime('%Y-%m-%d %H:%M:%S')
             
-            # Calculate time to exit
-            entry_time = self._parse_datetime(trade_data['entry_time'])
-            if entry_time:
-                time_to_exit = (hit_time - entry_time).total_seconds()
-                updates['time_to_exit_seconds'] = str(int(time_to_exit))
+    #         # Calculate time to exit
+    #         entry_time = self._parse_datetime(trade_data['entry_time'])
+    #         if entry_time:
+    #             time_to_exit = (hit_time - entry_time).total_seconds()
+    #             updates['time_to_exit_seconds'] = str(int(time_to_exit))
         
-        # Update BE outcomes
-        for tp_level in hit_tps:
-            if be_tracking[tp_level]['state'] == 'tracking':
-                if be_tracking[tp_level]['be_triggered']:
-                    updates[f'if_BE_TP{tp_level}'] = 'hit'
-                else:
-                    updates[f'if_BE_TP{tp_level}'] = 'miss'
+    #     # Update BE outcomes
+    #     for tp_level in hit_tps:
+    #         if be_tracking[tp_level]['state'] == 'tracking':
+    #             if be_tracking[tp_level]['be_triggered']:
+    #                 updates[f'if_BE_TP{tp_level}'] = 'hit'
+    #             else:
+    #                 updates[f'if_BE_TP{tp_level}'] = 'miss'
         
-        return updates
+    #     return updates
     
     def _update_be_tracking(self, trade_data, hit_tps, be_tracking, current_price, tp_prices):
         """Update BE tracking logic"""
