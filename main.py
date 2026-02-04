@@ -6340,7 +6340,6 @@ class SafeTPMonitoringManager:
                     updates[f'tp_1_{tp_num}_time_seconds'] = int(time_seconds)
                 
                 # STEP 2: Only then check if this TP is higher than current highest
-                # We use > (not >=) because if equal, we don't need to update
                 if tp_num > current_highest_rr:
                     updates['tp_level_hit'] = tp_num  # This is the TP level, not RR
                     updates['time_to_exit_seconds'] = int(time_seconds) if time_seconds else 0
@@ -6374,19 +6373,20 @@ class SafeTPMonitoringManager:
                         except:
                             pass
                 
-                # STEP 3: Only set tp_level_hit to 0 if NO TP was hit at all
+                # STEP 3: ✅ CRITICAL FIX - Set tp_level_hit based on whether any TP was hit
                 if not tp_was_hit:
-                    updates['tp_level_hit'] = 0  # 0 for SL hit (no TP hit)
+                    # NO TP hit before SL → tp_level_hit = -1
+                    updates['tp_level_hit'] = '-1'
                 else:
-                    # Keep the highest TP hit
-                    updates['tp_level_hit'] = highest_tp_hit
+                    # Some TP was hit before SL → keep the highest TP hit
+                    updates['tp_level_hit'] = str(highest_tp_hit)
                 
                 # Always set exit time for SL
                 updates['exit_time'] = hit_time.strftime('%Y-%m-%d %H:%M:%S')
                 if time_seconds:
                     updates['time_to_exit_seconds'] = int(time_seconds)
                 
-                self._log(f"🛑 SL hit: tp_was_hit={tp_was_hit}, highest_tp={highest_tp_hit}")
+                self._log(f"🛑 SL hit: tp_was_hit={tp_was_hit}, highest_tp={highest_tp_hit}, tp_level_hit={updates['tp_level_hit']}")
             
             # Apply updates to CSV
             if updates:
