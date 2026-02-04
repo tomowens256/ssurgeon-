@@ -6323,7 +6323,7 @@ class SafeTPMonitoringManager:
         
         return fieldnames, rows
 
-    def _record_tp_result_old_logic(self, trade_id, trade_data, tp_type, result_value, hit_time, time_seconds=None):
+    def _record_tp_result_old_logic(self, trade_id, trade_data, tp_type, result_value, hit_time, be_tracking=None, hit_tps=None):
         """
         OLD VERSION LOGIC for recording TP results
         Follows the exact sequence from old version:
@@ -6331,6 +6331,8 @@ class SafeTPMonitoringManager:
         2. Only then check and update tp_level_hit if needed
         3. When SL hits: Set all unreached TPs to -1
         """
+        be_tracking = be_tracking or {}
+        hit_tps = hit_tps or []
         try:
             # Get current state from CSV (not from in-memory trade_data which might be stale)
             fieldnames, rows = self._read_csv_safe()
