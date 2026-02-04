@@ -8149,6 +8149,10 @@ class SafeTPMonitoringManager:
     
     def _update_trade_in_csv_safe(self, trade_id, updates, max_retries=3):
         """Simple, safe CSV update - with retry logic"""
+        if existing_row.get('trade_closed') == '1':
+            
+            return True
+
         for attempt in range(max_retries):
             with self.csv_lock:
                 try:
