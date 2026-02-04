@@ -6349,37 +6349,37 @@ class SafeTPMonitoringManager:
                 self._log(f"📊 TP{tp_num} hit: value={result_value}, highest={updates.get('tp_level_hit', 'unchanged')}")
             ##hftr    
             elif tp_type == 'SL':
-            # STEP 1: First, check which TPs have been reached so far
-            reached_tps = []
-            for i in range(1, 11):
-                result = csv_row.get(f'tp_1_{i}_result', '')
-                if result and result.startswith('+'):
-                    reached_tps.append(i)
-        
-            # STEP 2: Record -1 for all TPs that WEREN'T reached
-            for i in range(1, 11):
-                if i not in reached_tps:
-                    updates[f'tp_1_{i}_result'] = "-1"
-                    updates[f'tp_1_{i}_time_seconds'] = "0"
-        
-            # STEP 3: Determine tp_level_hit
-            if reached_tps:
-                highest_tp = max(reached_tps)
-                updates['tp_level_hit'] = str(highest_tp)
-                self._log(f"🛑 SL hit after TP{highest_tp}: Keeping tp_level_hit={highest_tp}")
-            else:
-                updates['tp_level_hit'] = '-1'
-                self._log("🛑 SL hit with no TP: Setting tp_level_hit=-1")
-        
-            # STEP 4: Exit info
-            updates['exit_time'] = hit_time.strftime('%Y-%m-%d %H:%M:%S')
-            updates['time_to_exit_seconds'] = int(time_seconds) if time_seconds else 0
-        
-            # STEP 5: FINALIZE (🔥 THIS IS THE FIX)
-            updates['monitoring_status'] = 'completed'
-            updates['trade_closed'] = '1'   # 🔒 hard lock — prevents overwrite
-        
-            self._log(f"🛑 SL finalized: reached_tps={reached_tps}, tp_level_hit={updates['tp_level_hit']}")
+                # STEP 1: First, check which TPs have been reached so far
+                reached_tps = []
+                for i in range(1, 11):
+                    result = csv_row.get(f'tp_1_{i}_result', '')
+                    if result and result.startswith('+'):
+                        reached_tps.append(i)
+            
+                # STEP 2: Record -1 for all TPs that WEREN'T reached
+                for i in range(1, 11):
+                    if i not in reached_tps:
+                        updates[f'tp_1_{i}_result'] = "-1"
+                        updates[f'tp_1_{i}_time_seconds'] = "0"
+            
+                # STEP 3: Determine tp_level_hit
+                if reached_tps:
+                    highest_tp = max(reached_tps)
+                    updates['tp_level_hit'] = str(highest_tp)
+                    self._log(f"🛑 SL hit after TP{highest_tp}: Keeping tp_level_hit={highest_tp}")
+                else:
+                    updates['tp_level_hit'] = '-1'
+                    self._log("🛑 SL hit with no TP: Setting tp_level_hit=-1")
+            
+                # STEP 4: Exit info
+                updates['exit_time'] = hit_time.strftime('%Y-%m-%d %H:%M:%S')
+                updates['time_to_exit_seconds'] = int(time_seconds) if time_seconds else 0
+            
+                # STEP 5: FINALIZE (🔥 THIS IS THE FIX)
+                updates['monitoring_status'] = 'completed'
+                updates['trade_closed'] = '1'   # 🔒 hard lock — prevents overwrite
+            
+                self._log(f"🛑 SL finalized: reached_tps={reached_tps}, tp_level_hit={updates['tp_level_hit']}")
 
             
             # Apply updates to CSV
