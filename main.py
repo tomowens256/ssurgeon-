@@ -6299,6 +6299,112 @@ class SafeTPMonitoringManager:
             rows.append(dict(row))
         
         return fieldnames, rows
+
+    def _record_tp_result_old_logic(self, trade_id, trade_data, tp_type, result_value, hit_time, time_seconds=None):
+        """
+        OLD VERSION LOGIC for recording TP results
+        Follows the exact sequence from old version:
+        1. Update TP result column first
+        2. Only then check and update tp_level_hit if needed
+        """
+        try:
+            # Get current state from CSV (not from in-memory trade_data which might be stale)
+            fieldnames, rows = self._read_csv_safe()
+            csv_row = None
+            for row in rows:
+                if row.get('trade_id') == trade_id:
+                    csv_row = row
+                    break
+            
+            if not csv_row:
+                self._log(f"❌ Trade {trade_id} not found in CSV", 'error')
+                return False
+            
+            # CRITICAL: Read from CSV to get current highest TP
+            current_highest_rr = 0
+            try:
+                tp_level_hit_str = csv_row.get('tp_level_hit', '0')
+                current_highest_rr = int(tp_level_hit_str) if tp_level_hit_str not in ['', None] else 0
+            except:
+                current_highest_rr = 0
+            
+            # Initialize updates dictionary
+            updates = {}
+            
+            if tp_type.startswith('TP_'):
+                tp_num = int(tp_type.split('_')[1])
+                
+                # STEP 1: Update the specific TP result column
+                updates[f'tp_1_{tp_num}_result'] = f"+{result_value}"
+                if time_seconds:
+                    updates[f'tp_1_{tp_num}_time_seconds'] = int(time_seconds)
+                
+                # STEP 2: Only then check if this TP is higher than current highest
+                # We use > (not >=) because if equal, we don't need to update
+                if tp_num > current_highest_rr:
+                    updates['tp_level_hit'] = tp_num  # This is the TP level, not RR
+                    updates['time_to_exit_seconds'] = int(time_seconds) if time_seconds else 0
+                    updates['exit_time'] = hit_time.strftime('%Y-%m-%d %H:%M:%S')
+                    
+                self._log(f"📊 TP{tp_num} hit: value={result_value}, highest={updates.get('tp_level_hit', 'unchanged')}")
+                
+            elif tp_type == 'SL':
+                # STEP 1: Record -1 for all TPs that weren't hit
+                # First check which TPs are empty
+                for i in range(1, 11):
+                    result_key = f'tp_1_{i}_result'
+                    current_result = csv_row.get(result_key, '')
+                    if not current_result or current_result == '':
+                        updates[f'tp_1_{i}_result'] = "-1"
+                        updates[f'tp_1_{i}_time_seconds'] = "0"
+                
+                # STEP 2: Check if ANY TP was hit before SL
+                tp_was_hit = False
+                highest_tp_hit = 0
+                
+                # First check csv_row for any TP hits
+                for i in range(1, 11):
+                    result = csv_row.get(f'tp_1_{i}_result', '')
+                    if result and result.startswith('+'):  # +1, +2, etc.
+                        tp_was_hit = True
+                        try:
+                            tp_num = int(result.replace('+', ''))
+                            if tp_num > highest_tp_hit:
+                                highest_tp_hit = tp_num
+                        except:
+                            pass
+                
+                # STEP 3: Only set tp_level_hit to 0 if NO TP was hit at all
+                if not tp_was_hit:
+                    updates['tp_level_hit'] = 0  # 0 for SL hit (no TP hit)
+                else:
+                    # Keep the highest TP hit
+                    updates['tp_level_hit'] = highest_tp_hit
+                
+                # Always set exit time for SL
+                updates['exit_time'] = hit_time.strftime('%Y-%m-%d %H:%M:%S')
+                if time_seconds:
+                    updates['time_to_exit_seconds'] = int(time_seconds)
+                
+                self._log(f"🛑 SL hit: tp_was_hit={tp_was_hit}, highest_tp={highest_tp_hit}")
+            
+            # Apply updates to CSV
+            if updates:
+                success = self._update_trade_in_csv_safe(trade_id, updates)
+                if success:
+                    self._log(f"✅ Updated {trade_id} with {tp_type}")
+                    return True
+                else:
+                    self._log(f"❌ Failed to update CSV for {trade_id}")
+                    return False
+            
+            return False
+                
+        except Exception as e:
+            self._log(f"❌ Error in old_logic TP recording: {str(e)}", 'error')
+            import traceback
+            self._log(f"❌ Traceback: {traceback.format_exc()}", 'error')
+            return False
     
     def _parse_csv_manually(self, raw_content):
         """Parse CSV manually as fallback"""
