@@ -6267,6 +6267,29 @@ class SafeTPMonitoringManager:
                         
                         # Update BE tracking
                         self._update_be_tracking(trade_data, hit_tps, be_tracking, current_close, tp_prices)
+
+                        # --- LIVE LOOP BE TRACKING ---
+                        for tp_idx, data in be_tracking.items():
+                            if not data['triggered']:
+                                # Check if price returned to entry price
+                                if (direction == 'bullish' and current_low <= entry_price) or \
+                                   (direction == 'bearish' and current_high >= entry_price):
+                                    data['triggered'] = True
+                                    self.logger.info(f"🛡️ BE Triggered for TP{tp_idx} - Monitoring for Fakeout...")
+                        
+                            # Now check the outcome based on your NEW rules:
+                            next_tp_idx = tp_idx + 1
+                            next_tp_hit = (next_tp_idx in hit_tps) # Check if the next domino fell
+                            
+                            # CASE: Hit Next TP
+                            if next_tp_hit:
+                                if data['triggered']:
+                                    # Hit entry THEN hit TP = MISS (we were taken out at 0)
+                                    updates[f'if_BE_TP{tp_idx}'] = "miss"
+                                else:
+                                    # Hit TP without ever touching entry = HIT (Perfect trade)
+                                    updates[f'if_BE_TP{tp_idx}'] = "hit"
+                        
                         
                         # Update heartbeat
                         self.heartbeat_times[trade_id] = datetime.now()
