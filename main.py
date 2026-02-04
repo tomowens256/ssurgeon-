@@ -10338,7 +10338,7 @@ class HammerPatternScanner:
                         time.sleep(1)
                         continue
     
-                    # 11. Check if arrow is present on index [-1]
+                    # 11. Check if arrow is present on index [-2] (The candle that just closed)
                     detected_dir = None
                     arrow_found = False
                     
@@ -10349,20 +10349,25 @@ class HammerPatternScanner:
                         detected_dir = 'bullish'
                         arrow_found = True
                     
-                    # 12. If arrow is found in correct direction, process it
+                    # 12. If arrow is found, entry is the OPEN of the CURRENT live candle
                     if arrow_found:
-                        self.logger.info(f"🎯 ZEBRA {detected_dir.upper()} ARROW found on {tf} {instrument}")
+                        self.logger.info(f"🎯 ZEBRA {detected_dir.upper()} ARROW confirmed on closed candle.")
                         
-                        entry_price = closed_candle['open']
+                        # Use the LIVE candle for the entry price
+                        live_candle = df.iloc[-1]
+                        entry_price = live_candle['open']
+                        
+                        # SL is still based on the historical pivot
                         sl_price_zebra = self.find_3_candle_pivot(df, detected_dir)
                         
                         if sl_price_zebra:
                             # HUGE SL FILTER
+                            # Note: using -6:-1 ensures we look at previous 5 closed candles
                             recent_ranges = (df['high'].iloc[-6:-1] - df['low'].iloc[-6:-1]).mean()
                             sl_dist = abs(entry_price - sl_price_zebra)
                             
                             if sl_dist > (recent_ranges * 2.5):
-                                self.logger.warning(f"⏭️ Zebra Skip: SL is too wide ({round(sl_dist, 5)} vs Avg {round(recent_ranges, 5)})")
+                                self.logger.warning(f"⏭️ Zebra Skip: SL too wide ({round(sl_dist, 5)})")
                                 time.sleep(1)
                                 continue
     
