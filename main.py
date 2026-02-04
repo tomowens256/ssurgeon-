@@ -8152,84 +8152,40 @@ class SafeTPMonitoringManager:
         
     #     return updates
     
-    def _update_be_tracking(self, trade_data, hit_tps, be_tracking, current_price, tp_prices):
-        """Update BE tracking logic"""
-        entry_price = float(trade_data['entry_price'])
+    # def _update_be_tracking(self, trade_data, hit_tps, be_tracking, current_price, tp_prices):
+    #     """Update BE tracking logic"""
+    #     entry_price = float(trade_data['entry_price'])
         
-        for tp_level in hit_tps:
-            if be_tracking[tp_level]['state'] == 'tracking':
-                # Check if price returned to entry (BE)
-                if abs(current_price - entry_price) <= self.be_tolerance:
-                    be_tracking[tp_level]['be_triggered'] = True
+    #     for tp_level in hit_tps:
+    #         if be_tracking[tp_level]['state'] == 'tracking':
+    #             # Check if price returned to entry (BE)
+    #             if abs(current_price - entry_price) <= self.be_tolerance:
+    #                 be_tracking[tp_level]['be_triggered'] = True
                 
-                # Check if next TP is hit
-                if tp_level < 10 and tp_prices.get(tp_level + 1):
-                    # We would check if next TP is hit here
-                    # This is simplified - you need to implement the logic
-                    pass
+    #             # Check if next TP is hit
+    #             if tp_level < 10 and tp_prices.get(tp_level + 1):
+    #                 # We would check if next TP is hit here
+    #                 # This is simplified - you need to implement the logic
+    #                 pass
 
     def _record_tp_result_old(self, trade_data, tp_type, result_value, hit_time, time_seconds=None):
-        """Record TP result - OLD VERSION LOGIC (PROVEN)"""
-        try:
-            # Ensure hit_time is timezone-aware
-            if hasattr(hit_time, 'tz') and hit_time.tz is None:
-                hit_time = hit_time.tz_localize(NY_TZ)
-            
-            # Update trade_data
-            if tp_type.startswith('TP_'):
-                tp_num = int(tp_type.split('_')[1])
-                trade_data[f'tp_1_{tp_num}_result'] = f"+{result_value}"
-                if time_seconds:
-                    trade_data[f'tp_1_{tp_num}_time_seconds'] = int(time_seconds)
-                
-                # Update highest TP achieved (TP number = TP level)
-                current_highest = trade_data.get('tp_level_hit', 0)
-                if tp_num > current_highest:
-                    trade_data['tp_level_hit'] = tp_num
-                    trade_data['time_to_exit_seconds'] = int(time_seconds) if time_seconds else 0
-                    trade_data['exit_time'] = hit_time.strftime('%Y-%m-%d %H:%M:%S')
-                    
-            elif tp_type == 'OPEN_TP':
-                trade_data['open_tp_result'] = f"+{result_value}"
-                if time_seconds:
-                    trade_data['open_tp_time_seconds'] = int(time_seconds)
-                
-                # For open TP, we store the RR value from open_tp_rr
-                if trade_data.get('tp_level_hit', 0) == 0:
-                    open_tp_rr = trade_data.get('open_tp_rr', 0)
-                    trade_data['tp_level_hit'] = open_tp_rr
-                    trade_data['time_to_exit_seconds'] = int(time_seconds) if time_seconds else 0
-                    trade_data['exit_time'] = hit_time.strftime('%Y-%m-%d %H:%M:%S')
-                    
-            elif tp_type == 'SL':
-                # ✅ CRITICAL FIX FROM OLD VERSION: Record -1 for all TPs that weren't hit
-                for i in range(1, 11):
-                    if trade_data.get(f'tp_1_{i}_result') == '':
-                        trade_data[f'tp_1_{i}_result'] = "-1"
-                        trade_data[f'tp_1_{i}_time_seconds'] = "0"
-                if trade_data.get('open_tp_result') == '':
-                    trade_data['open_tp_result'] = "-1"
-                    trade_data['open_tp_time_seconds'] = "0"
-                
-                # ✅ CRITICAL FIX FROM OLD VERSION: Only set -1 if NO TP was hit yet
-                tp_was_hit = False
-                for i in range(1, 11):
-                    if trade_data.get(f'tp_1_{i}_result', '').startswith('+'):
-                        tp_was_hit = True
-                        break
-                
-                if not tp_was_hit and trade_data.get('open_tp_result', '').startswith('+'):
-                    tp_was_hit = True
-                
-                # Only set tp_level_hit to -1 if NO TP was hit
-                if not tp_was_hit:
-                    trade_data['tp_level_hit'] = -1
-                
-                trade_data['time_to_exit_seconds'] = int(time_seconds) if time_seconds else 0
-                trade_data['exit_time'] = hit_time.strftime('%Y-%m-%d %H:%M:%S')
-            
-        except Exception as e:
-            self._log(f"❌ Error recording TP result: {str(e)}", 'error')
+        """
+        DEPRECATED: Redirecting all traffic to the Master Recording Pipeline.
+        This ensures no matter who calls the old function, the -1 Force-Fill 
+        and BE Psychology are applied.
+        """
+        trade_id = trade_data.get('trade_id')
+        self.logger.info(f"🔄 Redirection Triggered: Old TP function called for {trade_id}. Forwarding to Master Pipeline.")
+        
+        # Forward the call to our new 'Boss Logic' function
+        # We pass the same arguments to ensure data integrity
+        return self._record_tp_result_old_logic(
+            trade_id=trade_id,
+            trade_data=trade_data,
+            tp_type=tp_type,
+            result_value=result_value,
+            hit_time=hit_time
+        )
     
     def _is_trade_completed(self, trade_data):
         """Check if trade is completed (all TPs have results)"""
