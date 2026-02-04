@@ -6306,6 +6306,7 @@ class SafeTPMonitoringManager:
         Follows the exact sequence from old version:
         1. Update TP result column first
         2. Only then check and update tp_level_hit if needed
+        3. When SL hits: Set all unreached TPs to -1
         """
         try:
             # Get current state from CSV (not from in-memory trade_data which might be stale)
@@ -6341,52 +6342,46 @@ class SafeTPMonitoringManager:
                 
                 # STEP 2: Only then check if this TP is higher than current highest
                 if tp_num > current_highest_rr:
-                    updates['tp_level_hit'] = tp_num  # This is the TP level, not RR
-                    updates['time_to_exit_seconds'] = int(time_seconds) if time_seconds else 0
+                    updates['tp_level_hit'] = tp_num  # This is the TP level
                     updates['exit_time'] = hit_time.strftime('%Y-%m-%d %H:%M:%S')
+                    updates['time_to_exit_seconds'] = int(time_seconds) if time_seconds else 0
                     
                 self._log(f"📊 TP{tp_num} hit: value={result_value}, highest={updates.get('tp_level_hit', 'unchanged')}")
                 
             elif tp_type == 'SL':
-                # STEP 1: Record -1 for all TPs that weren't hit
-                # First check which TPs are empty
-                for i in range(1, 11):
-                    result_key = f'tp_1_{i}_result'
-                    current_result = csv_row.get(result_key, '')
-                    if not current_result or current_result == '':
-                        updates[f'tp_1_{i}_result'] = "-1"
-                        updates[f'tp_1_{i}_time_seconds'] = "0"
-                
-                # STEP 2: Check if ANY TP was hit before SL
-                tp_was_hit = False
-                highest_tp_hit = 0
-                
-                # First check csv_row for any TP hits
+                # STEP 1: First, check which TPs have been reached so far
+                reached_tps = []
                 for i in range(1, 11):
                     result = csv_row.get(f'tp_1_{i}_result', '')
                     if result and result.startswith('+'):  # +1, +2, etc.
-                        tp_was_hit = True
-                        try:
-                            tp_num = int(result.replace('+', ''))
-                            if tp_num > highest_tp_hit:
-                                highest_tp_hit = tp_num
-                        except:
-                            pass
+                        reached_tps.append(i)
                 
-                # STEP 3: ✅ CRITICAL FIX - Set tp_level_hit based on whether any TP was hit
-                if not tp_was_hit:
+                # STEP 2: Record -1 for all TPs that WEREN'T reached
+                for i in range(1, 11):
+                    if i not in reached_tps:
+                        updates[f'tp_1_{i}_result'] = "-1"
+                        updates[f'tp_1_{i}_time_seconds'] = "0"
+                
+                # STEP 3: Determine tp_level_hit based on reached TPs
+                if reached_tps:
+                    # Some TPs were hit before SL → keep the highest TP hit
+                    highest_tp = max(reached_tps)
+                    updates['tp_level_hit'] = str(highest_tp)
+                    self._log(f"🛑 SL hit after TP{highest_tp}: Keeping tp_level_hit={highest_tp}")
+                else:
                     # NO TP hit before SL → tp_level_hit = -1
                     updates['tp_level_hit'] = '-1'
-                else:
-                    # Some TP was hit before SL → keep the highest TP hit
-                    updates['tp_level_hit'] = str(highest_tp_hit)
+                    self._log(f"🛑 SL hit with no TP: Setting tp_level_hit=-1")
                 
-                # Always set exit time for SL
+                # STEP 4: Set exit info
                 updates['exit_time'] = hit_time.strftime('%Y-%m-%d %H:%M:%S')
                 if time_seconds:
                     updates['time_to_exit_seconds'] = int(time_seconds)
                 
-                self._log(f"🛑 SL hit: tp_was_hit={tp_was_hit}, highest_tp={highest_tp_hit}, tp_level_hit={updates['tp_level_hit']}")
+                # STEP 5: Mark monitoring as completed
+                updates['monitoring_status'] = 'completed'
+                
+                self._log(f"🛑 SL hit: reached_tps={reached_tps}, tp_level_hit={updates.get('tp_level_hit')}")
             
             # Apply updates to CSV
             if updates:
