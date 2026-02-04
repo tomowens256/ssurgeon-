@@ -11841,6 +11841,7 @@ class HammerPatternScanner:
                 'hammer_volume': int(candle.get('volume', 0)),
                 'inducement_count': inducement_count,
                 'trigger_type': trigger_type,
+                'criteria': criteria,
                 
                 # NEW QUARTER FEATURES
                 'current_quarter_monthly': quarter_features.get('current_quarter_monthly', ''),
