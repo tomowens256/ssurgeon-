@@ -8021,30 +8021,25 @@ class SafeTPMonitoringManager:
                         # ---------------------------------------------------------
                         # BE Logic: Entry touch = Saved from SL but missed profit 
                         # ---------------------------------------------------------
+                        # --- FIXED BE LOGIC: Only trigger BE if the TP was actually hit first ---
                         for i, data in be_tracking.items():
-                            if not data['be_triggered']:
-                                # Check if price returned to entry price (using Low/High for accuracy)
-                                if (direction == 'bullish' and current_low <= entry_price) or \
-                                   (direction == 'bearish' and current_high >= entry_price):
-                                    data['be_triggered'] = True
-                                    self.logger.info(f"🛡️ BE Triggered for TP{i} on {trade_id}")
+                            # Only monitor BE for TPs that have already been hit (The Domino Rule)
+                            if i in hit_tps: 
+                                if not data['be_triggered']:
+                                    # Now check if price returned to entry price
+                                    if (direction == 'bullish' and current_low <= entry_price) or \
+                                       (direction == 'bearish' and current_high >= entry_price):
+                                        data['be_triggered'] = True
+                                        self.logger.info(f"🛡️ BE Triggered for TP{i} on {trade_id}")
                         
-                            # Determine Outcomes based on your Psychology Rules:
-                            # Rule 1: Hit next TP? 
-                            if (i + 1) in hit_tps: 
-                                # If BE was already triggered, it's a 'miss' (we would've been out at 0)
-                                # If not triggered, it's a 'hit' (perfect move)
-                                updates[f'if_BE_TP{i}'] = "miss" if data['be_triggered'] else "hit"
-                            
-                            # Rule 2: Hit SL?
-                            elif sl_hit:
-                                # If BE was triggered, it's a 'hit' (saved us from loss!)
-                                # If not triggered, it's 'none' (BE didn't get a chance)
-                                updates[f'if_BE_TP{i}'] = "hit" if data['be_triggered'] else "none"
-                        
-                        # 3. (Already there) Update Heartbeat and Sleep
-                        self.heartbeat_times[trade_id] = datetime.now()
-                        time.sleep(self.check_interval_live)
+                                # --- OUTCOME DETERMINATION ---
+                                # Rule: If we hit NEXT TP after a BE trigger, it's a 'miss'
+                                if (i + 1) in hit_tps:
+                                    updates[f'if_BE_TP{i}'] = "miss" if data['be_triggered'] else "hit"
+                                
+                                # Rule: If we hit SL after a BE trigger, it's a 'hit' (Success!)
+                                elif sl_hit:
+                                    updates[f'if_BE_TP{i}'] = "hit" if data['be_triggered'] else "none"
                         
                         # Update heartbeat
                         self.heartbeat_times[trade_id] = datetime.now()
