@@ -6227,9 +6227,11 @@ class SafeTPMonitoringManager:
                             sl_hit = True
                         
                         if sl_hit:
-                            updates = self._record_sl_hit_updates(trade_data, current_time, hit_tps, be_tracking)
-                            self._update_trade_in_csv_safe(trade_id, updates)
-                            self._log(f"🛑 SL hit for {trade_id}")
+                            # updates = self._record_sl_hit_updates(trade_data, current_time, hit_tps, be_tracking)
+                            # self._update_trade_in_csv_safe(trade_id, updates)
+                            # self._log(f"🛑 SL hit for {trade_id}")
+                            self._record_tp_result_old_logic(trade_id, trade_data, 'SL', '-1', current_time)
+                            self._log(f"🛑 SL hit for {trade_id} - Force-filled via Old Logic")
                             break
                         
                         # Check TPs starting from resume point
