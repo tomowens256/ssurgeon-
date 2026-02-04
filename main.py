@@ -11488,13 +11488,16 @@ class HammerPatternScanner:
                     detected_dir = 'bullish'
                 elif not np.isnan(arrdwn[-2]):
                     detected_dir = 'bearish'
-    
-                # 9. If arrow is live, proceed with checks
+                
+                # 9. If arrow was detected on the closed candle, proceed
                 if detected_dir:
-                    self.logger.info(f"🎯 ZEBRA {detected_dir.upper()} ARROW on Fresh Candle: {tf} {instrument}")
+                    # IMPORTANT: The signal is from [-2], but our ENTRY is the start of [-1]
+                    current_candle = df.iloc[-1] 
+                    entry_price = current_candle['open']
                     
-                    # Entry is the current open (from the fresh candle)
-                    entry_price = latest_candle['open']
+                    self.logger.info(f"🎯 ZEBRA {detected_dir.upper()} Signal on Closed Candle. "
+                                     f"Entering at Current Open: {entry_price}")
+
                     
                     # SL is the 3-candle pivot
                     sl_price = self.find_3_candle_pivot(df, detected_dir)
