@@ -11484,9 +11484,9 @@ class HammerPatternScanner:
     
                 # 8. Check if arrow is present on index [-1] (Current Candle)
                 detected_dir = None
-                if not np.isnan(arrup[-1]):
+                if not np.isnan(arrup[-2]):
                     detected_dir = 'bullish'
-                elif not np.isnan(arrdwn[-1]):
+                elif not np.isnan(arrdwn[-2]):
                     detected_dir = 'bearish'
     
                 # 9. If arrow is live, proceed with checks
