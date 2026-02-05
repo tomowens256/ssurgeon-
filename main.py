@@ -12038,6 +12038,8 @@ class HammerPatternScanner:
                         else:
                             webhook_approved = True
                             self.logger.info(f"✅ ML approved hammer on {tf}")
+                            self.send_hammer_signal(trade_data, trigger_data)
+                            self.logger.info(f"✅ ML approved signal sent to managememt for execution ")
                             
                     except Exception as ml_error:
                         self.logger.error(f"❌ ML filter error: {str(ml_error)}")
