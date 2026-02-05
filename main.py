@@ -12028,7 +12028,7 @@ class HammerPatternScanner:
                         # Check with ML filter if we should trade
                         # The signal_processor should return 1 for trade, 0 for skip
                         should_trade = self.signal_processor.check_with_features(
-                            signal_id=signal_id,
+                            signal_id=trade_id,
                             features=ml_features
                         )
                         
